@@ -1,9 +1,14 @@
 //! 統合テストが共有するフィクスチャ。
+//!
+//! 統合テストは必要なフィクスチャだけを使うため、テストごとに未使用の項目が残る。
+#![allow(dead_code)]
 
 use std::fs;
 use std::path::Path;
 
 use pulsen_conformance::Restore;
+
+pub mod git;
 
 /// ファイルを読み取れない状態にする。
 ///

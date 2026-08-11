@@ -61,10 +61,20 @@
 //! # 対応表
 //!
 //! どの行をどのフックで組むかは `HOOKS.md` にある。フックを足すときは対応表も更新する。
+//!
+//! # テストダブル
+//!
+//! ユースケースの分岐網羅に使うスクリプト式のポート実装は [`doubles`] にある(ADR-028)。
+//! 適合スイートとは目的が違う(契約への適合 vs 分岐の網羅)ため、フックとは別の口にする。
 
+pub mod clock;
 pub mod config_store;
+pub mod doubles;
+pub mod exclusive_lock;
+pub mod task_id_generator;
 pub mod task_repository;
 pub mod workflow_store;
+pub mod worktree_manager;
 
 use std::path::PathBuf;
 

@@ -58,6 +58,17 @@ impl Timestamp {
         Ok(Self { unix_secs })
     }
 
+    /// Unix 秒(UTC・秒精度)から、表現可能範囲の端へ飽和させて生成する。
+    ///
+    /// `Clock::now` は無謬なので、壁時計が範囲外を指したときアダプターは値を返すしかない。
+    /// 範囲の知識をドメインに置いたまま総関数を1つ用意することで、アダプターが既定値を
+    /// 捏造することも、範囲外でパニックすることもなくなる(ADR-036)。
+    pub fn saturating_from_unix_secs(unix_secs: i64) -> Self {
+        Self {
+            unix_secs: unix_secs.clamp(Self::MIN_UNIX_SECS, Self::MAX_UNIX_SECS),
+        }
+    }
+
     /// RFC3339(`YYYY-MM-DDTHH:MM:SSZ`)としてのみ解釈する。
     ///
     /// オフセット付き表記・サブ秒・うるう秒は受理しない(直列化表現が1つに定まらないと
@@ -358,6 +369,22 @@ mod tests {
             Err(TimestampError::InvalidFormat {
                 given: "10000-01-01T00:00:00Z".to_owned()
             })
+        );
+    }
+
+    #[test]
+    fn 表現可能範囲の外は端に飽和して生成される() {
+        assert_eq!(
+            Timestamp::saturating_from_unix_secs(Timestamp::MIN_UNIX_SECS - 1).to_rfc3339(),
+            "0001-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            Timestamp::saturating_from_unix_secs(Timestamp::MAX_UNIX_SECS + 1).to_rfc3339(),
+            "9999-12-31T23:59:59Z"
+        );
+        assert_eq!(
+            Timestamp::from_unix_secs(0),
+            Ok(Timestamp::saturating_from_unix_secs(0))
         );
     }
 

@@ -153,7 +153,7 @@ CLI・YAML・JSON・乱数・一時ファイルが必要になる。ドメイン
 ## ADR-024: git 操作は git CLI へのシェルアウトで実装し、対象の分類は専用の問い合わせコマンドの組み合わせで導く
 
 ### Status
-Proposed
+Accepted（ステップ14で確定。`.adr/024-git-cli-shell-out-and-target-classification.md`）
 
 ### Context
 
@@ -264,7 +264,7 @@ ADR-015 はスナップショットをタスクファイルに正規化構造と
 ## ADR-026: タスクIDは「UTC時刻成分 + ランダム成分」で発行する
 
 ### Status
-Proposed
+Accepted（ステップ13で確定。`.adr/026-task-id-format.md`）
 
 ### Context
 
@@ -465,7 +465,7 @@ Proposed
 ## ADR-032: ロックの別プロセスフィクスチャは `examples/lock_holder.rs` で供給する
 
 ### Status
-Proposed
+Accepted（ステップ14で確定。`.adr/032-lock-holder-example-fixture.md`）
 
 ### Context
 
@@ -489,7 +489,7 @@ spec/testcases/ports/exclusive-lock.md は「ロックを取得・保持する�
 ## ADR-033: git フィクスチャは環境変数と初期化オプションで再現性を固定する
 
 ### Status
-Proposed
+Accepted（ステップ14で確定。`.adr/033-git-fixture-reproducibility.md`）
 
 ### Context
 
@@ -575,7 +575,7 @@ Proposed
 ## ADR-036: 無謬なポートの実装が持つ失敗は、構築時か値への写像で吸収する
 
 ### Status
-Proposed
+Accepted（ステップ13で確定。`.adr/036-infallible-ports-absorb-failure-at-construction.md`。実装で確定した「値の口」は ADR-047）
 
 ### Context
 
@@ -831,3 +831,36 @@ Accepted（ステップ12で確定）
 
 - 良い点: 「修復の材料を消さない」という最も価値のある契約が、実装を壊すと必ず赤くなる
 - トレードオフ: ケース関数の中でフックの扱いが2通りになるため、意図（前提条件か観測か）を読み手が区別する必要がある
+
+---
+
+## ADR-047: 無謬なポートが返す値の生成口は、ドメインの総関数か構築時に検証した値で用意する
+
+### Status
+Accepted（ステップ13で確定。`.adr/036-infallible-ports-absorb-failure-at-construction.md` に反映済み）
+
+### Context
+
+ADR-036 は「無謬なポートに載る失敗を構築時か値への写像で吸収する」と決めたが、`Clock::now` / `TaskIdGenerator::generate` を実装すると、失敗の吸収だけでは足りないことが分かった。**返す値そのものを作れない**からである。
+
+- `Timestamp` の生成口は `from_unix_secs` / `parse_rfc3339` の2つで、どちらも `Result` を返す。飽和させる値を決めても、それを `Timestamp` にする最後の一歩がまた `Result` になる
+- `TaskId` の生成口は `parse` だけで、これも `Result` を返す
+
+`Result` を畳むには既定値が要り、その既定値を作るのにまた `Result` を通る — 循環する。断ち切る手段はパニック（`unwrap` / `expect`）か、`Result` を返さない生成口を1つ用意することの2つしかない。
+
+### Decision
+
+**生成口を1つ用意する。**置き場は次の2通りに限る。
+
+- **ドメインの総関数**: `Timestamp::saturating_from_unix_secs(i64) -> Timestamp`。表現可能範囲はドメインの知識（ADR-020）であり、飽和の規則をアダプターに持ち出すと範囲の定義が2箇所になる。フィールドが非公開なので、総関数はドメインの内側にしか置けない
+- **構築時に検証した値**: `DefaultTaskIdGenerator` は `new` で組み立て規則が `TaskId::parse` を通ることを一度検証し、その値を保持する。`generate` は `parse` の `Err` をこの値に畳む。組み立て規則（時刻成分は `[0-9t]`、ランダム成分は base36 の8桁、時刻成分が空なら区切りも落とす）が制約を常に満たすため既定値には落ちないが、`Result` はパニックなしで畳める。仮に返っても重複IDは `TaskRepository::create` の `Conflict` が拾うため、システムの正しさは変わらない
+
+ID形式は「アダプターに委ねる」と spec が明示している（形式そのものは適合テストの対象外）ので、`TaskId` 側に総関数を足すことはしない — 総関数はドメインが規則を持つ値にだけ置く。
+
+なお、ここで禁じているのは**パニックする** `unwrap` / `expect` であり、既定値を与える総関数（`Result::unwrap_or`）は使う。clippy の `manual_unwrap_or` は手書きの `match` を `unwrap_or` へ書き換えるよう求めるため、避けようとすると lint と衝突する。
+
+### Consequences
+
+- 良い点: `Clock` / `TaskIdGenerator` の実装からパニック経路が消え、ポートの無謬性が spec のまま保たれる。飽和の規則がドメインの1箇所に閉じる
+- 後続スライスが無謬なポートのアダプターを足すときも、値の口の選択肢がこの2通りに定まる
+- トレードオフ: `Timestamp` の生成経路が3つになる（検証つき2つ + 総関数1つ）。総関数は範囲外を黙って丸めるため、`Clock` 実装以外から呼ぶと入力の誤りを隠しうる
