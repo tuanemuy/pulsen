@@ -186,7 +186,8 @@ fn tc_task_register_task_021_定義が読めなければ拒否される() {
     let run = add("implement", repo.path()).home(home.path()).run();
     drop(restore);
 
-    run.assert_rejected().assert_reports(&["読み込めません"]);
+    run.assert_rejected()
+        .assert_reports(&["読み込めません", definition.display().to_string().as_str()]);
     assert!(home.has_no_task(), "タスクは作られない");
     untouched.assert_unchanged();
 }
@@ -203,7 +204,7 @@ statuses:
     prompt: 実装して
     next: queued
 ",
-        &["YAML 構文エラー"],
+        &["YAML 構文エラー", "位置:", "行"],
     );
 }
 

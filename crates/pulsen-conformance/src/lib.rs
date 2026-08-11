@@ -13,6 +13,12 @@
 //! **前提条件の意味だけを受け取るフック**にする。生の JSON テキストや権限操作の手順を
 //! スイート側に持ち込まないことで、ケースが特定のアダプター専用にならない。
 //!
+//! この性質が成り立つのは TaskRepository / Clock / TaskIdGenerator / ExclusiveLock /
+//! WorktreeManager の5ポート。ConfigStore / WorkflowStore の入力系フックは **YAML
+//! ソースを受け取り**、この2ポートのスイートは YAML 表現に結合している — 「YAML 構文
+//! エラー」「重複キー」を前提とする行は、表現そのものを渡す口が無ければ組み立てられない
+//! (ADR-053)。
+//!
 //! 対象は共有参照でしか渡らないため、「構築済みの対象を壊す」フックは置けない。壊れた
 //! 状況が要るケースは、別ハンドルを返すフック(`concurrent_repo` / `failing_manager` /
 //! `unusable_lock` / `separate_home` / `another_generator`)で表す。
@@ -23,6 +29,10 @@
 //! 「再現できるアダプター環境に限る」と明示する行も同じ仕組みで落ちる。
 //! スキップの理由(どのフックが提供されなかったか)は標準出力に書き出すため、
 //! `cargo test -- --nocapture` で確認できる。
+//!
+//! 標準出力は libtest が握り潰すため、報告だけではスキップと成功を区別できない。
+//! スイートの適用側は[許容するスキップ件数][SkipBudget]を宣言し、超えたスキップは
+//! ケースの失敗として現れる。「N件 PASS」の意味が環境で変わったことが出力に出る。
 //!
 //! 権限操作を伴うフック(`make_unreadable` / `make_unwritable`)は、**制限が実際に効いた
 //! ことを確認してから `Some` を返す**規則にする。`chmod 000` は root では効かないため、
@@ -44,18 +54,19 @@
 //!
 //! #[macro_export]
 //! macro_rules! config_store_conformance {
-//!     ($setup:expr) => {
+//!     ($setup:expr, $allowed_skips:expr) => {
 //!         use $crate::config_store as __pulsen_conformance_config_store;
 //!         $crate::conformance_cases!(
 //!             __pulsen_conformance_config_store,
 //!             $setup,
+//!             __PULSEN_CONFORMANCE_CONFIG_STORE_SKIPS = $allowed_skips,
 //!             [tc_port_config_store_001_全キーが反映される]
 //!         );
 //!     };
 //! }
 //!
 //! // crates/pulsen/tests/conformance_config_store.rs
-//! pulsen_conformance::config_store_conformance!(FsConfigStoreHarness::new());
+//! pulsen_conformance::config_store_conformance!(FsConfigStoreHarness::new(), 0);
 //! ```
 //!
 //! # 対応表
@@ -147,15 +158,50 @@ impl CaseOutcome {
     }
 
     /// 結果を報告する。マクロが生成する `#[test]` から呼ばれる。
-    pub fn report(self, case: &str) {
+    pub fn report(self, case: &str, budget: &SkipBudget) {
         match self {
             Self::Ran => {}
-            Self::Skipped { hook } => {
-                println!(
-                    "SKIP {case}: ハーネスが {hook} を提供しないため、この環境では前提条件を用意できない"
-                );
-            }
+            Self::Skipped { hook } => budget.record(case, hook),
         }
+    }
+}
+
+/// スイート1適用あたりで許容するスキップ件数。
+///
+/// libtest は成功したテストの標準出力を握り潰すため、スキップの報告だけでは
+/// 「何件が実際に走ったか」が環境によって静かに変わる。適用側が件数を宣言し、
+/// それを超えたスキップをケースの失敗にすることで、差が出力に現れる。
+pub struct SkipBudget {
+    allowed: usize,
+    used: std::sync::atomic::AtomicUsize,
+}
+
+impl SkipBudget {
+    /// 許容件数を宣言する。
+    pub const fn new(allowed: usize) -> Self {
+        Self {
+            allowed,
+            used: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// スキップを1件記録する。宣言を超えたらそのケースを失敗させる。
+    ///
+    /// ケースは並列に走るため、超過を検知するのは「何件目か」が宣言を超えたケースに
+    /// なる(どのケースがスキップされたかは報告行に出る)。
+    pub fn record(&self, case: &str, hook: &'static str) {
+        let used = self.used.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+
+        println!(
+            "SKIP {case}: ハーネスが {hook} を提供しないため、この環境では前提条件を用意できない"
+        );
+        assert!(
+            used <= self.allowed,
+            "スキップが {used} 件になり、このスイートで宣言した許容件数 {} を超えた\
+             (直近は {case} / {hook})。この環境で前提条件を用意できるようにするか、\
+             宣言を実態に合わせる",
+            self.allowed
+        );
     }
 }
 
@@ -180,14 +226,23 @@ macro_rules! require {
 ///
 /// `$module` にはケース関数を持つモジュールの別名を渡す(ポートごとのマクロが
 /// `use` で用意する)。セットアップ式はケースごとに評価され、ハーネスは共有されない。
+/// `$budget` はスキップ集計の置き場で、1つのテストファイルに複数のスイートを適用
+/// できるようポートごとに別の名前を渡す。
 #[macro_export]
 macro_rules! conformance_cases {
-    ($module:ident, $setup:expr, [ $($case:ident),* $(,)? ]) => {
+    ($module:ident, $setup:expr, $budget:ident = $allowed_skips:expr, [ $($case:ident),* $(,)? ]) => {
+        /// このスイートで許容するスキップ件数。
+        static $budget: $crate::SkipBudget = $crate::SkipBudget::new($allowed_skips);
+
         $(
             #[test]
             fn $case() {
                 let harness = $setup;
-                $crate::CaseOutcome::report($module::$case(&harness), stringify!($case));
+                $crate::CaseOutcome::report(
+                    $module::$case(&harness),
+                    stringify!($case),
+                    &$budget,
+                );
             }
         )*
     };
@@ -622,7 +677,29 @@ mod tests {
         SyncHarness { repo: ToyRepo(()) }
     }
 
-    conformance_cases!(cases, not_sync_harness(), [走査するケース]);
+    conformance_cases!(
+        cases,
+        not_sync_harness(),
+        __PULSEN_CONFORMANCE_FRAMEWORK_SKIPS = 0,
+        [走査するケース]
+    );
+
+    #[test]
+    fn 宣言した件数までのスキップは報告だけで済む() {
+        let budget = SkipBudget::new(2);
+
+        CaseOutcome::skipped("first_hook").report("最初のケース", &budget);
+        CaseOutcome::skipped("second_hook").report("次のケース", &budget);
+    }
+
+    #[test]
+    #[should_panic(expected = "許容件数")]
+    fn 宣言を超えたスキップはケースの失敗になる() {
+        let budget = SkipBudget::new(1);
+
+        CaseOutcome::skipped("first_hook").report("最初のケース", &budget);
+        CaseOutcome::skipped("second_hook").report("次のケース", &budget);
+    }
 
     #[test]
     fn 並行フックを持たないハーネスではケースがスキップされる() {

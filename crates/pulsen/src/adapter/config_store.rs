@@ -6,9 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use pulsen_domain::definition::{
-    AgentName, CommandError, ConfigLoadError, ConfigStore, DurationError, DurationSpec,
-    GlobalConfig, GlobalConfigError, GlobalConfigInput, NameError, PlainCommand,
-    RawAgentDefinition, RawCommand,
+    AgentName, ConfigLoadError, ConfigStore, DurationSpec, GlobalConfig, GlobalConfigError,
+    GlobalConfigInput, PlainCommand, RawAgentDefinition, RawCommand,
 };
 
 use super::yaml::{self, CommandInput, Yaml};
@@ -112,7 +111,7 @@ fn decode_agents(value: &Yaml) -> Result<BTreeMap<AgentName, RawAgentDefinition>
     for (key, entry) in mapping.entries() {
         let path = format!("agents.{key}");
         let name = AgentName::parse(key.clone())
-            .map_err(|error| at(&path, describe_name_error(&error).to_owned()))?;
+            .map_err(|error| at(&path, error.describe().to_owned()))?;
         agents.insert(name, decode_agent(&path, entry)?);
     }
     Ok(agents)
@@ -151,7 +150,7 @@ fn decode_raw_command(value: &Yaml, path: &str) -> Result<RawCommand, String> {
         CommandInput::Text(text) => RawCommand::parse_text(&text),
         CommandInput::Tokens(tokens) => RawCommand::parse_tokens(tokens),
     };
-    command.map_err(|error| at(path, describe_command_error(&error).to_owned()))
+    command.map_err(|error| at(path, error.describe().to_owned()))
 }
 
 fn decode_plain_command(value: &Yaml, path: &str) -> Result<PlainCommand, String> {
@@ -159,7 +158,7 @@ fn decode_plain_command(value: &Yaml, path: &str) -> Result<PlainCommand, String
         CommandInput::Text(text) => PlainCommand::parse_text(&text),
         CommandInput::Tokens(tokens) => PlainCommand::parse_tokens(tokens),
     };
-    command.map_err(|error| at(path, describe_command_error(&error).to_owned()))
+    command.map_err(|error| at(path, error.describe().to_owned()))
 }
 
 fn command_input(value: &Yaml, path: &str) -> Result<CommandInput, String> {
@@ -185,8 +184,7 @@ fn decode_duration(value: Option<&Yaml>, path: &str) -> Result<Option<DurationSp
             let text = value
                 .as_text()
                 .ok_or_else(|| type_error(path, "期間を表す文字列", value))?;
-            let duration = DurationSpec::parse(text)
-                .map_err(|error| at(path, describe_duration_error(&error)))?;
+            let duration = DurationSpec::parse(text).map_err(|error| at(path, error.describe()))?;
             Ok(Some(duration))
         }
         None => Ok(None),
@@ -206,26 +204,6 @@ fn type_error(path: &str, expected: &str, value: &Yaml) -> String {
         path,
         format!("{expected}である必要があります(実際は{})", value.kind()),
     )
-}
-
-fn describe_name_error(error: &NameError) -> &'static str {
-    match error {
-        NameError::Empty => "空文字列は指定できません",
-        NameError::SurroundingWhitespace => "前後に空白を含められません",
-    }
-}
-
-fn describe_duration_error(error: &DurationError) -> String {
-    match error {
-        DurationError::InvalidFormat { given } => format!("期間の形式が不正です: {given}"),
-        DurationError::Zero => "期間に 0 は指定できません".to_owned(),
-    }
-}
-
-fn describe_command_error(error: &CommandError) -> &'static str {
-    match error {
-        CommandError::Empty => "コマンドが空です",
-    }
 }
 
 fn describe_config_error(error: &GlobalConfigError) -> String {

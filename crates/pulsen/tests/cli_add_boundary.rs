@@ -1,6 +1,7 @@
 //! `pulsen add` の境界値とエッジケース(spec/testcases/task/register-task.md 境界値・エッジケース)。
 //!
-//! 受理側は「登録が成功する」ことを、拒否側は「タスクが作られない」ことを確かめる。
+//! 受理側は「登録が成功する」ことを、拒否側は「タスクが作られず、利用者が用意した
+//! リソースが変更されない」ことを確かめる。
 
 mod common;
 
@@ -58,6 +59,7 @@ fn reject_base(base: &str) {
     let home = Home::new();
     home.write_workflow("implement", WORKFLOW);
     let repo = Repo::with_commit();
+    let untouched = home.untouched();
 
     let run = add("implement", repo.path())
         .home(home.path())
@@ -69,6 +71,7 @@ fn reject_base(base: &str) {
     // 引数の使い方の誤り(clap の 2)ではなく、入力の検証エラーとして扱われる。
     assert_eq!(run.code, Some(1), "入力の検証エラーの終了コードになる");
     assert!(home.has_no_task(), "タスクは作られない: --base {base}");
+    untouched.assert_unchanged();
 }
 
 /// エージェント実行ステータスの `queued` の定義。
@@ -119,6 +122,7 @@ fn tc_task_register_task_053_ワークフロー指定が空文字列なら入力
     let home = Home::new();
     home.write_workflow("implement", WORKFLOW);
     let repo = Repo::with_commit();
+    let untouched = home.untouched();
 
     let run = add("", repo.path()).home(home.path()).run();
 
@@ -126,6 +130,7 @@ fn tc_task_register_task_053_ワークフロー指定が空文字列なら入力
         .assert_reports(&["--workflow", "空文字列"]);
     assert_eq!(run.code, Some(1), "入力の検証エラーの終了コードになる");
     assert!(home.has_no_task(), "タスクは作られない");
+    untouched.assert_unchanged();
 }
 
 #[test]
@@ -199,12 +204,14 @@ statuses:
             ),
         );
         let repo = Repo::with_commit();
+        let untouched = home.untouched();
 
         let run = add("flow", repo.path()).home(home.path()).run();
 
         run.assert_rejected()
             .assert_reports(&["statuses.queued.timeout"]);
         assert!(home.has_no_task(), "タスクは作られない: timeout {timeout}");
+        untouched.assert_unchanged();
     }
 }
 
@@ -378,4 +385,46 @@ fn tc_task_register_task_067_homeフラグは環境変数より優先される()
         "環境変数のホームには登録されない: {}",
         Path::new(from_env.path()).display()
     );
+}
+
+#[test]
+fn 環境変数だけが指定されていればそのホームに登録される() {
+    let from_env = Home::new();
+    from_env.write_workflow("implement", WORKFLOW);
+    let user_home = scratch();
+    let repo = Repo::with_commit();
+
+    add("implement", repo.path())
+        .home_env(from_env.path())
+        .user_home(user_home.path())
+        .run()
+        .assert_succeeded();
+
+    assert_eq!(from_env.tasks().len(), 1, "環境変数のホームに登録される");
+    assert!(
+        !user_home.path().join(".pulsen").exists(),
+        "既定のホームは使われない"
+    );
+}
+
+#[test]
+fn 空の環境変数は未設定として既定のホームに落ちる() {
+    let user_home = scratch();
+    let repo = Repo::with_commit();
+
+    let run = add("implement", repo.path())
+        .home_env(Path::new(""))
+        .user_home(user_home.path())
+        .run();
+
+    let default_home = user_home.path().join(".pulsen");
+    run.assert_rejected().assert_reports(&[
+        "未初期化",
+        default_home.display().to_string().as_str(),
+        default_home
+            .join("config.yaml")
+            .display()
+            .to_string()
+            .as_str(),
+    ]);
 }

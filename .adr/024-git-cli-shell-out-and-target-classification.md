@@ -48,7 +48,9 @@ git CLI へシェルアウトする(`git -C <repo> ...`)。`git` を実行時の
 
 `branch_exists(repo, branch)` — `git -C <repo> show-ref --verify --quiet refs/heads/<branch>` の exit 0 → `true`、exit 1 → `false`、それ以外と起動失敗 → `Failed`。
 
-共通: 起動する git プロセスの環境から `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` を除去する。ユーザーのグローバル設定(`safe.directory` 等)は本番では尊重する。テストフィクスチャ側の環境固定は ADR-033。
+共通: 起動する git プロセスの環境から、**`-C` で指した対象の解決結果を呼び出し元の環境が上書きしうる変数**を除去する。判断基準はこの目的であって特定の変数名ではない。現時点の対象は `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` / `GIT_CEILING_DIRECTORIES` / `GIT_COMMON_DIR` / `GIT_OBJECT_DIRECTORY` / `GIT_ALTERNATE_OBJECT_DIRECTORIES`。`GIT_CEILING_DIRECTORIES` は上位探索を打ち切るため、設定されていると正当なリポジトリが `NotARepository` に落ちる(実測: `GIT_CEILING_DIRECTORIES=<repo> git -C <repo>/sub rev-parse --show-toplevel` が exit 128)。cron からの無人実行では継承された環境の内容を利用者が意識していないため、対象の分類が呼び出し元の環境で変わってはならない。
+
+ユーザーのグローバル設定(`safe.directory` 等)は本番では尊重する — 対象の解決先を変えるものではなく、無効化すると所有者の異なるリポジトリを扱えなくなる。テストフィクスチャ側の環境固定は ADR-033。
 
 ## 影響
 

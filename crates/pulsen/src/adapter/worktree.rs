@@ -8,8 +8,18 @@ use pulsen_domain::task::{BranchName, RepoPath};
 
 /// 起動する git から取り除く環境変数。
 ///
-/// 呼び出し元の環境に残っていると `-C` で指した対象を上書きしてしまう。
-const INHERITED_GIT_ENV: &[&str] = &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
+/// 呼び出し元の環境に残っていると `-C` で指した対象の解決結果を上書きしてしまう
+/// (`GIT_CEILING_DIRECTORIES` は上位探索を打ち切り、正当なリポジトリを
+/// `NotARepository` に落とす)。ADR-024 の判断基準はこの目的であって変数名の列挙ではない。
+const INHERITED_GIT_ENV: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
 
 /// git CLI に問い合わせて対象を検証するマネージャー(ADR-024)。
 ///
@@ -48,8 +58,16 @@ impl GitCliWorktreeManager {
 
 impl WorktreeManager for GitCliWorktreeManager {
     fn validate_repo(&self, repo: &RepoPath) -> Result<(), TargetError> {
-        if !repo.as_path().exists() {
-            return Err(TargetError::NotFound);
+        // `exists()` と違い `try_exists()` は I/O エラーを `false` に丸めない。親ディレクトリを
+        // 読めないだけのリポジトリを「存在しません」と案内すると、利用者は実在するパスを疑う。
+        match repo.as_path().try_exists() {
+            Ok(true) => {}
+            Ok(false) => return Err(TargetError::NotFound),
+            Err(error) => {
+                return Err(TargetError::Failed {
+                    message: format!("リポジトリのパスを確認できない: {error}"),
+                });
+            }
         }
         // メタデータの破損も含め、問い合わせが通らないものはすべて「リポジトリでない」に
         // 落ちる(ADR-024 の実測)。リポジトリ配下のサブディレクトリ指定は受理する。
@@ -99,10 +117,11 @@ fn branch_name(stdout: &[u8]) -> Result<BranchName, TargetError> {
     let text = String::from_utf8(stdout.to_vec()).map_err(|error| TargetError::Failed {
         message: format!("HEAD のブランチ名が UTF-8 ではない: {error}"),
     })?;
-    BranchName::parse(text.trim_end_matches(['\r', '\n']).to_owned()).map_err(|error| {
-        TargetError::Failed {
-            message: format!("HEAD のブランチ名を扱えない: {error:?}"),
-        }
+    let name = text.trim_end_matches(['\r', '\n']).to_owned();
+    // 破れた制約の言い換えは CLI の文言層が持つ。アダプターは扱えなかった名前だけを載せる
+    // (エラー値をそのまま埋めると Rust の Debug 表現が利用者に出る)。
+    BranchName::parse(name.clone()).map_err(|_| TargetError::Failed {
+        message: format!("HEAD のブランチ名を扱えない: {name}"),
     })
 }
 

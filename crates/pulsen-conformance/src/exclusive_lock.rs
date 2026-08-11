@@ -117,15 +117,17 @@ pub fn tc_port_exclusive_lock_007_ロック機構が使えなければ失敗に�
 
 /// ExclusiveLock の適合スイートをアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! exclusive_lock_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::exclusive_lock as __pulsen_conformance_exclusive_lock;
 
         $crate::conformance_cases!(
             __pulsen_conformance_exclusive_lock,
             $setup,
+            __PULSEN_CONFORMANCE_EXCLUSIVE_LOCK_SKIPS = $allowed_skips,
             [
                 tc_port_exclusive_lock_001_誰も保持していなければ取得できる,
                 tc_port_exclusive_lock_002_別プロセスの保持中は取得できない,

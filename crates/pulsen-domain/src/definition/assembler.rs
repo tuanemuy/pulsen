@@ -169,6 +169,10 @@ pub struct WorkflowAssembler;
 
 impl WorkflowAssembler {
     /// 構造化済み入力を検証して `ParsedWorkflow` にする。
+    ///
+    /// 前提条件: `doc.statuses` のキーは重複しない。ステータス名の重複は入力表現(YAML)の
+    /// 重複キーであり、`WorkflowParseError` に重複用の種別は無く `YamlSyntax`(重複キーを
+    /// 含む)としてアダプターが弾く分担になっている。
     pub fn assemble(doc: RawWorkflowDoc) -> Result<ParsedWorkflow, WorkflowParseError> {
         let declared_name = match doc.declared_name {
             Some(value) => {
@@ -198,6 +202,7 @@ impl WorkflowAssembler {
             let name = StatusName::parse(raw_name.clone())
                 .map_err(|error| invalid_name(&format!("statuses.{raw_name}"), &error))?;
             let definition = assemble_status(&raw_name, status_doc)?;
+            // 重複キーはアダプターが弾いている前提なので、後勝ちの畳み込みは起こらない。
             statuses.insert(name, definition);
         }
 
@@ -421,36 +426,23 @@ fn structure_error(error: WorkflowStructureError) -> WorkflowParseError {
 }
 
 fn invalid_name(location: &str, error: &NameError) -> WorkflowParseError {
-    let message = match error {
-        NameError::Empty => "空文字列は指定できません",
-        NameError::SurroundingWhitespace => "前後に空白を含められません",
-    };
     WorkflowParseError::InvalidValue {
         location: location.to_owned(),
-        message: message.to_owned(),
+        message: error.describe().to_owned(),
     }
 }
 
 fn invalid_duration(location: &str, error: &DurationError) -> WorkflowParseError {
-    let message = match error {
-        DurationError::InvalidFormat { given } => {
-            format!("期間の形式が不正です: {given}")
-        }
-        DurationError::Zero => "期間に 0 は指定できません".to_owned(),
-    };
     WorkflowParseError::InvalidValue {
         location: location.to_owned(),
-        message,
+        message: error.describe(),
     }
 }
 
 fn invalid_command(location: &str, error: &CommandError) -> WorkflowParseError {
-    let message = match error {
-        CommandError::Empty => "コマンドが空です",
-    };
     WorkflowParseError::InvalidValue {
         location: location.to_owned(),
-        message: message.to_owned(),
+        message: error.describe().to_owned(),
     }
 }
 

@@ -12,6 +12,19 @@ pub enum DurationError {
     Zero,
 }
 
+impl DurationError {
+    /// 制約の説明。
+    ///
+    /// 同じ制約は config.yaml とワークフロー定義YAMLの両方で破れるため、説明の定義箇所を
+    /// ドメインに1つ置く。層ごとに書くと同じ誤りの案内が食い違う。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::InvalidFormat { given } => format!("期間の形式が不正です: {given}"),
+            Self::Zero => "期間に 0 は指定できません".to_owned(),
+        }
+    }
+}
+
 /// 秒に正規化された期間。`1m` と `60s` は等価になる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DurationSpec {

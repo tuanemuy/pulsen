@@ -117,9 +117,5 @@ mod tests {
             snapshot.effective_timeout(&status("waiting")),
             WorkflowDefinition::DEFAULT_TIMEOUT
         );
-        assert_eq!(
-            snapshot.effective_retry_limit(&status("waiting")),
-            WorkflowDefinition::DEFAULT_RETRY_LIMIT
-        );
     }
 }

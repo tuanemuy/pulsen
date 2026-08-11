@@ -465,15 +465,17 @@ fn assert_all_defaults(config: &GlobalConfig) {
 
 /// ConfigStore の適合スイートをアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! config_store_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::config_store as __pulsen_conformance_config_store;
 
         $crate::conformance_cases!(
             __pulsen_conformance_config_store,
             $setup,
+            __PULSEN_CONFORMANCE_CONFIG_STORE_SKIPS = $allowed_skips,
             [
                 tc_port_config_store_001_全キーが反映される,
                 tc_port_config_store_002_空マッピングは全デフォルトになる,

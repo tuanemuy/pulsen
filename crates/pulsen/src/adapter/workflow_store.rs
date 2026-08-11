@@ -67,7 +67,7 @@ impl WorkflowStore for FsWorkflowStore {
         };
         let document = yaml::parse_document(&text).map_err(|error| {
             WorkflowLoadError::Parse(WorkflowParseError::YamlSyntax {
-                message: error.message,
+                message: at(&resolved, &error.message),
                 location: error.location,
             })
         })?;
@@ -92,8 +92,16 @@ fn read_error(error: &io::Error, attempted: PathBuf) -> WorkflowLoadError {
         return WorkflowLoadError::NotFound { attempted };
     }
     WorkflowLoadError::Io {
-        message: error.to_string(),
+        message: at(&attempted, &error.to_string()),
     }
+}
+
+/// どのファイルの話かをメッセージに載せる(ADR-050)。
+///
+/// `WorkflowLoadError::Io` と `WorkflowParseError::YamlSyntax` はパスを持つフィールドを
+/// 持たず、`NotFound` と違って CLI 側も解決先を知らないため、ここで前置する。
+fn at(resolved: &Path, message: &str) -> String {
+    format!("{}: {message}", resolved.display())
 }
 
 /// 構造を走査して未パースのドキュメントに落とす。値の検証は `WorkflowAssembler` が行う。

@@ -83,4 +83,13 @@ impl WorkflowStoreHarness for FsWorkflowStoreHarness {
     }
 }
 
-pulsen_conformance::workflow_store_conformance!(FsWorkflowStoreHarness::new());
+/// この環境で許容するスキップ件数。
+///
+/// 権限操作を持たないプラットフォームでは「読み取れない定義ファイル」を作れず、
+/// TC-port-workflow-store-030 が走らない。
+#[cfg(unix)]
+const ALLOWED_SKIPS: usize = 0;
+#[cfg(not(unix))]
+const ALLOWED_SKIPS: usize = 1;
+
+pulsen_conformance::workflow_store_conformance!(FsWorkflowStoreHarness::new(), ALLOWED_SKIPS);

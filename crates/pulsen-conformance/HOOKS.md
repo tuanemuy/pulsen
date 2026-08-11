@@ -15,9 +15,17 @@
 | 区分 | 件数 |
 |---|---|
 | A | 28 |
-| B | 86 |
-| C | 11 |
+| B | 85 |
+| C | 12 |
 | 合計 | 125 |
+
+スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境で許容するスキップ件数」を宣言する（`SkipBudget`）。宣言を超えたスキップはケースの失敗として現れる。
+
+## 適用範囲
+
+TaskRepository / Clock / TaskIdGenerator / ExclusiveLock / WorktreeManager のフックは、破損・状況の**意味**だけを受け取る。この5ポートのスイートは、フックを実装するだけで別の実装（in-memory 等）にも適用できる。
+
+ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` / `put_named_with_ext` / `put_at_absolute` / `put_at_relative`）は **YAML ソースを受け取る**。「YAML 構文エラー」「重複キー」を前提とする行（TC-port-config-store-014 / TC-port-workflow-store-017）は、表現そのものを渡す口が無ければ組み立てられないためで、この2ポートのスイートは YAML 表現に結合している（`.adr/053-conformance-yaml-source-hooks.md`）。
 
 ## ConfigStore（24行 / A 0・B 23・C 1）
 
@@ -132,16 +140,16 @@
 | TC-port-task-repository-040 | アーカイブ側に同じ混在 | B | `corrupt_whole_record(Archived)` + `corrupt_snapshot(Archived)` |
 | TC-port-task-repository-041 | 走査対象が存在するが読み取れない | C | `make_unreadable(Active)` / `make_unreadable(Archived)` |
 | TC-port-task-repository-042 | 別スレッドが読み続ける中で `save` を反復 | B | `concurrent_repo` |
-| TC-port-task-repository-043 | `save` が `Err`（NotFound / Io）を返した | A | `save` → `find` / `list_active`（Io 分岐は `make_unwritable(Active)` を使えるが、NotFound 分岐だけで観測できる） |
+| TC-port-task-repository-043 | `save` が `Err`（NotFound / Io）を返した | A | `save` → `find` / `list_active`。Io 分岐は `make_unwritable(Active)` があればそこも観測する（無ければその分岐だけ飛ばす。行の主張は NotFound 分岐が常に観測するためスキップにはしない） |
 | TC-port-task-repository-044 | 別スレッドが読み続ける中で `archive` | B | `concurrent_repo` |
 
-## Clock（5行 / A 2・B 2・C 1）
+## Clock（5行 / A 2・B 1・C 2）
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
 | TC-port-clock-001 | なし | A | `now` |
 | TC-port-clock-002 | なし | A | `now` + `Timestamp::to_rfc3339` / `parse_rfc3339`（変換はドメインが持つ。ADR-020） |
-| TC-port-clock-003 | 呼び出しの前後で実時刻を観測できる | B | `observe_wall_clock` |
+| TC-port-clock-003 | 呼び出しの前後で実時刻を観測できる（spec は「テスト中に時刻改変が起きないアダプター環境に限る」とする） | C | `observe_wall_clock` |
 | TC-port-clock-004 | 時刻が進んだ状態 | B | `advance` |
 | TC-port-clock-005 | 時刻を過去へ巻き戻した状態 | C | `rewind` |
 
@@ -197,7 +205,7 @@
 
 対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager`）はフックではなく、すべてのケースが使う。
 
-ADR-027 の一覧から変えた点は次の3つで、根拠は `.thread/1/adr.md` の ADR-041 にある。
+ADR-027 の一覧から変えた点は次の3つで、根拠は `.adr/027-port-conformance-suite-and-harness-hooks.md` にある。
 
 - `TaskIdGeneratorHarness::another_generator` を足した（ADR-027 の表は TaskIdGenerator の行を持っていなかった）
 - `WorktreeManagerHarness::absent_branch_name` を `head_branch_name` から分けた

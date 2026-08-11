@@ -12,7 +12,6 @@ use pulsen_domain::definition::{
 use pulsen_domain::execution::TargetError;
 use pulsen_domain::task::{AbsolutePathError, BranchNameError, CreateError};
 
-use crate::adapter::task_id::IdGeneratorInitError;
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
 
 use super::add::AddError;
@@ -66,7 +65,9 @@ fn wire_error(error: &WireError) -> String {
             ],
         ),
         WireError::Config { config_path, error } => config_error(config_path, error),
-        WireError::IdGenerator(error) => id_generator_error(error),
+        WireError::IdGenerator { message } => {
+            problem("タスクIDを発行できません。", &[format!("原因: {message}")])
+        }
     }
 }
 
@@ -101,15 +102,6 @@ fn config_error(config_path: &Path, error: &ConfigLoadError) -> String {
             ],
         ),
     }
-}
-
-/// タスクIDの発行の初期化の失敗。
-fn id_generator_error(error: &IdGeneratorInitError) -> String {
-    let cause = match error {
-        IdGeneratorInitError::Entropy { message } => format!("乱数を取得できない: {message}"),
-        IdGeneratorInitError::InvalidFormat(_) => "IDの組み立て規則が制約を満たさない".to_owned(),
-    };
-    problem("タスクIDを発行できません。", &[format!("原因: {cause}")])
 }
 
 /// 登録の失敗。

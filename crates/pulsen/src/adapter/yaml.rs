@@ -220,7 +220,7 @@ fn convert(value: serde_yaml_ng::Value) -> Result<Yaml, YamlSyntaxError> {
         serde_yaml_ng::Value::Mapping(mapping) => {
             let mut entries = Vec::with_capacity(mapping.len());
             for (key, value) in mapping {
-                entries.push((key_text(convert(key)?), convert(value)?));
+                entries.push((key_text(convert(key)?)?, convert(value)?));
             }
             Ok(Yaml::Mapping(YamlMapping { entries }))
         }
@@ -231,15 +231,23 @@ fn convert(value: serde_yaml_ng::Value) -> Result<Yaml, YamlSyntaxError> {
     }
 }
 
-/// キーを文字列にする。文字列でないキーはスキーマに無いキーとして扱われる。
-fn key_text(key: Yaml) -> String {
+/// キーを文字列として読む。文字列でないキーは記法として拒否する。
+///
+/// `agents:` / `statuses:` の直下はキー自体が自由形式なので、非文字列キーを文字列化すると
+/// スキーマ走査は通り、そのまま名前として受理される(複合キーは同じ表現に潰れて後勝ちで
+/// 消える)。スキーマに無い記法を黙って読み替えないのはタグの拒否(ADR-042)と同じ根拠。
+fn key_text(key: Yaml) -> Result<String, YamlSyntaxError> {
     match key {
-        Yaml::Text(text) => text,
-        Yaml::Null => "null".to_owned(),
-        Yaml::Bool(value) => value.to_string(),
-        Yaml::Integer(value) => value.to_string(),
-        Yaml::Float(value) => value.to_string(),
-        Yaml::Sequence(_) | Yaml::Mapping(_) => "(複合キー)".to_owned(),
+        Yaml::Text(text) => Ok(text),
+        other @ (Yaml::Null
+        | Yaml::Bool(_)
+        | Yaml::Integer(_)
+        | Yaml::Float(_)
+        | Yaml::Sequence(_)
+        | Yaml::Mapping(_)) => Err(YamlSyntaxError {
+            message: format!("キーは文字列である必要があります(実際は{})", other.kind()),
+            location: None,
+        }),
     }
 }
 
@@ -320,12 +328,24 @@ mod tests {
     }
 
     #[test]
-    fn 文字列でないキーはスキーマに無いキーとして現れる() {
-        let document = parse("1: a\ntrue: b\n");
-        let mapping = document.as_mapping().expect("マッピング");
+    fn 文字列でないキーは記法として拒否される() {
+        for text in [
+            "1: a\n",
+            "true: a\n",
+            "null: a\n",
+            "1.5: a\n",
+            "? [a, b]\n: c\n",
+            "? {a: b}\n: c\n",
+        ] {
+            let error = parse_document(text).expect_err("拒否される");
+            assert!(error.message.contains("キーは文字列"), "{text:?}");
+        }
+    }
 
-        assert_eq!(mapping.unknown_key(&["cmd"]), Some("1"));
-        assert_eq!(mapping.unknown_key(&["cmd", "1"]), Some("true"));
+    #[test]
+    fn 入れ子のマッピングでも文字列でないキーは拒否される() {
+        let error = parse_document("agents:\n  1: a\n").expect_err("拒否される");
+        assert!(error.message.contains("キーは文字列"));
     }
 
     #[test]

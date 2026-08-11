@@ -19,6 +19,10 @@ use super::fsdir::ensure_dir;
 ///
 /// 書き込み先のディレクトリは必要に応じて作成する(状態ディレクトリはツール管理領域であり、
 /// 書き込み系の操作が自動作成する契約)。
+///
+/// 対象ファイルの権限は置換のたびに一時ファイルのもの(Unix では所有者のみ読み書き)に
+/// 作り直される。タスクファイルはツールの管理領域であり所有者限定でよい、という意図で
+/// あって、既存の権限を引き継ぐ設計ではない。
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = parent_of(path)?;
     ensure_dir(dir)?;
@@ -37,12 +41,18 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// 移動先のディレクトリは必要に応じて作成する。移動は同一ファイルシステム内を前提とし、
 /// 中間状態(両方に現れる・どちらにも完全体が無い)を作らない。
 pub fn rename_atomic(from: &Path, to: &Path) -> io::Result<()> {
+    let source = parent_of(from)?;
     let dir = parent_of(to)?;
     ensure_dir(dir)?;
 
     std::fs::rename(from, to)?;
 
     sync_dir(dir);
+    // 別ディレクトリへの移動は2つのディレクトリエントリを変える。移動先だけを永続化すると
+    // クラッシュ後に「両方に在る」中間状態が残りうる。
+    if source != dir {
+        sync_dir(source);
+    }
     Ok(())
 }
 

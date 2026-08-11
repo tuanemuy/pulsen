@@ -58,12 +58,14 @@ pub enum WireError {
         error: ConfigLoadError,
     },
     /// タスクIDの発行を初期化できない。
-    IdGenerator(IdGeneratorInitError),
+    IdGenerator {
+        /// 原因の説明。
+        message: String,
+    },
 }
 
 /// 結線済みのアダプターと、起動時に読み込んだグローバル設定。
 pub struct Runtime {
-    home: PulsenHome,
     config: GlobalConfig,
     workflows: FsWorkflowStore,
     worktrees: GitCliWorktreeManager,
@@ -74,11 +76,6 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// 解決済みのグローバルホーム。
-    pub fn home(&self) -> &PulsenHome {
-        &self.home
-    }
-
     /// 読み込み済みのグローバル設定。
     pub fn config(&self) -> &GlobalConfig {
         &self.config
@@ -139,7 +136,11 @@ pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
         .load()
         .map_err(|error| WireError::Config { config_path, error })?;
 
-    let ids = DefaultTaskIdGenerator::new(SystemClock::new()).map_err(WireError::IdGenerator)?;
+    let ids = DefaultTaskIdGenerator::new(SystemClock::new()).map_err(|error| {
+        WireError::IdGenerator {
+            message: id_generator_cause(&error),
+        }
+    })?;
 
     Ok(Runtime {
         workflows: FsWorkflowStore::new(home.workflows_dir(), base_dir),
@@ -148,9 +149,19 @@ pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
         clock: SystemClock::new(),
         tasks: FsTaskRepository::new(home.state_root().clone()),
         lock: FileExclusiveLock::new(home.lock_path()),
-        home,
         config,
     })
+}
+
+/// タスクID発行の初期化に失敗した原因。
+///
+/// 乱数を取れないというアダプター固有の事情はここで説明に畳む。アダプターへの依存を
+/// 合成ルートの1箇所に閉じるため、文言層にはアダプターの型を渡さない。
+fn id_generator_cause(error: &IdGeneratorInitError) -> String {
+    match error {
+        IdGeneratorInitError::Entropy { message } => format!("乱数を取得できない: {message}"),
+        IdGeneratorInitError::InvalidFormat(_) => "IDの組み立て規則が制約を満たさない".to_owned(),
+    }
 }
 
 /// `--home` > `PULSEN_HOME` > `~/.pulsen/` の順で解決する(pages 共通事項)。
@@ -158,6 +169,8 @@ fn resolve_home(flag: Option<PathBuf>) -> Result<PulsenHome, WireError> {
     if let Some(path) = flag {
         return home_from(path);
     }
+    // 空文字は未設定と同義に扱う。空パスはホームとして解決できず、既定へ落ちるほうが
+    // 「変数を消し忘れた」状況に対する挙動として素直なため。
     if let Some(value) = env::var_os(HOME_ENV)
         && !value.is_empty()
     {

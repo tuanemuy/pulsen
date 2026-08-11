@@ -100,15 +100,17 @@ pub fn tc_port_task_id_generator_005_発行されたidから導出する名前�
 
 /// TaskIdGenerator の適合スイートをアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! task_id_generator_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::task_id_generator as __pulsen_conformance_task_id_generator;
 
         $crate::conformance_cases!(
             __pulsen_conformance_task_id_generator,
             $setup,
+            __PULSEN_CONFORMANCE_TASK_ID_GENERATOR_SKIPS = $allowed_skips,
             [
                 tc_port_task_id_generator_001_発行されたidは制約を満たす,
                 tc_port_task_id_generator_002_多数回発行しても重複しない,

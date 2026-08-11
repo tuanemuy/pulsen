@@ -77,15 +77,17 @@ pub fn tc_port_clock_005_巻き戻した時刻はそのまま返る(
 
 /// Clock の適合スイートをアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! clock_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::clock as __pulsen_conformance_clock;
 
         $crate::conformance_cases!(
             __pulsen_conformance_clock,
             $setup,
+            __PULSEN_CONFORMANCE_CLOCK_SKIPS = $allowed_skips,
             [
                 tc_port_clock_001_現在時刻は秒精度のutcで返る,
                 tc_port_clock_002_返値は直列化表現と往復する,

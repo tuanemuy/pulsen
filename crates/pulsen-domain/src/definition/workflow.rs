@@ -135,47 +135,59 @@ impl WorkflowDefinition {
     /// 実効エージェント。ステータスの上書き > ワークフローデフォルト。
     ///
     /// エージェント実行以外のステータスには適用対象がないため `None` を返す。
+    /// この定義に無いステータス名も同じく `None` を返すが、タスクの不変条件1
+    /// (`task_status ∈ snapshot.statuses`)により実運用では到達しない。
     pub fn effective_agent(&self, status: &StatusName) -> Option<&AgentName> {
         match self.statuses.get(status) {
             Some(StatusDefinition::AgentRun { agent, .. }) => {
                 agent.as_ref().or(self.default_agent.as_ref())
             }
-            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) | None => None,
+            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) => None,
+            None => None,
         }
     }
 
     /// 実効モデル。ステータスの上書き > ワークフローデフォルト。
+    ///
+    /// 適用対象のないステータスと、この定義に無いステータス名はいずれも `None`
+    /// (`effective_agent` と同じ扱い)。
     pub fn effective_model(&self, status: &StatusName) -> Option<&ModelName> {
         match self.statuses.get(status) {
             Some(StatusDefinition::AgentRun { model, .. }) => {
                 model.as_ref().or(self.default_model.as_ref())
             }
-            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) | None => None,
+            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) => None,
+            None => None,
         }
     }
 
     /// 実効 timeout。ステータスの指定 > 組み込みデフォルト。
+    ///
+    /// 適用対象のないステータスと、この定義に無いステータス名はいずれも組み込み
+    /// デフォルトになる(`effective_agent` と同じく、後者は不変条件1により到達しない)。
     pub fn effective_timeout(&self, status: &StatusName) -> TimeoutSpec {
         match self.statuses.get(status) {
             Some(StatusDefinition::AgentRun { timeout, .. }) => {
                 timeout.unwrap_or(Self::DEFAULT_TIMEOUT)
             }
-            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) | None => {
-                Self::DEFAULT_TIMEOUT
-            }
+            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) => Self::DEFAULT_TIMEOUT,
+            None => Self::DEFAULT_TIMEOUT,
         }
     }
 
     /// 実効リトライ上限。`AgentRun` は `retries` > 組み込みデフォルト、
     /// `Cleanup` は常に組み込みデフォルト(ADR-014)。
+    ///
+    /// `Wait` に対する呼び出しは spec が規定しない(attempt_count を消費する操作が無く
+    /// 適用対象がない。呼び出し側が動作種別で分岐してから使う)。この定義に無いステータス
+    /// 名も同じ値を返すが、不変条件1により実運用では到達しない。
     pub fn effective_retry_limit(&self, status: &StatusName) -> u32 {
         match self.statuses.get(status) {
             Some(StatusDefinition::AgentRun { retries, .. }) => {
                 retries.unwrap_or(Self::DEFAULT_RETRY_LIMIT)
             }
-            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) | None => {
-                Self::DEFAULT_RETRY_LIMIT
-            }
+            Some(StatusDefinition::Wait | StatusDefinition::Cleanup) => Self::DEFAULT_RETRY_LIMIT,
+            None => Self::DEFAULT_RETRY_LIMIT,
         }
     }
 }

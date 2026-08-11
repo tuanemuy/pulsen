@@ -1,11 +1,13 @@
 # ADR — Issue #1: 基盤・グローバル設定・ワークフロー定義とタスク登録(add)
 
-本書の ADR 番号は、プロジェクトの正本 `.adr/`（既存18件）の**続き番号**として採番する（ADR-019 以降）。本文中に現れる ADR-001〜018 は `.adr/` の既存 ADR を指し、本書のエントリと番号が衝突しない。実装時の起票手順は ADR-035 を参照。
+本書の ADR 番号は、プロジェクトの正本 `.adr/`（既存18件）の**続き番号**として採番する（ADR-019 以降）。本文中に現れる ADR-001〜018 は `.adr/` の既存 ADR を指し、本書のエントリと番号が衝突しない。実装時の起票手順は ADR-035、正本の書式は ADR-038 を参照。
+
+各エントリの Status は正本への昇格状況の索引を兼ねる。`.adr/` のファイル名を持つものは昇格済み、ADR-041 / 047 は既存の `.adr/` エントリに本文を反映済みで単独のファイルを持たない。
 
 ## ADR-019: ドメインを独立クレートに切り出した3クレートのワークスペースにする
 
 ### Status
-Proposed
+Accepted（ステップ1で確定。`.adr/019-domain-crate-workspace.md`）
 
 ### Context
 
@@ -93,7 +95,7 @@ ADR-013 はワークフローYAML・config.yaml の未知キーを読み込み�
 ## ADR-022: 排他ロックは標準ライブラリの `File::try_lock` で実装し、`LockGuard` はドメインのマーカートレイトにする
 
 ### Status
-Proposed
+Accepted（ステップ1で確定。`.adr/022-std-file-lock-and-lockguard-marker-trait.md`）
 
 ### Context
 
@@ -121,7 +123,7 @@ Rust 1.89 で `std::fs::File::try_lock() -> Result<(), std::fs::TryLockError>` �
 ## ADR-023: 依存クレートの選定
 
 ### Status
-Proposed
+Accepted（ステップ1で確定。`.adr/023-dependency-selection.md`）
 
 ### Context
 
@@ -400,7 +402,7 @@ Issue の完了条件は「スタブ・仮実装・部分実装は不可。実�
 ## ADR-029: `clippy::wildcard_enum_match_arm` はドメインクレートにのみ適用する
 
 ### Status
-Proposed
+Accepted（ステップ1で確定。`.adr/029-wildcard-enum-match-arm-lint-domain-only.md`）
 
 ### Context
 
@@ -518,7 +520,7 @@ Accepted（ステップ14で確定。`.adr/033-git-fixture-reproducibility.md`�
 ## ADR-034: `WorkflowRef` のパス区切り文字集合を定数として切り出す
 
 ### Status
-Proposed
+Accepted（ステップ3で確定。`.adr/034-workflow-ref-separator-set-as-constant.md`。既定集合の選び方は ADR-037 で改めた）
 
 ### Context
 
@@ -538,7 +540,7 @@ spec/domains/definition.md は `WorkflowRef::parse` の規則を「値がパス�
 ## ADR-035: 本スライスの ADR を `.adr/019` 以降として正本に起票する
 
 ### Status
-Proposed
+Accepted（ステップ1で確定。`.adr/035-file-slice-adrs-from-019.md`）
 
 ### Context
 
@@ -625,7 +627,7 @@ ADR-034 は「プラットフォーム既定の集合（`PLATFORM_SEPARATORS`）
 ## ADR-038: `.adr/` の起票は正本の既存フォーマットに合わせる
 
 ### Status
-Accepted（ステップ1で確定）
+Accepted（ステップ1で確定。`.adr/038-adr-filing-format.md` に昇格）
 
 ### Context
 
@@ -747,7 +749,7 @@ ADR-021 は「空ファイル・null ドキュメントは全キー省略とし�
 ## ADR-043: ストアのアダプターはホームのレイアウトを持たず、必要なパスをすべて注入される
 
 ### Status
-Accepted（ステップ10・11で確定）
+Accepted（ステップ10・11で確定。`.adr/043-store-adapters-receive-injected-paths.md` に昇格）
 
 ### Context
 
@@ -792,7 +794,7 @@ spec/domains/task.md は `TaskFilePath` を「レイアウトの単一の定義�
 ## ADR-045: タスクファイルの DTO はスナップショット表現で型引数化する
 
 ### Status
-Accepted（ステップ12で確定）
+Accepted（ステップ12で確定。`.adr/045-task-file-dto-generic-over-snapshot.md` に昇格）
 
 ### Context
 
@@ -817,7 +819,7 @@ ADR-025 は「`save_degraded` は `snapshot` の生バイト列をそのまま�
 ## ADR-046: 適合ケースは「操作の後の観測」にスキップ可能なフックを使わない
 
 ### Status
-Accepted（ステップ12で確定）
+Accepted（ステップ12で確定。`.adr/046-no-skippable-hooks-for-post-operation-observation.md` に昇格）
 
 ### Context
 
@@ -902,7 +904,7 @@ parse は**その値を最初に使う直前**に置く。`WorkflowRef::parse` �
 ## ADR-049: `--base` は `-` で始まる値も値として受け取る
 
 ### Status
-Accepted（ステップ17で確定）
+Accepted（ステップ17で確定。`.adr/049-base-flag-allows-hyphen-values.md` に昇格）
 
 ### Context
 
@@ -926,7 +928,7 @@ spec/testcases/task/register-task.md の境界値は「`--base` の先頭が `-`
 ## ADR-050: スキーマ走査で見つかる設定・定義エラーの「位置」は論理位置で示す
 
 ### Status
-Accepted（ステップ19で確定）
+Accepted（ステップ19で確定。`.adr/050-schema-error-location-is-logical.md`）
 
 ### Context
 
@@ -956,7 +958,7 @@ spec/testcases/task/register-task.md の異常系は「config.yaml がパース�
 ## ADR-051: 表示名を決められないパス指定は、語幹が空白だけになるファイル名で再現する
 
 ### Status
-Accepted（ステップ19で確定）
+Accepted（ステップ19で確定。`.adr/051-undisplayable-name-fixture-is-whitespace-stem.md` に昇格）
 
 ### Context
 
@@ -976,7 +978,7 @@ spec の異常系は「`workflow:` キーがなく、ファイル名由来の表
 ## ADR-052: 受け入れテストの実バイナリ起動と別プロセスのフィクスチャは `tests/common` に集約する
 
 ### Status
-Accepted（ステップ18で確定）
+Accepted（ステップ18で確定。`.adr/052-acceptance-test-harness-in-tests-common.md` に昇格）
 
 ### Context
 
@@ -991,3 +993,63 @@ Accepted（ステップ18で確定）
 
 - 良い点: 環境依存の取り扱いが1箇所に集まり、テストの本文が spec の言葉だけになる。保持プロセスの起動手順が二重に存在しない
 - トレードオフ: `conformance_lock.rs` が `tests/common` に依存する（フィクスチャの共有であって、適合スイート自体は `pulsen-conformance` に閉じたまま）
+
+---
+
+## ADR-054: ワークフロー定義エラーの「どのファイルか」は自由形式のメッセージに載せる
+
+### Status
+Accepted（`.adr/054-workflow-error-file-path-goes-into-free-form-messages.md` に昇格）
+
+### Context
+
+ADR-050 はスキーマ違反を「対象ファイルの絶対パスと論理位置」で示すと決めているが、ワークフロー定義の解決先を知っているのはストアのアダプターだけで、CLI の文言層は補えない。`WorkflowLoadError` と `WorkflowParseError` の形は spec のポート表で確定しており、`location` は論理位置そのものとして適合テストが値の一致で固定している。
+
+### Decision
+
+解決先の絶対パスは自由形式のメッセージ（`WorkflowLoadError::Io` と `WorkflowParseError::YamlSyntax` の `message`）にだけ前置する。`location` には載せない。構造の破れはステータス名で位置を示す。
+
+### Consequences
+
+- 良い点: 「存在するが読めない」「YAML として壊れている」でどのファイルか必ず分かる。ポート表との1:1一致（AC-7）を保つ
+- トレードオフ: 構造の破れではパスが出ない（対象ファイルは `--workflow` の指定1つに限られる）
+
+---
+
+## ADR-053: ConfigStore / WorkflowStore の適合スイートは YAML ソースを受け取る
+
+### Status
+Accepted（`.adr/053-conformance-yaml-source-hooks.md` に昇格）
+
+### Context
+
+ADR-027 は、ハーネスのフックが「破損・状況の意味だけを受け取る」ことをスイートの設計原則にした。ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` / `put_named_with_ext` / `put_at_absolute` / `put_at_relative`）は YAML テキストを受け取っており、この原則の例外になっている。TC-port-config-store-014（YAML 構文エラー）と TC-port-workflow-store-017（構文エラー・重複キー）は「構造として成立していない表現」が前提であり、構造化した値では表現できない。
+
+### Decision
+
+コードの構造は変えず、適用範囲をドキュメントで限定する。「フックを実装するだけで別の実装にも同じスイートを通せる」が成り立つのは TaskRepository / Clock / TaskIdGenerator / ExclusiveLock / WorktreeManager の5ポートで、ConfigStore / WorkflowStore のスイートは YAML 表現に結合していることを `HOOKS.md` とクレートの doc に明記する。
+
+### Consequences
+
+- 良い点: 構文エラー分岐が適合スイートの中に残る。主張の範囲がドキュメントと一致する
+- トレードオフ: in-memory な ConfigStore / WorkflowStore がこの2ポートのスイートを適用するには YAML の解釈が要る
+
+---
+
+## ADR-055: 適合スイートの適用側は「許容するスキップ件数」を宣言する
+
+### Status
+Accepted（レビュー指摘 W-030 への対応で確定。`.adr/` への昇格は次のスライスで扱う）
+
+### Context
+
+`CaseOutcome::report` はスキップを標準出力に書くが、libtest は成功したテストの出力を握り潰す（stderr も同様に捕捉するため `eprintln!` にしても変わらない）。結果として「125件 PASS」の意味が環境で静かに変わる。権限フックを持たないプラットフォームでは8件が素通りし、その差が出力に現れない。
+
+### Decision
+
+`conformance_cases!` にスキップ集計（`SkipBudget`）を持たせ、スイートを適用するテストファイルが「この環境で許容するスキップは N 件」を宣言する。宣言を超えたスキップはケースの失敗にする。件数はプラットフォームごとに宣言してよく、権限操作を持たない環境で走らない行数はその宣言から読める。
+
+### Consequences
+
+- 良い点: 環境が変わって走る行が減れば、その差がテストの失敗として現れる。どの行が走らないかが宣言とコメントの形でテストファイルに残る
+- トレードオフ: root 実行のように `chmod` が効かない環境では、これまで静かにスキップしていた行が失敗になる。「同じ125行を通した」と言えない実行を緑にしないことを優先する

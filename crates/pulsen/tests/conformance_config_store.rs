@@ -59,4 +59,14 @@ impl ConfigStoreHarness for FsConfigStoreHarness {
     }
 }
 
-pulsen_conformance::config_store_conformance!(FsConfigStoreHarness::new());
+/// この環境で許容するスキップ件数。
+///
+/// 権限操作を持たないプラットフォームでは「読み取れない config.yaml」を作れず、
+/// TC-port-config-store-023 が走らない。root 実行のように `chmod` が効かない環境も
+/// 同じ状況になるが、そこは宣言と食い違うことを失敗として見せる。
+#[cfg(unix)]
+const ALLOWED_SKIPS: usize = 0;
+#[cfg(not(unix))]
+const ALLOWED_SKIPS: usize = 1;
+
+pulsen_conformance::config_store_conformance!(FsConfigStoreHarness::new(), ALLOWED_SKIPS);

@@ -108,9 +108,18 @@ impl FsTaskRepository {
 
         let mut entries = Vec::with_capacity(paths.len());
         for path in paths {
-            let bytes = fs::read(&path).map_err(|error| ReadError::Io {
-                message: message(&path, &error),
-            })?;
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                // 走査中にアーカイブされたエントリは、この領域にもう無いだけで失敗ではない。
+                // 読み取りはロックなしで常に一貫した内容を返す契約なので、`archive` の
+                // 中間状態を走査全体の失敗として観測させない。
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(ReadError::Io {
+                        message: message(&path, &error),
+                    });
+                }
+            };
             entries.push(match task_file::decode(&bytes) {
                 Ok(record) => TaskEntry::Record(record),
                 Err(reason) => TaskEntry::Corrupt {
@@ -125,11 +134,19 @@ impl FsTaskRepository {
 
 impl TaskRepository for FsTaskRepository {
     fn create(&self, task: &Task) -> Result<(), CreateError> {
-        let taken = |error: io::Error| CreateError::Io {
-            message: error.to_string(),
+        let taken = |path: PathBuf| {
+            move |error: io::Error| CreateError::Io {
+                message: message(&path, &error),
+            }
         };
-        if self.exists(Area::Active, task.id()).map_err(taken)?
-            || self.exists(Area::Archived, task.id()).map_err(taken)?
+        let active = self.path(Area::Active, task.id());
+        let archived = self.path(Area::Archived, task.id());
+        if self
+            .exists(Area::Active, task.id())
+            .map_err(taken(active))?
+            || self
+                .exists(Area::Archived, task.id())
+                .map_err(taken(archived))?
         {
             return Err(CreateError::Conflict);
         }

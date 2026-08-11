@@ -94,4 +94,6 @@ impl ExclusiveLockHarness for FileExclusiveLockHarness {
     }
 }
 
-pulsen_conformance::exclusive_lock_conformance!(FileExclusiveLockHarness::new());
+// 別プロセスの保持もロック機構の異常も環境非依存に組めるため(ADR-032)、スキップは
+// 1件も許容しない。
+pulsen_conformance::exclusive_lock_conformance!(FileExclusiveLockHarness::new(), 0);

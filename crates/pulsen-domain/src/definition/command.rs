@@ -7,6 +7,18 @@ pub enum CommandError {
     Empty,
 }
 
+impl CommandError {
+    /// 制約の説明。
+    ///
+    /// 同じ制約は config.yaml とワークフロー定義YAMLの両方で破れるため、説明の定義箇所を
+    /// ドメインに1つ置く。層ごとに書くと同じ誤りの案内が食い違う。
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Empty => "コマンドが空です",
+        }
+    }
+}
+
 macro_rules! token_list {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*

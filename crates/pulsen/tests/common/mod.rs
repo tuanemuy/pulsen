@@ -18,6 +18,9 @@ pub mod lock;
 /// グローバルホームを指す環境変数。
 pub const HOME_ENV: &str = "PULSEN_HOME";
 
+/// ユーザーのホームディレクトリを指す環境変数(プラットフォームで名前が違う)。
+const USER_HOME_ENV: [&str; 2] = ["HOME", "USERPROFILE"];
+
 /// `claude` エージェントだけを定義したグローバル設定。
 pub const CONFIG: &str = "\
 agents:
@@ -165,18 +168,21 @@ impl Home {
         paths
     }
 
-    /// グローバル設定とワークフロー定義の現在の内容を控える。
+    /// グローバル設定とワークフロー定義の現在の内容と、置き場のファイル一覧を控える。
     pub fn untouched(&self) -> Untouched {
         Untouched::of(self.resources())
+            .with_listings([self.workflows_dir(), self.path().to_path_buf()])
     }
 }
 
 /// 実行の前後で内容が変わらないことを確かめる対象。
 ///
 /// 「読めないリソースには書き込まない」(PAGE-common-006 規則2)の観測可能な帰結を、
-/// 利用者が用意したファイルのバイト列で確かめる。
+/// 利用者が用意したファイルのバイト列と、置き場のファイル一覧で確かめる。一覧を見ない
+/// と、既存ファイルを書き換えない代わりに新しいファイルを増やす実装を見逃す。
 pub struct Untouched {
     entries: Vec<(PathBuf, Option<Vec<u8>>)>,
+    listings: Vec<(PathBuf, Vec<PathBuf>)>,
 }
 
 impl Untouched {
@@ -189,10 +195,25 @@ impl Untouched {
                 (path, content)
             })
             .collect();
-        Self { entries }
+        Self {
+            entries,
+            listings: Vec::new(),
+        }
     }
 
-    /// 控えた時点から内容が変わっていないことを確かめる。
+    /// ディレクトリ直下のファイル一覧も控える。
+    pub fn with_listings(mut self, dirs: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.listings = dirs
+            .into_iter()
+            .map(|dir| {
+                let files = listed_files(&dir);
+                (dir, files)
+            })
+            .collect();
+        self
+    }
+
+    /// 控えた時点から内容もファイルの顔ぶれも変わっていないことを確かめる。
     pub fn assert_unchanged(&self) {
         for (path, expected) in &self.entries {
             assert_eq!(
@@ -202,7 +223,31 @@ impl Untouched {
                 path.display()
             );
         }
+        for (dir, expected) in &self.listings {
+            assert_eq!(
+                &listed_files(dir),
+                expected,
+                "{} のファイルの顔ぶれが変わっている",
+                dir.display()
+            );
+        }
     }
+}
+
+/// ディレクトリ直下のファイル一覧(パスの昇順)。
+///
+/// ディレクトリは数えない — `state/` は書き込み系が必要に応じて自動作成する管理領域
+/// (pages ※3)であり、利用者が用意したリソースの不変とは別の話になる。
+fn listed_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file())
+        .collect();
+    paths.sort();
+    paths
 }
 
 /// git リポジトリのフィクスチャ。
@@ -253,6 +298,7 @@ pub fn scratch() -> TempDir {
 pub struct Add {
     home_flag: Option<OsString>,
     home_env: Option<OsString>,
+    user_home: Option<OsString>,
     workflow: OsString,
     repo: OsString,
     base: Option<OsString>,
@@ -264,6 +310,7 @@ pub fn add(workflow: impl AsRef<OsStr>, repo: impl AsRef<OsStr>) -> Add {
     Add {
         home_flag: None,
         home_env: None,
+        user_home: None,
         workflow: workflow.as_ref().to_owned(),
         repo: repo.as_ref().to_owned(),
         base: None,
@@ -281,6 +328,14 @@ impl Add {
     /// 環境変数 `PULSEN_HOME` を与える。
     pub fn home_env(mut self, path: &Path) -> Self {
         self.home_env = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// 既定のホーム `~/.pulsen/` の基点になるユーザーのホームディレクトリを与える。
+    ///
+    /// 既定へ落ちる経路を、実ユーザーの `~/.pulsen/` に触れずに観測するために置く。
+    pub fn user_home(mut self, path: &Path) -> Self {
+        self.user_home = Some(path.as_os_str().to_owned());
         self
     }
 
@@ -304,6 +359,11 @@ impl Add {
         if let Some(home) = self.home_env {
             command.env(HOME_ENV, home);
         }
+        if let Some(home) = self.user_home {
+            for variable in USER_HOME_ENV {
+                command.env(variable, &home);
+            }
+        }
         if let Some(dir) = self.cwd {
             command.current_dir(dir);
         }
@@ -326,6 +386,24 @@ impl Add {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
+    }
+}
+
+/// 任意の引数で実バイナリを1回起動する。
+///
+/// 引数の解釈そのもの(使い方の誤り・`--help`)を確かめる経路。ホームには触れないため
+/// グローバルホームの指定は取らない。
+pub fn run_cli(arguments: &[&str]) -> Run {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+    // 実行環境の PULSEN_HOME に結果を左右させない。
+    command.env_remove(HOME_ENV);
+    command.args(arguments);
+
+    let output = command.output().expect("pulsen を起動できる");
+    Run {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
 }
 
@@ -380,15 +458,24 @@ impl Run {
     }
 }
 
-/// ファイルを読み取れない状態にする。
+/// ファイルを読み取れない状態にする(ファイル専用)。
 ///
 /// 制限が実際に効いたことを確認してから `Some` を返す(ADR-027)。root 実行や
 /// 権限を持たないファイルシステムでは `chmod` が効かず、確認を省くと `Err(Io)` を
 /// 期待するケースがスキップに落ちずに失敗する。
+///
+/// 確認は `fs::read` の成否で行うため、ディレクトリに渡すと制限の有無にかかわらず
+/// `Err`(EISDIR)になり「効いた」と誤判定する。ディレクトリ版は
+/// `conformance_task_repository.rs` の `deny_dir_read` / `deny_dir_write` にある。
 #[cfg(unix)]
 pub fn deny_read(path: &Path) -> Option<Restore> {
     use std::os::unix::fs::PermissionsExt;
 
+    assert!(
+        path.is_file(),
+        "deny_read はファイル専用: {}",
+        path.display()
+    );
     let original = fs::metadata(path).ok()?.permissions();
     let mut denied = original.clone();
     denied.set_mode(0o000);
@@ -406,6 +493,11 @@ pub fn deny_read(path: &Path) -> Option<Restore> {
 }
 
 #[cfg(not(unix))]
-pub fn deny_read(_path: &Path) -> Option<Restore> {
+pub fn deny_read(path: &Path) -> Option<Restore> {
+    assert!(
+        path.is_file(),
+        "deny_read はファイル専用: {}",
+        path.display()
+    );
     None
 }

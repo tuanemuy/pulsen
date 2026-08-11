@@ -9,6 +9,19 @@ pub enum NameError {
     SurroundingWhitespace,
 }
 
+impl NameError {
+    /// 制約の説明。
+    ///
+    /// 同じ制約は config.yaml とワークフロー定義YAMLの両方で破れるため、説明の定義箇所を
+    /// ドメインに1つ置く。層ごとに書くと同じ誤りの案内が食い違う。
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Empty => "空文字列は指定できません",
+            Self::SurroundingWhitespace => "前後に空白を含められません",
+        }
+    }
+}
+
 macro_rules! trimmed_name {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*

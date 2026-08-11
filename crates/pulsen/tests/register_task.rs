@@ -16,7 +16,7 @@ use pulsen_conformance::doubles::{
 };
 use pulsen_domain::definition::{
     AgentName, GlobalConfig, GlobalConfigInput, LoadedWorkflow, NameError, RawAgentDefinition,
-    RawCommand, RawStatusDoc, RawWorkflowDoc, RegistrationError, WorkflowAssembler,
+    RawCommand, RawStatusDoc, RawWorkflowDoc, RegistrationError, StatusName, WorkflowAssembler,
     WorkflowLoadError, WorkflowName, WorkflowRef,
 };
 use pulsen_domain::execution::TargetError;
@@ -33,6 +33,11 @@ fn repo_path() -> PathBuf {
     }
 }
 
+/// 合成ルートが絶対化した後の対象リポジトリ。
+fn target_repo() -> RepoPath {
+    RepoPath::parse(repo_path()).expect("受理される")
+}
+
 fn branch(name: &str) -> BranchName {
     BranchName::parse(name.to_owned()).expect("受理される")
 }
@@ -43,6 +48,10 @@ fn workflow_name(name: &str) -> WorkflowName {
 
 fn agent_name(name: &str) -> AgentName {
     AgentName::parse(name.to_owned()).expect("受理される")
+}
+
+fn status_name(name: &str) -> StatusName {
+    StatusName::parse(name.to_owned()).expect("受理される")
 }
 
 fn task_id(id: &str) -> TaskId {
@@ -340,7 +349,7 @@ fn 同じ指定を繰り返しても重複排除されず別idのタスクにな
 }
 
 #[test]
-fn id衝突は再発行して1回だけ再試行される() {
+fn tc_task_register_task_012_id衝突は再発行して1回だけ再試行される() {
     let doubles = Doubles {
         ids: ScriptedTaskIdGenerator::new([
             task_id("20260811t091530-k3f9qa1b"),
@@ -366,7 +375,7 @@ fn id衝突は再発行して1回だけ再試行される() {
 }
 
 #[test]
-fn 再発行後も衝突したら実行環境のエラーになり三度目は試みない() {
+fn tc_task_register_task_047_再発行後も衝突したら実行環境のエラーになり三度目は試みない() {
     let doubles = Doubles {
         ids: ScriptedTaskIdGenerator::new([
             task_id("20260811t091530-k3f9qa1b"),
@@ -387,7 +396,7 @@ fn 再発行後も衝突したら実行環境のエラーになり三度目は�
 }
 
 #[test]
-fn タスクファイルの作成が入出力エラーなら実行環境のエラーになる() {
+fn tc_task_register_task_048_タスクファイルの作成が入出力エラーなら実行環境のエラーになる() {
     let doubles = Doubles {
         tasks: ScriptedTaskRepository::new([Err(CreateError::Io {
             message: "書き込めない".to_owned(),
@@ -424,7 +433,7 @@ fn ロックを取得できなければ何も観測せずに終わる() {
 }
 
 #[test]
-fn ロック機構自体の異常は実行環境のエラーになる() {
+fn tc_task_register_task_018_ロック機構自体の異常は実行環境のエラーになる() {
     let doubles = Doubles {
         workflows: ScriptedWorkflowStore::new([]),
         worktrees: ScriptedWorktreeManager::new(),
@@ -523,13 +532,8 @@ fn ベースブランチが不正な形なら入力境界で拒否される() {
 }
 
 #[test]
-fn 対象の分類はそのまま返り登録は行われない() {
-    for classification in [
-        TargetError::NotFound,
-        TargetError::NotARepository,
-        TargetError::DetachedHead,
-        TargetError::EmptyRepository,
-    ] {
+fn リポジトリの検証が返した分類はそのまま返り登録は行われない() {
+    for classification in [TargetError::NotFound, TargetError::NotARepository] {
         let doubles = Doubles {
             worktrees: ScriptedWorktreeManager::new()
                 .with_validate_repo([Err(classification.clone())]),
@@ -542,27 +546,108 @@ fn 対象の分類はそのまま返り登録は行われない() {
             doubles.register(input("implement", Some("main"))),
             Err(RegisterTaskError::Target(classification))
         );
+        assert_eq!(
+            doubles.worktrees.calls(),
+            vec![WorktreeManagerCall::ValidateRepo {
+                repo: target_repo()
+            }]
+        );
         assert_eq!(doubles.created(), vec![]);
     }
 }
 
 #[test]
-fn git操作自体の失敗は実行環境のエラーになる() {
+fn headのブランチを解決できない分類はそのまま返り登録は行われない() {
+    // HEAD 由来の分類を返すのは `head_branch`(ポート契約)。ベース省略時にだけ通る経路。
+    for classification in [TargetError::DetachedHead, TargetError::EmptyRepository] {
+        let doubles = Doubles {
+            worktrees: ScriptedWorktreeManager::new()
+                .with_validate_repo([Ok(())])
+                .with_head_branch([Err(classification.clone())]),
+            ids: ScriptedTaskIdGenerator::new([]),
+            tasks: ScriptedTaskRepository::new([]),
+            ..Doubles::new()
+        };
+
+        assert_eq!(
+            doubles.register(input("implement", None)),
+            Err(RegisterTaskError::Target(classification))
+        );
+        assert_eq!(
+            doubles.worktrees.calls(),
+            vec![
+                WorktreeManagerCall::ValidateRepo {
+                    repo: target_repo()
+                },
+                WorktreeManagerCall::HeadBranch {
+                    repo: target_repo()
+                },
+            ]
+        );
+        assert_eq!(doubles.created(), vec![]);
+    }
+}
+
+#[test]
+fn tc_task_register_task_040_git操作自体の失敗は実行環境のエラーになる() {
     let failed = TargetError::Failed {
         message: "git を起動できない".to_owned(),
     };
-    let doubles = Doubles {
-        worktrees: ScriptedWorktreeManager::new().with_validate_repo([Err(failed.clone())]),
-        ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
-        ..Doubles::new()
-    };
+    let base_branch = branch("develop");
+    let failures = [
+        (
+            ScriptedWorktreeManager::new().with_validate_repo([Err(failed.clone())]),
+            None,
+            vec![WorktreeManagerCall::ValidateRepo {
+                repo: target_repo(),
+            }],
+        ),
+        (
+            ScriptedWorktreeManager::new()
+                .with_validate_repo([Ok(())])
+                .with_head_branch([Err(failed.clone())]),
+            None,
+            vec![
+                WorktreeManagerCall::ValidateRepo {
+                    repo: target_repo(),
+                },
+                WorktreeManagerCall::HeadBranch {
+                    repo: target_repo(),
+                },
+            ],
+        ),
+        (
+            ScriptedWorktreeManager::new()
+                .with_validate_repo([Ok(())])
+                .with_branch_exists([Err(failed.clone())]),
+            Some("develop"),
+            vec![
+                WorktreeManagerCall::ValidateRepo {
+                    repo: target_repo(),
+                },
+                WorktreeManagerCall::BranchExists {
+                    repo: target_repo(),
+                    branch: base_branch.clone(),
+                },
+            ],
+        ),
+    ];
 
-    assert_eq!(
-        doubles.register(input("implement", Some("main"))),
-        Err(RegisterTaskError::Target(failed))
-    );
-    assert_eq!(doubles.created(), vec![]);
+    for (worktrees, base, expected_calls) in failures {
+        let doubles = Doubles {
+            worktrees,
+            ids: ScriptedTaskIdGenerator::new([]),
+            tasks: ScriptedTaskRepository::new([]),
+            ..Doubles::new()
+        };
+
+        assert_eq!(
+            doubles.register(input("implement", base)),
+            Err(RegisterTaskError::Target(failed.clone()))
+        );
+        assert_eq!(doubles.worktrees.calls(), expected_calls);
+        assert_eq!(doubles.created(), vec![]);
+    }
 }
 
 #[test]
@@ -587,12 +672,44 @@ fn 存在しないベースブランチは拒否される() {
 
 #[test]
 fn 登録時検証のエラーは全件まとめて返り登録は行われない() {
+    // `{model}` を要求し `skill_input` を持たないエージェントに、skill 指定の
+    // ステータスと prompt 指定のステータスを当てて、複数ステータスにまたがる
+    // 複数のエラーを起こす。
     let doubles = Doubles {
-        config: config_with_agents(vec![("claude", "claude {input}")]),
-        workflows: ScriptedWorkflowStore::new([Ok(loaded(
-            None,
-            Some("missing"),
-            "/home/u/.pulsen/workflows/implement.yaml",
+        config: config_with_agents(vec![("claude", "claude --model {model} {input}")]),
+        workflows: ScriptedWorkflowStore::new([Ok(LoadedWorkflow::new(
+            WorkflowAssembler::assemble(RawWorkflowDoc {
+                default_agent: Some("claude".to_owned()),
+                initial: Some("queued".to_owned()),
+                statuses: vec![
+                    (
+                        "queued".to_owned(),
+                        RawStatusDoc {
+                            skill: Some("implement".to_owned()),
+                            next: Some("reviewing".to_owned()),
+                            ..RawStatusDoc::default()
+                        },
+                    ),
+                    (
+                        "reviewing".to_owned(),
+                        RawStatusDoc {
+                            prompt: Some("見直して".to_owned()),
+                            next: Some("done".to_owned()),
+                            ..RawStatusDoc::default()
+                        },
+                    ),
+                    (
+                        "done".to_owned(),
+                        RawStatusDoc {
+                            run: Some("cleanup".to_owned()),
+                            ..RawStatusDoc::default()
+                        },
+                    ),
+                ],
+                ..RawWorkflowDoc::default()
+            })
+            .expect("受理される"),
+            PathBuf::from("/home/u/.pulsen/workflows/implement.yaml"),
         ))]),
         ids: ScriptedTaskIdGenerator::new([]),
         tasks: ScriptedTaskRepository::new([]),
@@ -602,10 +719,18 @@ fn 登録時検証のエラーは全件まとめて返り登録は行われな�
     assert_eq!(
         doubles.register(input("implement", Some("main"))),
         Err(RegisterTaskError::Registration(vec![
-            RegistrationError::UnknownAgent {
-                name: agent_name("missing"),
-                defined: vec![agent_name("claude")],
-            }
+            RegistrationError::MissingSkillInput {
+                status: status_name("queued"),
+                agent: agent_name("claude"),
+            },
+            RegistrationError::MissingModel {
+                status: status_name("queued"),
+                agent: agent_name("claude"),
+            },
+            RegistrationError::MissingModel {
+                status: status_name("reviewing"),
+                agent: agent_name("claude"),
+            },
         ]))
     );
     assert_eq!(doubles.created(), vec![]);

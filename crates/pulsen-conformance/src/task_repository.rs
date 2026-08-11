@@ -8,7 +8,7 @@
 //! 読めること」までにする。理由の文言はアダプターが決めてよい。
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 use pulsen_domain::definition::{
@@ -701,6 +701,7 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
     repo.create(&small).expect("作成できる");
 
     let writing = AtomicBool::new(true);
+    let observations = AtomicUsize::new(0);
     thread::scope(|scope| {
         scope.spawn(|| {
             while writing.load(Ordering::Relaxed) {
@@ -720,6 +721,7 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
                         other => panic!("完全な保存内容だけが観測される: {other:?}"),
                     }
                 }
+                observations.fetch_add(1, Ordering::Relaxed);
             }
         });
 
@@ -727,8 +729,14 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
             repo.save(&large).expect("保存できる");
             repo.save(&small).expect("保存できる");
         }
+        yield_until_observed(&observations);
         writing.store(false, Ordering::Relaxed);
     });
+
+    assert!(
+        observations.load(Ordering::Relaxed) > 0,
+        "読み手が一度も観測していない"
+    );
     CaseOutcome::Ran
 }
 
@@ -744,10 +752,50 @@ pub fn tc_port_task_repository_043_失敗した保存は部分的な結果を残
     assert_eq!(found(harness, absent.id()), TaskLookup::NotFound);
     assert_eq!(
         listed(harness.repo().list_active()),
+        vec![TaskEntry::Record(TaskRecord::Intact(existing.clone()))]
+    );
+
+    // 書き込みが始まってから失敗する分岐。前提を用意できない環境ではこの分岐だけを
+    // 飛ばす — 行の主張(部分的な結果が残らない)は NotFound 分岐が常に観測する。
+    let advanced = Task::rehydrate(TaskFields {
+        snapshot: wide_snapshot(),
+        task_status: status(WAITING),
+        execution: ExecutionState::Failed,
+        counters: RetryCounters::rehydrate(3, 4, 5),
+        updated_at: moment(90),
+        ..fields("task-a")
+    })
+    .expect("不変条件1を満たす");
+    if let Some(_restore) = harness.make_unwritable(Area::Active) {
+        match harness.repo().save(&advanced) {
+            Err(SaveError::Io { message }) => assert!(!message.is_empty(), "理由が空"),
+            other => panic!("書き込めない状況では入出力エラーになる: {other:?}"),
+        }
+    }
+
+    assert_eq!(active_intact(harness, existing.id()), existing.clone());
+    assert_eq!(
+        listed(harness.repo().list_active()),
         vec![TaskEntry::Record(TaskRecord::Intact(existing))]
     );
     CaseOutcome::Ran
 }
+
+/// 読み手が最初の観測を終えるまで実行を譲る(TC-042 / TC-044)。
+///
+/// 観測が0回のまま書き手が走り切ると「中間状態を観測しなかった」が空虚に成立する。
+/// 読み手がアサーションで落ちたときに待ち続けないよう、譲る回数に上限を置く。
+fn yield_until_observed(observations: &AtomicUsize) {
+    for _ in 0..YIELD_LIMIT {
+        if observations.load(Ordering::Relaxed) > 0 {
+            return;
+        }
+        thread::yield_now();
+    }
+}
+
+/// `yield_until_observed` が譲る回数の上限。
+const YIELD_LIMIT: usize = 10_000;
 
 pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み手に観測されない(
     harness: &impl TaskRepositoryHarness,
@@ -757,6 +805,7 @@ pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み
     repo.create(&task).expect("作成できる");
 
     let moving = AtomicBool::new(true);
+    let observations = AtomicUsize::new(0);
     thread::scope(|scope| {
         scope.spawn(|| {
             while moving.load(Ordering::Relaxed) {
@@ -781,13 +830,19 @@ pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み
                         "移動の途中経過を観測した"
                     );
                 }
+                observations.fetch_add(1, Ordering::Relaxed);
             }
         });
 
         repo.archive(task.id()).expect("アーカイブできる");
+        yield_until_observed(&observations);
         moving.store(false, Ordering::Relaxed);
     });
 
+    assert!(
+        observations.load(Ordering::Relaxed) > 0,
+        "読み手が一度も観測していない"
+    );
     assert_eq!(
         repo.find(task.id()).expect("検索できる"),
         TaskLookup::Archived(TaskRecord::Intact(task))
@@ -1110,15 +1165,17 @@ fn absolute(segments: &[&str]) -> std::path::PathBuf {
 
 /// TaskRepository の適合スイートをアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! task_repository_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::task_repository as __pulsen_conformance_task_repository;
 
         $crate::conformance_cases!(
             __pulsen_conformance_task_repository,
             $setup,
+            __PULSEN_CONFORMANCE_TASK_REPOSITORY_SKIPS = $allowed_skips,
             [
                 tc_port_task_repository_001_作成でディレクトリごと用意され読み戻せる,
                 tc_port_task_repository_002_現役に同じidがあれば作成は衝突する,

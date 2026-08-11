@@ -846,15 +846,17 @@ fn expect_parse_error(result: Result<LoadedWorkflow, WorkflowLoadError>) -> Work
 
 /// WorkflowStore の適合スイートをアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! workflow_store_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::workflow_store as __pulsen_conformance_workflow_store;
 
         $crate::conformance_cases!(
             __pulsen_conformance_workflow_store,
             $setup,
+            __PULSEN_CONFORMANCE_WORKFLOW_STORE_SKIPS = $allowed_skips,
             [
                 tc_port_workflow_store_001_名前は既定の拡張子で解決される,
                 tc_port_workflow_store_002_名前は別の拡張子へフォールバックしない,

@@ -127,15 +127,17 @@ fn assert_failed(error: Option<TargetError>, method: &str) {
 
 /// WorktreeManager の適合スイート(対象の検証を行う3メソッド分)をアダプターに適用する。
 ///
-/// `$setup` はケースごとに評価され、ハーネスは共有されない。
+/// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
+/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
 #[macro_export]
 macro_rules! worktree_manager_conformance {
-    ($setup:expr) => {
+    ($setup:expr, $allowed_skips:expr) => {
         use $crate::worktree_manager as __pulsen_conformance_worktree_manager;
 
         $crate::conformance_cases!(
             __pulsen_conformance_worktree_manager,
             $setup,
+            __PULSEN_CONFORMANCE_WORKTREE_MANAGER_SKIPS = $allowed_skips,
             [
                 tc_port_worktree_manager_001_コミットのあるリポジトリは検証を通る,
                 tc_port_worktree_manager_002_存在しないパスは見つからない,
