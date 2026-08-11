@@ -67,7 +67,7 @@ Accepted（ステップ5で確定。`.adr/020-no-serde-in-domain-timestamp-conve
 ## ADR-021: YAML は Value 化してから手書きでスキーマ走査する（serde の deny_unknown_fields に頼らない）
 
 ### Status
-Proposed
+Accepted（ステップ10で確定。`.adr/021-yaml-value-then-hand-written-schema-walk.md`）
 
 ### Context
 
@@ -422,7 +422,7 @@ CLAUDE.md は「`match` でワイルドカード（`_`）を避ける」と定�
 ## ADR-030: `FsWorkflowStore` は基準ディレクトリを注入して相対パスを解決する
 
 ### Status
-Proposed
+Accepted（ステップ11で確定。`.adr/030-workflow-store-base-dir-injection.md`）
 
 ### Context
 
@@ -712,3 +712,52 @@ ADR-027 はフックの一覧を spec の前提条件から導くと定め、そ
 
 - 良い点: 125行すべてが「ポートのみ28件 / フック86件 / spec が明示するスキップ可11件」のいずれかに埋まり、フックが spec 由来であることを対応表で確認できる。フックの形が「対象アクセサ + 意味だけを受け取るフック + 別ハンドル」の3種に揃う
 - トレードオフ: ステップ10〜14 はケース関数と同時にポートごとのマクロも書く（1ポートにつき1回）。ADR-027 の一覧と実際のフックの差分をこのエントリで辿る必要がある
+
+---
+
+## ADR-042: 値の書かれていない YAML キーは「省略」と同じに扱い、タグは定義の記法から外す
+
+### Status
+Accepted（ステップ10・11で確定。`.adr/042-absent-yaml-value-is-omission.md`）
+
+### Context
+
+ADR-021 は「空ファイル・null ドキュメントは全キー省略として `Ok`」までを決めたが、**個々のキーが値を持たない場合**（`agents:` の下を全部コメントアウトした、`initial:` と書いて値を書き忘れた）の扱いを決めていなかった。手書き走査では「キーが無い」と「キーはあるが値が null」を区別できてしまうため、実装のたびに判断が要る。あわせて、YAML のタグ（`!Tag value`）は構文としては正当だが、config.yaml・ワークフローYAML のスキーマには現れない。
+
+### Decision
+
+- **値の書かれていないキーは、そのキーを書かなかったのと同じに扱う**（`Yaml::is_absent` / `YamlMapping::value` に閉じる）。ドキュメント全体の null（空ファイル）が「全キー省略」になる規則を、そのままキー単位へ広げた形になる。
+  - config: `agents:` だけを書いた設定は「エージェント定義なし」。`skill_input:` は未定義。
+  - ワークフロー: `statuses:` だけなら `EmptyStatuses`、`initial:` だけなら `MissingInitial`、`queued:` だけなら `NoAction` — いずれも spec がそのキーの欠落に定めたエラーと一致する。
+  - 必須キー（`agents.<name>.cmd`）が値を持たない場合は「`cmd` が無い」= 構造エラーになる（spec の「`cmd` キーが無い」行と同じ扱い）。
+- **タグは構文エラーとして拒否する**。スキーマに無い記法を黙って剥がすと ADR-013 の「typo を無言で捨てない」が破れる。
+
+### 検討した代替案
+
+- 値が null のキーを型不一致（`Invalid` / `InvalidValue`）にする — 「値を書かずにブロックごとコメントアウトする」という現実的な編集が壊れる。また `statuses:`（値なし）を型不一致にすると、spec が `EmptyStatuses` と定める行と実装が食い違う
+- タグを剥がして中身を採用する — スキーマ外の記法を無言で受理することになり、ADR-013 と矛盾する
+
+### Consequences
+
+- 良い点: 「null = 省略」1つの規則で config とワークフローの両方を説明でき、spec の欠落系エラーの期待と自然に一致する。判断が `adapter::yaml` の1箇所に閉じる
+- トレードオフ: `judge_attempt_limit:` の書き忘れが既定値として通る（値の書き忘れは検出されない）。キーの typo は従来どおり構造エラーになるため、無言で失われるのは「キーはあるが値が空」の場合だけに限られる
+
+---
+
+## ADR-043: ストアのアダプターはホームのレイアウトを持たず、必要なパスをすべて注入される
+
+### Status
+Accepted（ステップ10・11で確定）
+
+### Context
+
+`ConfigLoadError::NotFound` は「解決後のグローバルホームパス」を含む契約（pages ※1 の案内文言に使う）である。一方 ADR-031 は、ホームのレイアウト（`config.yaml` がホーム直下にあること）をアプリケーション層に置き、アダプターには導出済みのパスだけを渡すと定めている。アダプターがホームだけを受け取って `home.join("config.yaml")` を組み立てると、レイアウトの知識がアダプターに漏れる。
+
+### Decision
+
+`FsConfigStore::new(config_path, home)` として**読むファイルのパスと、案内に載せるホームパスの両方を注入する**。`FsWorkflowStore::new(workflows_dir, base_dir)` も同じ形で、`<home>/workflows` の組み立ては合成ルートが行う。アダプターが知っているのは「名前は `<workflows_dir>/<name>.yaml`」という**名前解決の規則**（ポートの契約そのもの）だけにする。
+
+### Consequences
+
+- 良い点: ホームのレイアウトを変えてもアダプターは無変更。適合テストのハーネスが任意のパス構成でストアを組める
+- トレードオフ: 構築時の引数が1つ増え、2つのパスの整合（`config_path` が `home` の下にあること）は合成ルートの責任になる

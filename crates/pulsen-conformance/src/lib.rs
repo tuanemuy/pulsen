@@ -62,6 +62,9 @@
 //!
 //! どの行をどのフックで組むかは `HOOKS.md` にある。フックを足すときは対応表も更新する。
 
+pub mod config_store;
+pub mod workflow_store;
+
 use std::path::PathBuf;
 
 use pulsen_domain::definition::{ConfigStore, WorkflowStore};
