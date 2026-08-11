@@ -36,7 +36,7 @@ CLAUDE.md は「ドメイン層は外部クレートや I/O に依存しない�
 ## ADR-020: ドメイン型に serde を実装せず、`Timestamp` の RFC3339 変換はドメインに持たせる
 
 ### Status
-Proposed
+Accepted（ステップ5で確定。`.adr/020-no-serde-in-domain-timestamp-conversion-in-domain.md`）
 
 ### Context
 
@@ -639,3 +639,47 @@ Accepted（ステップ1で確定）
 
 - 良い点: `.adr/` 全体で見出しとステータスの語が1つに揃い、`grep -l 承認済み .adr/*.md` が全件に効く
 - トレードオフ: 本書（`.thread/1/adr.md`）と正本で語が異なるため、対応を本エントリで明示しておく必要がある
+
+---
+
+## ADR-039: 走査系ポートメソッドの読み取りエラーは `ReadError` に統一する
+
+### Status
+Accepted（ステップ7で確定。`.adr/039-read-error-shared-by-find-and-list.md`）
+
+### Context
+
+spec/domains/task.md のポート表は `find` の失敗を `ReadError`（`Io` のみ）とし、`list_active` / `list_archived` の失敗を `Io` と書いている。`Io` という独立した型は spec のどこにも定義がなく、spec/inventory/domain.md にも `ReadError`（DOM-task-068）だけが行として立っている。素直に読むと選択肢は2つある。
+
+- `ListError { Io { message } }` を別に定義する — 台帳に無い型が1つ増え、`ReadError` との違いが説明できない
+- `ReadError` を3メソッドで共有する
+
+### Decision
+
+`find` / `list_active` / `list_archived` の3メソッドがいずれも `ReadError` を返す。`ReadError` は `Io { message }` の1種のみで、個別のタスクファイルの破損はエラーではなく結果の値（`TaskLookup::Corrupt` / `TaskEntry::Corrupt`）として返る、という契約をドキュメンテーションコメントに書く。
+
+### Consequences
+
+- 良い点: 台帳（DOM-task-068）と1対1のまま、読み取り経路のエラーが1つの型に閉じる。アダプターと適合テストが `Io` の分岐を1箇所しか持たない
+- トレードオフ: spec のポート表の綴り（`Io`）とは字面が一致しない。表の意図（読み取り失敗は入出力エラーだけ）は保たれる
+
+---
+
+## ADR-040: 永続化からの再構築は「フィールド束の struct」を入力に取る
+
+### Status
+Accepted（ステップ6で確定。`.adr/040-rehydrate-takes-field-bundle.md`）
+
+### Context
+
+`Task::rehydrate` は spec 上「全フィールド」を受け取る唯一の再構築経路であり、フィールドは11個ある。位置引数で並べると呼び出し側（TaskRepository アダプターの復号、適合テストのフィクスチャ）が型の同じ `Option` を取り違えても気づけず、フィールドが増えるたびに全呼び出しの引数順が壊れる。`AttemptRef` も spec では「`record_launching` の内部でのみ生成される」と定められており、そのままでは永続化から組み直せない。
+
+### Decision
+
+- `Task::rehydrate(fields: TaskFields)` / `DegradedTask::rehydrate(fields: DegradedTaskFields)` の形にする。`TaskFields` / `DegradedTaskFields` は公開フィールドの struct で、既存の `GlobalConfigInput`（definition ドメイン）と同じ「境界で一度だけ検証する入力の束」の型である。検証（不変条件1）は `Task::rehydrate` が行い、`TaskFields` 自体は不変条件を持たない。
+- `AttemptRef::rehydrate` / `RetryCounters::rehydrate` を公開の再構築コンストラクタとして置く。新規採番（`record_launching` が `RunDirPath::derive` で番号とパスの整合を構成で保証する）は後続スライスの責務で、再構築経路はそれと別の口にする。
+
+### Consequences
+
+- 良い点: フィールドの追加が呼び出し側の引数順に波及しない。適合テストのフィクスチャが名前つきで組め、6状態・全 Optional フィールドの組み合わせを網羅できる
+- トレードオフ: 束の struct が2つ増え、`Task` のフィールドと二重に並ぶ。生成経路が `register` / `rehydrate` の2つだけである点は変わらない
