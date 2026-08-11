@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/pulsen", "crates/pulsen-conformance", "crates/pulsen-domain"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+
+[workspace.dependencies]
+pulsen-domain = { path = "crates/pulsen-domain" }
+pulsen-conformance = { path = "crates/pulsen-conformance" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
