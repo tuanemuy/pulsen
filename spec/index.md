@@ -9,8 +9,8 @@ AIエージェントタスクの汎用スケジューラー。要件は [require
 | Phase 0: 準備 | 完了 | [requirements.md](requirements.md) |
 | Phase 1: シナリオ設計 | 完了 | [scenario/index.md](scenario/index.md) ほか5カテゴリ |
 | Phase 2: ページ設計 | 完了 | [pages/index.md](pages/index.md) |
-| Phase 3: 技術設計 | 未着手 | spec/domains/ ほか |
-| Phase 4: マニュアルテスト | 未着手 | spec/manual-tests/ |
+| Phase 3: 技術設計 | 完了(クロスフェーズ検証済み) | [domains/index.md](domains/index.md) / [usecases/task.md](usecases/task.md)・[usecases/execution.md](usecases/execution.md) / [flows/index.md](flows/index.md) / testcases/(task 5・execution 3・ports 10) |
+| Phase 4: マニュアルテスト | 完了(レビュー5ラウンドで収束) | [manual-tests/index.md](manual-tests/index.md) ほか5カテゴリ・162件(正常 61 / 異常 80 / 境界 21) |
 
 ## Phase 0 での決定事項
 
@@ -29,12 +29,19 @@ AIエージェントタスクの汎用スケジューラー。要件は [require
 - `agents:` にはAIエージェントに限らず任意のコマンドを登録できる(既存設計の明文化)
 - runディレクトリのgcを保持期間設定 `run_retention` としてスコープ内化。未設定なら無効(ADR-011)
 
-## Phase 3(技術設計)への申し送り
+## Phase 3(技術設計)着手時の決定事項
 
-改訂レビューで見つかった、ドメイン設計時に確定すべき未決事項:
+Phase 2 完了時の申し送り5件は、Phase 3 着手時にすべて確定し ADR に記録した:
 
-- ツール操作の失敗(worktree作成・削除、アーカイブ移動)時の実行状態の値: 「failed相当」としてattempt_countを消費する挙動は確定済みだが、その間タスクが `ls --state` でどの実行状態として観測されるか(pending維持かfailed化か)が未確定
-- ワークフローYAMLの余剰キーの扱い: 動作種別に無関係なキー(「何もしない」ステータスへの `judge` 等)を登録時エラーにするか無視するか(推奨: 登録時エラー)
-- ツール操作の失敗に適用されるリトライ上限の出所: 現在のタスクステータスの上限か、上書きキーを持てないステータス(クリーンアップ等)ではグローバルデフォルト2か。上記2件(実行状態の値・余剰キーの扱い = クリーンアップステータスへの上書きキーの受理可否)と併せて確定する(pages show の「適用される上限値の併記」にも同じ答えが要る)
-- スナップショットの保存形態(§7.1: タスクファイルへの埋め込みか隣接ファイルか): 隣接ファイル案を採る場合は、アーカイブ移動のアトミック性の保証(cleanup.md「中途半端な状態が観測されない」)を複数ファイルの移動でどう成立させるかを併せて確定する(埋め込み案なら問題は生じない)
-- テンプレート展開失敗(tick側での同期検出)の手続き詳細: spawn失敗として分類する契約(§10)は確定済み。tickユースケース設計で、同一tick内での分類手続き(spawn_fail_count 加算・直近の失敗要因(§9)の記録・無効化マーカーの要否 — 何もspawnしていないため不要のはず)を§4.1の猶予時間経路と並ぶ同期経路として確定する(猶予経路への委譲では、観測するtickが展開エラーの内容を知らず失敗要因を記録できない点に注意)
+- ツール操作(worktree作成・削除、アーカイブ移動)の失敗時は実行状態を failed に書き換えて観測させる(ADR-012)
+- ワークフローYAML・config.yaml の余剰キー(未知キー・動作種別に無関係なキー)は読み込み時エラー。検証は二層(構造は読み込み時、内容は参照時)(ADR-013)
+- リトライ上限は常に現在のタスクステータスの定義から取る。クリーンアップステータスは上書き不可のため常に組み込みデフォルト2。リトライ上限・timeout のデフォルトは組み込み定数とし config.yaml キーを設けない(ADR-014)
+- ワークフロー定義のスナップショットはタスクファイルに正規化された構造として埋め込む(ADR-015)
+- テンプレート展開失敗は launching 記録前の同期spawn失敗経路として処理する(spawn_fail_count 加算・失敗要因記録・無効化マーカー不要・attempt採番なし。ADR-016)
+
+設計中に追加で下した決定:
+
+- ドメイン境界は definition / task / execution の3分割(依存方向は Definition ← Task ← Execution。ADR-017)
+- notify_cmd に組み込み60秒のtimeoutを適用(requirements §8 に反映済み。ADR-018)
+- worktree のパス・ブランチ規約(`worktrees/<task-id>`・`pulsen/<task-id>`)を requirements §5・§9 に明文化
+- UnitOfWork ポートは定義しない(全書き込みが単一タスクファイルに閉じ、複数リソース処理は冪等な再導出と at-least-once で回復。domains/index.md)
