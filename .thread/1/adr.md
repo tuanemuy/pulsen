@@ -348,7 +348,7 @@ spec/testcases/ports/*.md は「すべてのアダプター実装が共通で通
 ## ADR-028: ユースケースの異常系はテストダブルで消化し、ダブルは `pulsen-conformance` に置く
 
 ### Status
-Proposed
+Accepted（ステップ15・16で確定。`.adr/028-usecase-error-paths-via-test-doubles.md`）
 
 ### Context
 
@@ -442,7 +442,7 @@ spec/testcases/ports/workflow-store.md は「相対パスはプロセスのカ�
 ## ADR-031: グローバルホームのレイアウトはアプリケーション層に置く
 
 ### Status
-Proposed
+Accepted（ステップ16で確定。`.adr/031-pulsen-home-layout-in-application-layer.md`）
 
 ### Context
 
@@ -864,3 +864,59 @@ ID形式は「アダプターに委ねる」と spec が明示している（形
 - 良い点: `Clock` / `TaskIdGenerator` の実装からパニック経路が消え、ポートの無謬性が spec のまま保たれる。飽和の規則がドメインの1箇所に閉じる
 - 後続スライスが無謬なポートのアダプターを足すときも、値の口の選択肢がこの2通りに定まる
 - トレードオフ: `Timestamp` の生成経路が3つになる（検証つき2つ + 総関数1つ）。総関数は範囲外を黙って丸めるため、`Clock` 実装以外から呼ぶと入力の誤りを隠しうる
+
+---
+
+## ADR-048: 入力文字列のドメイン型への変換は spec の処理フローの位置で行う
+
+### Status
+Accepted（ステップ16で確定。`.adr/048-parse-inputs-at-spec-flow-position.md`）
+
+### Context
+
+spec/usecases/task.md は2つのことを同時に定めている。
+
+- 共通事項: 「CLI引数の文字列 → ドメイン型の変換（parse）は各ユースケースの入力境界で一度だけ行う」
+- RegisterTask の処理フロー: 「1. ロック取得 → 2. `WorkflowRef::parse` → `WorkflowStore::load` → …4. 対象の検証」
+
+「入力境界」を「`execute` の先頭で全引数をまとめて parse する」と読むと、ロック取得より前に検証が走り、`--base` の形式エラーがロック競合より先に出る。処理フローの番号付けと矛盾する。
+
+### Decision
+
+parse は**その値を最初に使う直前**に置く。`WorkflowRef::parse` はステップ2の頭、`RepoPath::parse` / `BranchName::parse` はステップ4の中。ロックの取得は常に最初になる。
+
+「一度だけ」は回数の制約（同じ文字列を2箇所で parse しない・ドメイン型になった後は再検証しない）であって、位置の制約ではないと読む。処理フローの番号は spec が明示的に順序を与えているため、そちらを優先する。
+
+### 検討した代替案
+
+- `execute` の先頭で全部 parse する — 引数の形式エラーがロック競合を追い越し、「ロック競合なら何も観測せずに終わる」という縮退規則の観測面が崩れる
+- 入力DTO をドメイン型で受け取る（parse を CLI 層に上げる）— ADR-030 で合成ルートに寄せたのは cwd の読み取りだけであり、検証まで上げると「入力境界はユースケース」という spec の分担が崩れる
+
+### Consequences
+
+- 良い点: エラーの出る順序が spec の処理フローの番号と一致し、受け入れテストが spec の行をそのまま期待にできる
+- トレードオフ: parse の呼び出しが `execute` 内の3箇所に散る。どの引数がどこで検証されるかは処理フローを読まないと分からない
+
+---
+
+## ADR-049: `--base` は `-` で始まる値も値として受け取る
+
+### Status
+Accepted（ステップ17で確定）
+
+### Context
+
+spec/testcases/task/register-task.md の境界値は「`--base` の先頭が `-` …のいずれか → **ブランチ名の検証エラー**として非0で終了する」を求める。一方 clap の既定では `--base -bad` の `-bad` はオプションとして解釈され、`unexpected argument '-b' found` という**使い方の誤り**（exit 2）になる。ドメインの `BranchNameError::LeadingHyphen` に到達しない。
+
+`BranchName` が `-` 始まりを拒むのは「git のオプションと紛れる名前を帳簿に載せない」ためであり、ツールの引数解釈の都合ではない。拒否の理由を利用者に示せないまま clap の一般的な使い方エラーに落とすと、案内が「ブランチ名として不正」から「引数が不明」へすり替わる。
+
+### Decision
+
+`--base` にのみ `allow_hyphen_values = true` を付け、値をそのままドメインの `BranchName::parse` へ渡す。結果として exit code は 1（入力エラー）になり、「`-` で始まっています」と原因を示せる。
+
+`--workflow` / `--repo` には付けない — これらの値が `-` で始まる正当な理由がなく、フラグの書き忘れ（`--repo --base main` 等）を使い方の誤りとして早く落とすほうが利用者の助けになる。
+
+### Consequences
+
+- 良い点: 境界値の期待（検証エラーとしての非0）が exit code と文言の両方で満たされる。ブランチ名の制約がドメインの1箇所にあるという構造が CLI からも見える
+- トレードオフ: `--base` の値を書き忘れて次のフラグを続けた場合（`--base --repo x`）、`--repo` がブランチ名として解釈され、「`-` で始まっています」ではなく `--repo` 未指定の使い方エラーで落ちる。どちらにせよ非0で止まる

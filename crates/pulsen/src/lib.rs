@@ -4,4 +4,6 @@
 //! 内側(ドメイン)へ向く。
 
 pub mod adapter;
+pub mod application;
+pub mod cli;
 pub mod util;
