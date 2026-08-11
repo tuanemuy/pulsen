@@ -57,6 +57,11 @@ pub fn commit(dir: &Path, file_name: &str) -> Option<()> {
     run(dir, &args)
 }
 
+/// HEAD を動かさずにブランチを作る。
+pub fn create_branch(dir: &Path, name: &str) -> Option<()> {
+    run(dir, &["branch", name])
+}
+
 /// HEAD をブランチから切り離す。
 pub fn detach_head(dir: &Path) -> Option<()> {
     run(dir, &["checkout", "--detach"])

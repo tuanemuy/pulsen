@@ -3,12 +3,382 @@
 //! 統合テストは必要なフィクスチャだけを使うため、テストごとに未使用の項目が残る。
 #![allow(dead_code)]
 
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use pulsen_conformance::Restore;
+use serde_json::Value;
+use tempfile::TempDir;
 
 pub mod git;
+pub mod lock;
+
+/// グローバルホームを指す環境変数。
+pub const HOME_ENV: &str = "PULSEN_HOME";
+
+/// `claude` エージェントだけを定義したグローバル設定。
+pub const CONFIG: &str = "\
+agents:
+  claude:
+    cmd: claude {input}
+";
+
+/// エージェント実行1件とクリーンアップ1件を持つ定義。
+pub const WORKFLOW: &str = "\
+agent: claude
+initial: queued
+statuses:
+  queued:
+    prompt: 実装して
+    next: done
+  done:
+    run: cleanup
+";
+
+/// 一時ディレクトリに置いたグローバルホーム。
+///
+/// `state/` は作らない — 書き込み系が必要に応じて自動作成する領域(pages ※3)であり、
+/// フィクスチャが先回りして作ると自動作成の検証ができなくなる。
+pub struct Home {
+    dir: TempDir,
+}
+
+impl Home {
+    /// 有効なグローバル設定を置いたホーム。
+    pub fn new() -> Self {
+        let home = Self::uninitialized();
+        home.write_config(CONFIG);
+        home
+    }
+
+    /// config.yaml を置かないホーム。
+    pub fn uninitialized() -> Self {
+        let dir = tempfile::tempdir().expect("一時ホームを作れる");
+        fs::create_dir_all(dir.path().join("workflows")).expect("workflows を作れる");
+        Self { dir }
+    }
+
+    /// 解決後のホームパス。
+    pub fn path(&self) -> &Path {
+        self.dir.path()
+    }
+
+    /// グローバル設定のパス。
+    pub fn config_path(&self) -> PathBuf {
+        self.path().join("config.yaml")
+    }
+
+    /// グローバル設定を置く(既存があれば置き換える)。
+    pub fn write_config(&self, text: &str) {
+        fs::write(self.config_path(), text).expect("config.yaml を書ける");
+    }
+
+    /// グローバル設定を取り除く。
+    pub fn remove_config(&self) {
+        fs::remove_file(self.config_path()).expect("config.yaml を消せる");
+    }
+
+    /// 名前で解決されるワークフロー定義のパス `workflows/<name>.yaml`。
+    pub fn workflow_path(&self, name: &str) -> PathBuf {
+        self.workflows_dir().join(format!("{name}.yaml"))
+    }
+
+    /// 名前で解決されるワークフロー定義を置く。
+    pub fn write_workflow(&self, name: &str, text: &str) -> PathBuf {
+        let path = self.workflow_path(name);
+        fs::write(&path, text).expect("ワークフロー定義を書ける");
+        path
+    }
+
+    /// `workflows/` にファイル名を指定して置く(`.yml` 等の検証に使う)。
+    pub fn write_workflow_file(&self, file_name: &str, text: &str) -> PathBuf {
+        let path = self.workflows_dir().join(file_name);
+        fs::write(&path, text).expect("ワークフロー定義を書ける");
+        path
+    }
+
+    /// 名前解決の基点。
+    pub fn workflows_dir(&self) -> PathBuf {
+        self.path().join("workflows")
+    }
+
+    /// 状態のルート。
+    pub fn state_dir(&self) -> PathBuf {
+        self.path().join("state")
+    }
+
+    /// 現役タスクのディレクトリ。
+    pub fn tasks_dir(&self) -> PathBuf {
+        self.state_dir().join("tasks")
+    }
+
+    /// 排他ロックのパス。
+    pub fn lock_path(&self) -> PathBuf {
+        self.state_dir().join("lock")
+    }
+
+    /// 現役タスクのファイル一覧(タスクIDの昇順)。
+    pub fn task_files(&self) -> Vec<PathBuf> {
+        let Ok(entries) = fs::read_dir(self.tasks_dir()) else {
+            return Vec::new();
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension() == Some(OsStr::new("json")))
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    /// 現役タスクの内容一覧。
+    pub fn tasks(&self) -> Vec<Value> {
+        self.task_files()
+            .iter()
+            .map(|path| {
+                let bytes = fs::read(path).expect("タスクファイルを読める");
+                serde_json::from_slice(&bytes).expect("タスクファイルは JSON である")
+            })
+            .collect()
+    }
+
+    /// ちょうど1件だけ作られたタスクの内容。
+    pub fn only_task(&self) -> Value {
+        let mut tasks = self.tasks();
+        assert_eq!(tasks.len(), 1, "タスクがちょうど1件作られている");
+        tasks.remove(0)
+    }
+
+    /// タスクが1件も作られていないか。
+    pub fn has_no_task(&self) -> bool {
+        self.task_files().is_empty()
+    }
+
+    /// 利用者が用意するリソース(グローバル設定とワークフロー定義)のパス。
+    pub fn resources(&self) -> Vec<PathBuf> {
+        let mut paths = vec![self.config_path()];
+        if let Ok(entries) = fs::read_dir(self.workflows_dir()) {
+            paths.extend(entries.filter_map(|entry| entry.ok().map(|entry| entry.path())));
+        }
+        paths.sort();
+        paths
+    }
+
+    /// グローバル設定とワークフロー定義の現在の内容を控える。
+    pub fn untouched(&self) -> Untouched {
+        Untouched::of(self.resources())
+    }
+}
+
+/// 実行の前後で内容が変わらないことを確かめる対象。
+///
+/// 「読めないリソースには書き込まない」(PAGE-common-006 規則2)の観測可能な帰結を、
+/// 利用者が用意したファイルのバイト列で確かめる。
+pub struct Untouched {
+    entries: Vec<(PathBuf, Option<Vec<u8>>)>,
+}
+
+impl Untouched {
+    /// 現在の内容を控える。存在しないパスは「不在」として控える。
+    pub fn of(paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        let entries = paths
+            .into_iter()
+            .map(|path| {
+                let content = fs::read(&path).ok();
+                (path, content)
+            })
+            .collect();
+        Self { entries }
+    }
+
+    /// 控えた時点から内容が変わっていないことを確かめる。
+    pub fn assert_unchanged(&self) {
+        for (path, expected) in &self.entries {
+            assert_eq!(
+                fs::read(path).ok().as_deref(),
+                expected.as_deref(),
+                "{} の内容が変わっている",
+                path.display()
+            );
+        }
+    }
+}
+
+/// git リポジトリのフィクスチャ。
+pub struct Repo {
+    dir: TempDir,
+}
+
+impl Repo {
+    /// `main` にコミットが1つあるリポジトリ。
+    pub fn with_commit() -> Self {
+        let repo = Self::empty();
+        git::commit(repo.path(), "README.md").expect("コミットできる");
+        repo
+    }
+
+    /// コミットのない空のリポジトリ。
+    pub fn empty() -> Self {
+        let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        git::init_repo(dir.path()).expect("git リポジトリを作れる");
+        Self { dir }
+    }
+
+    /// HEAD がブランチを指していないリポジトリ。
+    pub fn detached() -> Self {
+        let repo = Self::with_commit();
+        git::detach_head(repo.path()).expect("HEAD を切り離せる");
+        repo
+    }
+
+    /// ブランチを追加する(HEAD は動かさない)。
+    pub fn create_branch(&self, name: &str) -> &Self {
+        git::create_branch(self.path(), name).expect("ブランチを作れる");
+        self
+    }
+
+    /// リポジトリのパス。
+    pub fn path(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
+/// 一時ディレクトリ。相対パス指定のカレントディレクトリや、ホーム外の定義ファイル置き場に使う。
+pub fn scratch() -> TempDir {
+    tempfile::tempdir().expect("一時ディレクトリを作れる")
+}
+
+/// `pulsen add` の1回の実行。
+pub struct Add {
+    home_flag: Option<OsString>,
+    home_env: Option<OsString>,
+    workflow: OsString,
+    repo: OsString,
+    base: Option<OsString>,
+    cwd: Option<PathBuf>,
+}
+
+/// `pulsen add --workflow <workflow> --repo <repo>` を組み立てる。
+pub fn add(workflow: impl AsRef<OsStr>, repo: impl AsRef<OsStr>) -> Add {
+    Add {
+        home_flag: None,
+        home_env: None,
+        workflow: workflow.as_ref().to_owned(),
+        repo: repo.as_ref().to_owned(),
+        base: None,
+        cwd: None,
+    }
+}
+
+impl Add {
+    /// `--home` フラグを付ける。
+    pub fn home(mut self, path: &Path) -> Self {
+        self.home_flag = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// 環境変数 `PULSEN_HOME` を与える。
+    pub fn home_env(mut self, path: &Path) -> Self {
+        self.home_env = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// `--base` を付ける。
+    pub fn base(mut self, branch: impl AsRef<OsStr>) -> Self {
+        self.base = Some(branch.as_ref().to_owned());
+        self
+    }
+
+    /// 起動時のカレントディレクトリ。相対パスの解決基準になる。
+    pub fn cwd(mut self, dir: &Path) -> Self {
+        self.cwd = Some(dir.to_path_buf());
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        // 実行環境の PULSEN_HOME に結果を左右させない。
+        command.env_remove(HOME_ENV);
+        if let Some(home) = self.home_env {
+            command.env(HOME_ENV, home);
+        }
+        if let Some(dir) = self.cwd {
+            command.current_dir(dir);
+        }
+        if let Some(home) = self.home_flag {
+            command.arg("--home").arg(home);
+        }
+        command
+            .arg("add")
+            .arg("--workflow")
+            .arg(self.workflow)
+            .arg("--repo")
+            .arg(self.repo);
+        if let Some(base) = self.base {
+            command.arg("--base").arg(base);
+        }
+
+        let output = command.output().expect("pulsen を起動できる");
+        Run {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+}
+
+/// 実行の結果。
+pub struct Run {
+    /// 終了コード。
+    pub code: Option<i32>,
+    /// 標準出力。
+    pub stdout: String,
+    /// 標準エラー出力。
+    pub stderr: String,
+}
+
+impl Run {
+    /// 0 で終了したか。
+    pub fn succeeded(&self) -> bool {
+        self.code == Some(0)
+    }
+
+    /// 成功を確かめる(失敗時は標準エラー出力を添えて落とす)。
+    pub fn assert_succeeded(&self) -> &Self {
+        assert!(
+            self.succeeded(),
+            "0 で終了する(code={:?}): {}",
+            self.code,
+            self.stderr
+        );
+        self
+    }
+
+    /// 非0で終了したことを確かめる。
+    pub fn assert_rejected(&self) -> &Self {
+        assert!(
+            matches!(self.code, Some(code) if code != 0),
+            "非0で終了する(code={:?}): {}",
+            self.code,
+            self.stdout
+        );
+        self
+    }
+
+    /// 案内に含まれるべき語がすべて出ていることを確かめる。
+    pub fn assert_reports(&self, expected: &[&str]) -> &Self {
+        for text in expected {
+            assert!(
+                self.stderr.contains(text),
+                "案内に `{text}` が含まれる: {}",
+                self.stderr
+            );
+        }
+        self
+    }
+}
 
 /// ファイルを読み取れない状態にする。
 ///
