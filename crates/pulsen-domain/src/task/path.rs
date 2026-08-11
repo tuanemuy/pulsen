@@ -93,20 +93,41 @@ impl RunDirPath {
 pub enum TaskFilePath {}
 
 impl TaskFilePath {
+    /// タスクファイルの拡張子。
+    const EXTENSION: &'static str = ".json";
+
+    /// 現役タスクのディレクトリ `<state_root>/tasks/`。
+    pub fn active_dir(state_root: &StateRoot) -> PathBuf {
+        state_root.as_path().join("tasks")
+    }
+
+    /// アーカイブ済みタスクのディレクトリ `<state_root>/archive/`。
+    pub fn archived_dir(state_root: &StateRoot) -> PathBuf {
+        state_root.as_path().join("archive")
+    }
+
     /// 現役タスクのパス `<state_root>/tasks/<task-id>.json`。
     pub fn active(state_root: &StateRoot, id: &TaskId) -> PathBuf {
-        state_root
-            .as_path()
-            .join("tasks")
-            .join(format!("{}.json", id.as_str()))
+        Self::active_dir(state_root).join(Self::file_name(id))
     }
 
     /// アーカイブ済みタスクのパス `<state_root>/archive/<task-id>.json`。
     pub fn archived(state_root: &StateRoot, id: &TaskId) -> PathBuf {
-        state_root
-            .as_path()
-            .join("archive")
-            .join(format!("{}.json", id.as_str()))
+        Self::archived_dir(state_root).join(Self::file_name(id))
+    }
+
+    /// タスクファイルの名前 `<task-id>.json`。
+    pub fn file_name(id: &TaskId) -> String {
+        format!("{}{}", id.as_str(), Self::EXTENSION)
+    }
+
+    /// 命名形式に合致する名前からタスクIDを読み取る。
+    ///
+    /// 走査は形式に合致するエントリのみを対象とする契約であり、形式外(アトミック置換の
+    /// 一時ファイル残骸・手動で置かれたファイル等)は `None` になる。
+    pub fn parse_file_name(file_name: &str) -> Option<TaskId> {
+        let id = file_name.strip_suffix(Self::EXTENSION)?;
+        TaskId::parse(id.to_owned()).ok()
     }
 }
 
@@ -219,5 +240,39 @@ mod tests {
                 "20260811t091530-k3f9qa1b.json",
             ])
         );
+    }
+
+    #[test]
+    fn タスクファイルは走査対象のディレクトリの直下に導出される() {
+        assert_eq!(
+            TaskFilePath::active(&state_root(), &task_id()),
+            TaskFilePath::active_dir(&state_root()).join(TaskFilePath::file_name(&task_id()))
+        );
+        assert_eq!(
+            TaskFilePath::archived(&state_root(), &task_id()),
+            TaskFilePath::archived_dir(&state_root()).join(TaskFilePath::file_name(&task_id()))
+        );
+    }
+
+    #[test]
+    fn 命名形式に合致する名前からタスクidが読み取れる() {
+        assert_eq!(
+            TaskFilePath::parse_file_name(&TaskFilePath::file_name(&task_id())),
+            Some(task_id())
+        );
+    }
+
+    #[test]
+    fn 命名形式に合致しない名前はタスクidにならない() {
+        for name in [
+            "20260811t091530-k3f9qa1b",
+            "20260811t091530-k3f9qa1b.json.tmp",
+            ".tmpA1b2C3.json",
+            "notes.txt",
+            "大文字を含む名前.json",
+            ".json",
+        ] {
+            assert_eq!(TaskFilePath::parse_file_name(name), None, "{name}");
+        }
     }
 }
