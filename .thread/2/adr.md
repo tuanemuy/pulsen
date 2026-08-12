@@ -1,8 +1,8 @@
 # ADR — Issue #2: tick によるエージェント実行の起動
 
-採番はこのファイル内の連番。`.adr/` への昇格判定は片付けフェーズで行い、昇格するときは `.adr/065` 以降を使う(既存の最大番号は 064)。
+採番は `.adr/` の続き番号(既存の最大番号は 064 なので 065 から)。`.adr/` への昇格判定は片付けフェーズで行い、昇格しても番号は変わらない。
 
-## ADR-001: tick の分岐は全実行状態を網羅する `match` で書き、本スライス外の手続きは配線しない
+## ADR-065: tick の分岐は全実行状態を網羅する `match` で書き、本スライス外の手続きは配線しない
 
 ### Status
 
@@ -46,7 +46,7 @@ Proposed
 
 ---
 
-## ADR-002: stopped の記録と `frozen` への集計までを実装し、notify の呼び出しは #3 に残す
+## ADR-066: stopped の記録と `frozen` への集計までを実装し、notify の呼び出しは #3 に残す
 
 ### Status
 
@@ -72,7 +72,7 @@ Proposed
 
 ---
 
-## ADR-003: ProcessController のプラットフォーム実装を `unsafe` なしで構成する
+## ADR-067: ProcessController のプラットフォーム実装を `unsafe` なしで構成する
 
 ### Status
 
@@ -109,7 +109,7 @@ workspace lints に `unsafe_code = "forbid"` があり、`pulsen` クレート�
 - 取得手段を `adapter::process` の1つの private 関数に閉じ、#3 が足す `starttime_of` と共有する。署名は **三値** — `fn observe_process(&self, pid: Pid) -> Result<Option<ObservedProcess>, Io>`(`ObservedProcess { starttime: ProcessStartTime, kill_ident: KillIdent }`)。`Ok(Some)` = 取得できた / `Ok(None)` = **対象プロセスが存在しない** / `Err(Io)` = 取得機構そのものの失敗。PGID を同じ関数から返すのは、POSIX ではどちらも同じ1回の観測(`ps` の1回の起動 / `/proc/<pid>/stat` の1回の読み取り)から取れるため。
   - `own_identity` は自プロセスを観測するので二値でよく、`Ok(None)`(自分が見つからない = ありえない)を `Err(Io)` に畳む1行を呼び出し側に置く。**畳むのは呼び出し側であって共有関数ではない。**
   - 三値を本スライスで確定させるのは、#3 の `starttime_of` の契約が `Ok(Some)` / `Ok(None)`(死亡)/ `Err(Io)`(機構失敗)の三値であり、`TC-port-process-controller-007` / `011` がこの区別そのものを検証するため。二値に確定させると #3 が共有関数の署名を変えることになり、「同一の取得手段を構成で保証する」が最初の追加で崩れる。さらに実測では不在も**エラーの形**で返る(macOS の `ps -o lstart=,pgid= -p <不在pid>` は exit 1・stdout 空、Linux の `/proc/<pid>/stat` は `NotFound`)ため、二値のままだと `Err(Io)` に畳む実装が自然に書けてしまう。畳むと #3 で「生存プロセスを観測できない tick が状態を変更せずスキップし続け、`DiedWithoutExit` にも `KillOnTimeout` にも到達しない」= running のまま永久滞留になる。
-  - 取得元(POSIX 非 Linux は `ps` の実行ファイルパス、Linux は procfs のルート、Windows は powershell の実行ファイルパス)は構築時に注入する(ADR-004)。
+  - 取得元(POSIX 非 Linux は `ps` の実行ファイルパス、Linux は procfs のルート、Windows は powershell の実行ファイルパス)は構築時に注入する(ADR-068)。
 - Linux: `<procfs_root>/<pid>/stat`(既定は `/proc`)の起動時刻(clock ticks)を **boot id と合成した `<boot_id>:<ticks>`** とする。ファイル読み取りのみで、表現は整数と UUID なのでロケール非依存。ticks は**最後の `)` より後ろを空白で分割した20番目**(全体の22番目)として読む — 2番目のフィールド(comm)は実行ファイル名を `()` で囲んだもので、名前に空白や `)` を含むと素朴な空白分割では位置がずれる(実測: `sleep` を `sl ee) p` という名前で起動すると素朴な22番目は `1` を返し、この規則では正しい `939856880` を返す)。自プロセス名では顕在化しないが、この関数は任意 pid を取る #3 の `starttime_of` と共有される。boot id は `<procfs_root>/sys/kernel/random/boot_id`(非 root で読め、同一 boot 内では何度読んでも同じ値であることを実測)。
 - その他の POSIX(macOS 等): `<identity_source> -o lstart=,pgid= -p <pid>`(既定は `ps`)の1行の出力を、最後の空白で区切って PGID(最終トークン)と `lstart`(残りを trim した文字列)に分ける。ただし `ps` の起動時に `LC_ALL=C` と `TZ=UTC` を**注入**し、`LANG` / `LC_TIME` / `LC_ALL` の継承を落とす(`adapter/worktree.rs` の `INHERITED_GIT_ENV` + `env_remove` と同型)。trim はこの関数の内側で1回だけ行う(末尾に空白パディングが付く。実測: `LC_ALL=C TZ=UTC` で `Wed Aug 12 11:44:13 2026     96379`)。キーワードの順を逆にすると `lstart` 側にパディングが残るので、`lstart=,pgid=` の順で固定する。
 - Windows: `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=<pid>\").CreationDate"` 相当。`ToString()` はカルチャ依存なので `.ToUniversalTime().ToString("o")` の**不変形式**を明示する(実機検証は #10 だが、形式の決定は本スライスの責務)。
@@ -130,7 +130,7 @@ workspace lints に `unsafe_code = "forbid"` があり、`pulsen` クレート�
 | Windows: exit 0 かつ出力が空(`Get-CimInstance` が該当なしで空を返す) | `Ok(None)`(不在。実機確認は #10) |
 | Windows: それ以外の失敗・形式外 | `Err(Io)` |
 
-Linux で「ルート不在」と「`<root>/<pid>/stat` の `NotFound`」を分けるのは、取得元が注入される(ADR-004)ため両者が同じ `NotFound` として現れるから。分けないと、壊れた取得元を注入したときに `Ok(None)` = 「そのプロセスは死んでいる」が返り、#3 の `TC-port-process-controller-007` / `011`(機構失敗を死亡に写像しない)が注入で再現できなくなる。
+Linux で「ルート不在」と「`<root>/<pid>/stat` の `NotFound`」を分けるのは、取得元が注入される(ADR-068)ため両者が同じ `NotFound` として現れるから。分けないと、壊れた取得元を注入したときに `Ok(None)` = 「そのプロセスは死んでいる」が返り、#3 の `TC-port-process-controller-007` / `011`(機構失敗を死亡に写像しない)が注入で再現できなくなる。
 
 `ProcessStartTime::parse` の `Empty` を握り潰して既定値で `Ok` を装わないことが `TC-port-process-controller-005`(不正な同定情報で `Ok` を装わない)の趣旨そのものであり、上表の `Err(Io)` 行はすべてこの趣旨に属する。
 
@@ -155,7 +155,7 @@ LC_ALL=C TZ=UTC Wed Aug 12 11:14:45 2026
 ### Consequences
 
 - 良い点: `unsafe` ゼロ・新規依存ゼロを維持したまま §4.3 の抽象を満たせる。起動時刻の取得手段と取得時の環境が1関数に閉じるので、#3 の `starttime_of` が同じ表現を得ることを構成で保証できる。署名を三値まで固定してあるので、#3 は共有関数をそのまま呼ぶだけで `starttime_of` を足せる(署名の変更が要らない)。
-- トレードオフ: `own_identity` しか消費者がいない本スライスでも三値を扱うことになり、`Ok(None)` を `Err(Io)` に畳む1行が呼び出し側に現れる。この1行は `TC-port-process-controller-005` が注入で観測する対象でもある(ADR-004)。
+- トレードオフ: `own_identity` しか消費者がいない本スライスでも三値を扱うことになり、`Ok(None)` を `Err(Io)` に畳む1行が呼び出し側に現れる。この1行は `TC-port-process-controller-005` が注入で観測する対象でもある(ADR-068)。
 - トレードオフ: macOS / Windows では外部プロセス(`ps` / `powershell`)の起動が要る(1回あたり数十ms)。`ps -o lstart=` は秒精度なので、1秒以内の PID 再利用は検出できない(spec は「同一マシン内での等価比較」しか要求していないので契約上は満たす)。macOS の `ps` にはエポック秒を出す keyword が無く(`etimes` は未サポート、`start` は精度が落ちる)、整形済み文字列を固定した環境で読む以外の手段が取れない。Windows の起動時刻取得は本環境で実測できないため、Issue #10(CI とクロスプラットフォーム検証)に委ねる。
 - **`process_group(0)` はセッションを分けない**(`setsid` 相当ではない)。適合契約(呼び出し側プロセスの終了後も完走する)は満たすが、ラッパーは同一セッションに残って制御端末を保持し続けるため、端末セッションの強制終了(vhangup 等)では SIGHUP が届きうる — `nohup` 相当の耐性は無い。cron 運用が主経路なので実害は小さいが、`setsid(1)` に依存しない判断とセットで残す。
 - **Windows の `KillIdent`(pid 文字列)は POSIX の実行単位に相当しない**。requirements §4.3 は Windows のkill同定子として「タスクID・attempt番号から決定的に導出する名前付きジョブオブジェクト名」を例示し、`TC-port-process-controller-014`(ラッパーのみ死亡し、エージェントが実行単位に属したまま生存)は `try_kill_remnants` で `Killed` を要求する。pid 文字列 + プロセスツリー終了ではラッパー死亡時点で辿る根が無く、この契約を満たせない。`KillIdent` は pidファイルとタスクファイルに**永続化される**値なので、後から形式を変えると既存の帳簿が無効になる。`unsafe` 禁止のままジョブオブジェクトを扱う手段が無い以上、#3 / #10 で依存追加か lint 緩和の判断が要りうる申し送りとして残す。
@@ -163,7 +163,7 @@ LC_ALL=C TZ=UTC Wed Aug 12 11:14:45 2026
 
 ---
 
-## ADR-004: `ProcessController` は自バイナリのパスと同定情報の取得元を構築時に注入される
+## ADR-068: `ProcessController` は自バイナリのパスと同定情報の取得元を構築時に注入される
 
 ### Status
 
@@ -185,19 +185,19 @@ requirements §4.1 はラッパーを「ツール自身のバイナリをラッ�
 
 - 適合テストのハーネスは `env!("CARGO_BIN_EXE_pulsen")` を `self_exe` として渡す(統合テストでのみ使える環境変数)。
 - `SpawnError` の再現(`TC-port-process-controller-003`)は、**存在しないパスを `self_exe` として構築した2つ目のコントローラ**をハーネスの `failing_controller` フックが返す形にする(ADR-024 / ADR-027 の `failing_manager` と同型)。本番のインスタンスはイミュータブルなまま、権限操作にも root 実行の可否にも依存しない。
-- 取得機構失敗の再現(`TC-port-process-controller-005`)は同型で、**存在しないパスを `identity_source` として構築した2つ目のコントローラ**を `failing_identity_controller` フックが返す形にする。ADR-003 の写像表により、どのプラットフォームでもこの構成は `Err(Io)` に落ちる — POSIX 非 Linux は `ps` の起動自体の失敗、Linux は procfs ルートの不在(`<root>/<pid>/stat` の `NotFound` と区別して機構失敗に写す規則を ADR-003 が持つ)。`005` はこのフックによって確定的に走り、スキップ見込みの行ではなくなる。
-- スイートを2つに分けている(ADR-011)ので、フックも `spawn` スイートの `failing_controller` と `identity_and_agent` スイートの `failing_identity_controller` に分かれる。
+- 取得機構失敗の再現(`TC-port-process-controller-005`)は同型で、**存在しないパスを `identity_source` として構築した2つ目のコントローラ**を `failing_identity_controller` フックが返す形にする。ADR-067 の写像表により、どのプラットフォームでもこの構成は `Err(Io)` に落ちる — POSIX 非 Linux は `ps` の起動自体の失敗、Linux は procfs ルートの不在(`<root>/<pid>/stat` の `NotFound` と区別して機構失敗に写す規則を ADR-067 が持つ)。`005` はこのフックによって確定的に走り、スキップ見込みの行ではなくなる。
+- スイートを2つに分けている(ADR-075)ので、フックも `spawn` スイートの `failing_controller` と `identity_and_agent` スイートの `failing_identity_controller` に分かれる。
 
 ### Consequences
 
 - 良い点: 適合スイートが実バイナリのラッパー動作を検証でき、`spawn_wrapper` の3件が「再現できるアダプター環境に限る」のスキップに落ちない。`current_exe()` の失敗経路がプロセス起動を行うコマンドだけに閉じる。`TC-005` も権限操作にも root の可否にも依存せず走る。
-- 良い点: この注入点は、ADR-003 の三値化(不在 / 機構失敗の区別)が正しく実装されたことを #3 が `starttime_of` に対して検証するときの足場にもなる。
+- 良い点: この注入点は、ADR-067 の三値化(不在 / 機構失敗の区別)が正しく実装されたことを #3 が `starttime_of` に対して検証するときの足場にもなる。
 - トレードオフ: 合成ルートで `current_exe()` が失敗したときの経路が増える(`WireError` に1変種)。tick はそれを実行環境エラーとして非0で終え、wrapper は何も書かずに非0で終える(猶予経路が spawn 失敗として分類する)。
 - トレードオフ: 本番の構築が引数3つになり、`IdentitySource::platform_default()` という「既定値を返す関数」が1つ増える。既定を型の中に置くことで、合成ルートがプラットフォームごとの取得元を知らずに済む形を選んだ。
 
 ---
 
-## ADR-005: `wrapper` は clap の隠しサブコマンドにする
+## ADR-069: `wrapper` は clap の隠しサブコマンドにする
 
 ### Status
 
@@ -214,7 +214,7 @@ pages は `wrapper` を「ツール自身のバイナリをラッパーモード
 - `Command` enum に `#[command(hide = true)] Wrapper(WrapperArgs)` を足す。
 - `WrapperArgs` の末尾可変長(エージェントコマンド)は `trailing_var_arg` + `allow_hyphen_values` で受ける。エージェントのコマンドは `--model` のような `-` 始まりのトークンや、config の配列形式が許す空文字列トークン(`TC-port-config-store-007`)を含みうる。明示しないと `spawn_wrapper` が組んだ argv をラッパー側のパーサが受理せず、起動経路だけが壊れて runディレクトリには何も残らない(ADR-049 で `--base` のハイフン値に対して行ったのと同じ扱い)。argv の定義箇所がアダプターと CLI に分かれるため、往復テストで受理を主張する。
 - 既存の `tests/cli_usage.rs::提供するサブコマンドはタスク登録だけである` を更新し、「ヘルプに現れるのは `add` / `tick` / `help` であること」と「`wrapper` はヘルプに現れないが実行はできること」の2つの主張に分ける(`PAGE-wrapper-001` の検証点)。
-- `--home` は `global = true` なので `wrapper` にも付くが、wrapper はこれを**使わない**(ADR-006)。
+- `--home` は `global = true` なので `wrapper` にも付くが、wrapper はこれを**使わない**(ADR-070)。
 
 ### Consequences
 
@@ -223,7 +223,7 @@ pages は `wrapper` を「ツール自身のバイナリをラッパーモード
 
 ---
 
-## ADR-006: ラッパーは config もホームも読まず、`RunDirPath` から state root を復元して RunStore を組む
+## ADR-070: ラッパーは config もホームも読まず、`RunDirPath` から state root を復元して RunStore を組む
 
 ### Status
 
@@ -250,7 +250,7 @@ Proposed
 
 ---
 
-## ADR-007: `CommandLine` にプロセス境界からの再構築経路を足す
+## ADR-071: `CommandLine` にプロセス境界からの再構築経路を足す
 
 ### Status
 
@@ -275,7 +275,7 @@ Proposed
 
 ---
 
-## ADR-008: runディレクトリの各ファイルは JSON で書き、マーカーは空ファイルにする
+## ADR-072: runディレクトリの各ファイルは JSON で書き、マーカーは空ファイルにする
 
 ### Status
 
@@ -309,7 +309,7 @@ pid / starttime / exit の内容表現は spec が定めていない(ファイ�
 
 ---
 
-## ADR-009: tick の `errors` は構造化した値で返し、文言は CLI 層で組み立てる
+## ADR-073: tick の `errors` は構造化した値で返し、文言は CLI 層で組み立てる
 
 ### Status
 
@@ -332,7 +332,7 @@ spec の `message: String` は「報告に足る情報が載ること」を要�
 
 ---
 
-## ADR-010: 適合テストのエージェントとデタッチ性の検証は `examples/` のプログラムで供給する
+## ADR-074: 適合テストのエージェントとデタッチ性の検証は `examples/` のプログラムで供給する
 
 ### Status
 
@@ -364,7 +364,7 @@ Proposed
 
 ---
 
-## ADR-011: `spawn_wrapper` の適合3件は `wrapper` サブコマンドの実装後に適用する
+## ADR-075: `spawn_wrapper` の適合3件は `wrapper` サブコマンドの実装後に適用する
 
 ### Status
 
@@ -394,7 +394,7 @@ Proposed
 
 ---
 
-## ADR-012: `prepare_attempt` の適合ケースは `attempt_exists` を使わずに観測する
+## ADR-076: `prepare_attempt` の適合ケースは `attempt_exists` を使わずに観測する
 
 ### Status
 
@@ -425,7 +425,7 @@ Proposed
 
 ---
 
-## ADR-013: worktree の同定は物理パスで行い、実体の消えた登録は張り直す
+## ADR-077: worktree の同定は物理パスで行い、実体の消えた登録は張り直す
 
 ### Status
 
@@ -474,7 +474,7 @@ Proposed
 
 ---
 
-## ADR-014: ポートの機構失敗は spec の表記どおり単一の `Io` で報告する
+## ADR-078: ポートの機構失敗は spec の表記どおり単一の `Io` で報告する
 
 ### Status
 
@@ -495,7 +495,7 @@ spec の表記に寄せ、型名を `Io`(`Failed { message }`)とし、`RunStore
 
 ---
 
-## ADR-015: `RunDirPath::state_root` は `derive` との一致を条件に復元する
+## ADR-079: `RunDirPath::state_root` は `derive` との一致を条件に復元する
 
 ### Status
 
@@ -503,25 +503,25 @@ Proposed
 
 ### Context
 
-ADR-006 は `RunDirPath::derive` の逆写像をドメインに置き、ラッパーの合成が `--run-dir` の値だけから RunStore を組む形にした。逆写像の受理条件をどこまで緩めるかは決めていない — `<state_root>/runs/<task-id>/attempt-<n>` の各段を読み取るだけの実装では、`attempt-01` や `attempt-+1` も「番号 1」として復元できてしまう。
+ADR-070 は `RunDirPath::derive` の逆写像をドメインに置き、ラッパーの合成が `--run-dir` の値だけから RunStore を組む形にした。逆写像の受理条件をどこまで緩めるかは決めていない — `<state_root>/runs/<task-id>/attempt-<n>` の各段を読み取るだけの実装では、`attempt-01` や `attempt-+1` も「番号 1」として復元できてしまう。
 
 これらの値は `derive` が出力しない表記であり、tick が記録した run ディレクトリとは別のパスを指す。ラッパーがそのまま受理すると、tick が観測する run ディレクトリとは違う場所に starttime / pid / exit を書き、猶予経路が「pid が現れない」と分類して spawn 失敗を積む(書き込み自体は成功するので、どこにも失敗の証跡が残らない)。
 
 ### Decision
 
-読み取った `state_root` / `task_id` / `attempt` 番号で `derive` を呼び直し、**元の値と一致したときだけ** `Some` を返す。一致しない表記(桁揃え・符号つきの番号など)は `None` とし、ラッパーは起動引数の不正として何も書かずに非0で終える(ADR-006 の経路に合流する)。
+読み取った `state_root` / `task_id` / `attempt` 番号で `derive` を呼び直し、**元の値と一致したときだけ** `Some` を返す。一致しない表記(桁揃え・符号つきの番号など)は `None` とし、ラッパーは起動引数の不正として何も書かずに非0で終える(ADR-070 の経路に合流する)。
 
 段ごとの読み取りだけで受理する案を採らない理由: 逆写像が受理する集合が `derive` の像より広くなり、「タスクファイルに記録された run ディレクトリ = ラッパーが書く run ディレクトリ」が構成で保証されなくなる。逆写像であることを `derive` 自身との一致で定義すれば、`derive` のレイアウトを変えても両者がずれない。
 
 ### Consequences
 
-- 良い点: 受理条件が `derive` の定義に従属し、レイアウトの知識が `task/path.rs` の1箇所に留まる(ADR-006 の目的そのもの)。
+- 良い点: 受理条件が `derive` の定義に従属し、レイアウトの知識が `task/path.rs` の1箇所に留まる(ADR-070 の目的そのもの)。
 - 良い点: 手で組み立てた run ディレクトリの表記ゆれが、書き込み先の食い違いではなく起動時の拒否として現れる。
 - トレードオフ: 復元のたびに `derive` を1回呼ぶ(文字列結合1回。ラッパー起動時に1度だけ通る経路)。
 
 ---
 
-## ADR-016: `agent_probe` の引数検査は受け取ったトークンの出力で行う
+## ADR-080: `agent_probe` の引数検査は受け取ったトークンの出力で行う
 
 ### Status
 
@@ -529,7 +529,7 @@ Proposed
 
 ### Context
 
-`TC-port-process-controller-021` は「シェルのメタ文字や空白を含む引数トークンを与え、受け取った引数がリテラル一致なら 0 を返す検査コマンド」を要求する。ADR-010 はこれを `agent_probe echo-args <期待トークン...>` のモードとして起票した。
+`TC-port-process-controller-021` は「シェルのメタ文字や空白を含む引数トークンを与え、受け取った引数がリテラル一致なら 0 を返す検査コマンド」を要求する。ADR-074 はこれを `agent_probe echo-args <期待トークン...>` のモードとして起票した。
 
 しかし、期待トークンを**引数として**渡すと、プローブは「自分が受け取った値」を「自分が受け取った値」と比べることになり、常に一致する。シェルを経由した場合(`*` のグロブ展開・`$VAR` の展開・空白での再分割)に生じる食い違いは、プローブ単体では検出できない。期待をプローブ側にハードコードする案は、同じ列を適合スイートとプローブの2箇所に持つことになる。
 
@@ -547,7 +547,7 @@ Proposed
 
 ---
 
-## ADR-017: ラッパーの終了コードは「ラッパー自身が責務を果たせたか」を表す
+## ADR-081: ラッパーの終了コードは「ラッパー自身が責務を果たせたか」を表す
 
 ### Status
 
@@ -577,7 +577,7 @@ spec は `wrapper` の出力DTOを「なし(結果はすべてrunディレクト
 
 ---
 
-## ADR-018: テンプレートと定義の不備の説明はドメインの `describe` に1箇所だけ置く
+## ADR-082: テンプレートと定義の不備の説明はドメインの `describe` に1箇所だけ置く
 
 ### Status
 
@@ -587,7 +587,7 @@ Proposed
 
 手続きAの展開失敗は `record_spawn_failure_in_place(message, ...)` で**タスクファイルに残る**。この `message` はポートが返す不透明な文字列ではなく、ドメインのエラー型(`AgentDefError` / `TemplateError` / `ExpansionError`)から組み立てるしかない。
 
-一方 `cli/render.rs` には同じ3型を文言に落とす private 関数(`agent_def_error` / `template_error`)が既にあった。ユースケース側で別の文言を組むと、同じ不備が「登録時の案内」と「タスクファイルの失敗要因」で違う言葉になる。ADR-009 の「文言は CLI 層で組み立てる」は tick のサマリー(`errors`)に対する規約であって、帳簿に永続化される値には適用できない — 帳簿は CLI を経由せずに読まれる。
+一方 `cli/render.rs` には同じ3型を文言に落とす private 関数(`agent_def_error` / `template_error`)が既にあった。ユースケース側で別の文言を組むと、同じ不備が「登録時の案内」と「タスクファイルの失敗要因」で違う言葉になる。ADR-073 の「文言は CLI 層で組み立てる」は tick のサマリー(`errors`)に対する規約であって、帳簿に永続化される値には適用できない — 帳簿は CLI を経由せずに読まれる。
 
 ### Decision
 
@@ -603,7 +603,7 @@ Proposed
 
 ---
 
-## ADR-019: tick の分岐は判断を値(`Branch`)にしてからタスクを手続きへ渡す
+## ADR-083: tick の分岐は判断を値(`Branch`)にしてからタスクを手続きへ渡す
 
 ### Status
 
@@ -611,7 +611,7 @@ Proposed
 
 ### Context
 
-ADR-001 は tick の分岐を全実行状態の網羅 `match` として書くと決めた。素直に `match task.execution() { ... }` と書くと、アームの中でタスクを消費する手続き(`launch` / `confirm_spawn` はいずれも `self` を消費する遷移関数を呼ぶ)へ渡せない — 走査対象の借用が `match` 全体で生きるため。
+ADR-065 は tick の分岐を全実行状態の網羅 `match` として書くと決めた。素直に `match task.execution() { ... }` と書くと、アームの中でタスクを消費する手続き(`launch` / `confirm_spawn` はいずれも `self` を消費する遷移関数を呼ぶ)へ渡せない — 走査対象の借用が `match` 全体で生きるため。
 
 回避策は3つある: (a) 手続き側で実行状態を再度 `match` する、(b) `clone()` して渡す、(c) 判断だけを所有する値に落としてから分岐する。
 
@@ -631,7 +631,7 @@ ADR-001 は tick の分岐を全実行状態の網羅 `match` として書くと
 
 ---
 
-## ADR-020: 記録すべきことが1つも起きなかった tick を「処理対象なし」と表示する
+## ADR-084: 記録すべきことが1つも起きなかった tick を「処理対象なし」と表示する
 
 ### Status
 
@@ -641,20 +641,25 @@ Proposed
 
 pages は「処理対象がなければその旨を表示して 0」と定めるが、「処理対象」がタスク0件を指すのか、何のアクションも起きなかったことを指すのかは書かれていない。走査は待機ステータスのタスクや猶予内の launching タスクを列挙するが、それらには書き込みも報告も発生しない。
 
+一方で、タスクファイルを書き換える経路(起動・起動確認・spawn 失敗の起動待ち復帰・worktree 作成失敗の記録・展開失敗の記録・凍結)は「アクションが起きた tick」そのものであり、これを「処理対象なし」と表示するのは spec からの逸脱になる。cron 運用ではこの出力が唯一の窓で、状態が変わったことが利用者に一切見えなくなる。
+
 ### Decision
 
-サマリーの9フィールドがすべて空であることをもって「処理対象なし」とする(`TickSummary::is_empty`)。タスク0件・`state/tasks/` 未作成・待機のみ・猶予内の待機は、いずれも同じ表示になる。
+サマリーの全フィールドが空であることをもって「処理対象なし」とする(`TickSummary::is_empty`)。タスク0件・`state/tasks/` 未作成・待機のみ・猶予内の待機は、いずれも同じ表示になる。
+
+あわせて、**タスクファイルへの書き込みを行った経路は必ずサマリーのいずれかのフィールドを埋める**ことを不変とする。起動確認は `confirmed_running`、凍結は `frozen`、記録した失敗(worktree 作成・テンプレート展開・spawn 失敗の起動待ち復帰)は `errors` が受け取る(ADR-086)。保存できなかった場合も `errors` に `SaveFailed` が載るため、「書き込みを試みた tick」は常に「処理対象なし」から外れる。
 
 タスクの件数を数えて分ける案を採らない理由: 「10件走査して何も起きなかった」と「0件だった」を書き分けても、利用者が次に取る行動は変わらない。サマリーは spec 上「実行したアクション」の一覧であり、アクションが無いことの表示に走査件数は要らない。
 
 ### Consequences
 
 - 良い点: 表示の条件がサマリーの値だけで決まり、走査件数という別の状態を持たずに済む。
+- 良い点: 「書き込んだのに無報告」という結末が構成として消える。新しい書き込み経路を足すスライスは、集計先のフィールドを決めない限り不変を満たせない。
 - トレードオフ: #3 / #6 がアームを埋めると「何も起きなかった」の範囲が狭まる。判定条件はサマリーに従属するので、追加のフィールドが埋まれば自動的に追随する。
 
 ---
 
-## ADR-021: テストのフィクスチャは「ダブルに対するユースケース」と「実バイナリの受け入れ」で分ける
+## ADR-085: テストのフィクスチャは「ダブルに対するユースケース」と「実バイナリの受け入れ」で分ける
 
 ### Status
 
@@ -675,3 +680,41 @@ tick のテストは2種類ある — ポートをテストダブルに差し替
 - 良い点: ユースケーステストが実 I/O のフィクスチャに依存しないことが、モジュールの分離として見える。
 - 良い点: 受け入れテストの前提づくりが `add` の出力に従属し、タスクファイルの形式変更が片側だけに残らない。
 - トレードオフ: フィクスチャの置き場が2つになる。用途(分岐網羅 vs 主経路の裏付け)が違うので、共有点は「タスクIDの文字列」程度しかない。
+
+---
+
+## ADR-086: 起動確認だけをサマリーの新しいフィールドにし、記録した失敗は `errors` に載せる
+
+### Status
+
+Proposed
+
+### Context
+
+spec の出力DTO は `launched` / `transitioned` / `skipped_back` / `frozen` / `notified` / `archived` / `errors` / `gc_deleted` / `gc_errors` の9フィールドで、ADR-065 はこれをそのまま持つと決めた。ところが本スライスで配線した書き込み経路のうち、次の4つはどのフィールドにも集計されない。
+
+| 経路 | 書き込む内容 |
+|---|---|
+| launching → running の取込 | 実行状態と `current_attempt.process` |
+| spawn 失敗による起動待ち復帰 | 実行状態・`spawn_fail_count`・失敗要因 |
+| worktree 作成失敗の記録 | 実行状態・`attempt_count`・失敗要因 |
+| テンプレート展開失敗の記録 | `spawn_fail_count`・失敗要因 |
+
+集計されないまま tick を終えると、サマリーが空になり「処理対象のタスクはありませんでした。」と表示される(ADR-084 の判定)。主経路である起動確認が毎回この表示になるため、放置できない。
+
+### Decision
+
+失敗の記録3つは `errors` に載せる。spec の `errors` は「スキップ・破損・観測失敗・kill失敗等の報告」であり、**記録した失敗の報告**はこの定義に収まる。報告用の分類として `TickIssue::WorktreeCreateFailed` / `CommandExpansionFailed` を足し、猶予経路の spawn 失敗は既存の `TickIssue::SpawnFailed` を使う。報告は**保存できたときにだけ**積む — 保存できなかった tick は状態を変えておらず、そのときの報告は `SaveFailed` 1件が正しい。
+
+launching → running の取込にだけ、フィールド `confirmed_running: Vec<TaskId>` を1つ足す。`transitioned` はタスクステータスの遷移(#3 の `advance`)、`skipped_back` は skipped 判定による起動待ち復帰(#3 の `skip_run`)で語義が確定しており、実行状態の取込をどちらかに混ぜると後続スライスが同じフィールドを別の意味で埋めることになる。
+
+`errors` の形も spec の `{ task_id, path, message }` ではなく分類の列挙として持つ(ADR-073)。文言の組み立ては `cli::render` に置き、`InconsistentRunFiles` も分類だけの値にして完成文言をドメインから外す。
+
+`skipped_back` に相乗りさせる案を採らない理由: spec が「skipped でpending復帰」と明記しており、spawn 失敗による復帰と判定による復帰が同じ行に混ざる。フィールドを足さずに `errors` だけで起動確認を報告する案を採らない理由: 起動確認は失敗でもスキップでもない正常な前進で、`errors` に出すと運用者が異常として読む。
+
+### Consequences
+
+- 良い点: 書き込みを行った tick が必ずサマリーに現れ、ADR-084 の不変が構成として成立する。
+- 良い点: 後続スライスは `transitioned` / `skipped_back` を spec の語義のまま使える。
+- トレードオフ: 出力DTO が spec から1フィールド分ずれる。`spec/usecases/execution.md` への反映を progress.md の「spec 追従の提起」に積む。
+- トレードオフ: 1つのタスクが1回の tick で `errors` と `frozen` の両方に現れうる(上限超過で凍結した失敗)。失敗の原因と結末は別の情報なので、どちらか一方に畳まない。

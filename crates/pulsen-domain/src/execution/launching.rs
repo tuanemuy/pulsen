@@ -27,18 +27,12 @@ pub enum LaunchingRecheck {
 
 /// ラッパーの書き込み順序(starttime → pid)の保証が破れた観測。
 ///
-/// どのタスク・どの run ディレクトリかの文脈は報告側が付与する(純粋な分類に報告用の
-/// パスを持ち込まない)。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InconsistentRunFiles {
-    message: String,
-}
-
-impl InconsistentRunFiles {
-    /// 破れの説明。
-    pub fn message(&self) -> &str {
-        &self.message
-    }
+/// 破れの種別だけを持つ。どのタスク・どの run ディレクトリかの文脈は報告側が付与し、
+/// 利用者に見せる言葉は `cli::render` が決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InconsistentRunFiles {
+    /// pid ファイルがあるのに starttime ファイルがない。
+    MissingStartTime,
 }
 
 /// launching タスクの分類(純粋)。
@@ -62,7 +56,7 @@ impl LaunchingClassifier {
             (Some(pid), Some(starttime)) => {
                 Ok(LaunchingDecision::ConfirmRunning(ident(pid, starttime)))
             }
-            (Some(_), None) => Err(inconsistent()),
+            (Some(_), None) => Err(InconsistentRunFiles::MissingStartTime),
             (None, Some(_)) | (None, None) => {
                 if now.elapsed_since(recorded_at) > Self::GRACE_PERIOD.seconds() {
                     Ok(LaunchingDecision::SuspectSpawnFailure)
@@ -86,7 +80,7 @@ impl LaunchingClassifier {
             (Some(pid), Some(starttime)) => {
                 Ok(LaunchingRecheck::ConfirmRunning(ident(pid, starttime)))
             }
-            (Some(_), None) => Err(inconsistent()),
+            (Some(_), None) => Err(InconsistentRunFiles::MissingStartTime),
             (None, Some(_)) | (None, None) => Ok(LaunchingRecheck::SpawnFailed),
         }
     }
@@ -95,15 +89,6 @@ impl LaunchingClassifier {
 /// 揃った観測から同定情報一式を組み立てる。
 fn ident(pid: PidFileContent, starttime: StartTimeRecord) -> ProcessIdent {
     ProcessIdent::new(pid.pid(), pid.kill_ident().clone(), starttime)
-}
-
-/// 書き込み順序の破れの説明。分類の2つの入口で同じ文言を使う。
-fn inconsistent() -> InconsistentRunFiles {
-    InconsistentRunFiles {
-        message:
-            "pid ファイルがあるのに starttime ファイルがありません(ラッパーは starttime を先に書く)"
-                .to_owned(),
-    }
 }
 
 #[cfg(test)]
@@ -206,7 +191,7 @@ mod tests {
             LaunchingClassifier::classify(&recorded_at(), &after(1), Some(pid_file()), None)
                 .expect_err("矛盾した観測");
 
-        assert!(!error.message().is_empty());
+        assert_eq!(error, InconsistentRunFiles::MissingStartTime);
     }
 
     #[test]
@@ -241,6 +226,6 @@ mod tests {
         let error = LaunchingClassifier::classify_recheck(Some(pid_file()), None)
             .expect_err("矛盾した観測");
 
-        assert!(!error.message().is_empty());
+        assert_eq!(error, InconsistentRunFiles::MissingStartTime);
     }
 }

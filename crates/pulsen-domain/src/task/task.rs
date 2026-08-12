@@ -182,6 +182,9 @@ impl Task {
     }
 
     /// 実行状態の判別子。
+    ///
+    /// 実行状態に付随する値ではなく判別だけが要る経路(凍結したかの判定など)の読み取り口。
+    /// 判別と同時に付随する値が要る経路は `execution()` の網羅 `match` を通る。
     pub fn execution_kind(&self) -> ExecutionStateKind {
         self.execution.kind()
     }
@@ -204,6 +207,10 @@ impl Task {
     }
 
     /// 現ステータスがエージェント実行か。
+    ///
+    /// 動作種別の問い合わせ3種は spec が一組で定める読み取り口。真偽だけが要る経路
+    /// (`record_launching` の前提検査、待機の素通し、手続きBの終端処理)がこれらを使い、
+    /// 判別と同時に定義の中身が要る経路は `current_status_def` の網羅 `match` を通る。
     pub fn is_agent_run(&self) -> bool {
         match self.current_status_def() {
             StatusDefinition::AgentRun { .. } => true,
@@ -212,6 +219,8 @@ impl Task {
     }
 
     /// 現ステータスが待機か。
+    ///
+    /// 3種を一組で置く理由は [`Task::is_agent_run`] を参照。
     pub fn is_wait(&self) -> bool {
         match self.current_status_def() {
             StatusDefinition::Wait => true,
@@ -220,6 +229,8 @@ impl Task {
     }
 
     /// 現ステータスがクリーンアップか。
+    ///
+    /// 3種を一組で置く理由は [`Task::is_agent_run`] を参照。
     pub fn is_cleanup(&self) -> bool {
         match self.current_status_def() {
             StatusDefinition::Cleanup => true,
@@ -833,6 +844,22 @@ mod tests {
     }
 
     #[test]
+    fn ワークスペースの確定はリトライのカウンタをリセットしない() {
+        let counters = RetryCounters::rehydrate(2, 1, 3);
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Failed,
+            counters,
+            ..fields()
+        });
+
+        let confirmed = task
+            .confirm_workspace(workspace(), later())
+            .expect("未確定である");
+
+        assert_eq!(confirmed.counters(), counters);
+    }
+
+    #[test]
     fn 確定済みのワークスペースは再確定されない() {
         let task = task_of(TaskFields {
             workspace: Some(workspace()),
@@ -847,27 +874,37 @@ mod tests {
 
     #[test]
     fn 起動記録は次の番号を採番し番号どおりのrunディレクトリを導出する() {
-        let task = task_of(TaskFields {
-            execution: ExecutionState::Failed,
-            workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
-            ..fields()
-        });
+        for (execution, current, expected) in [
+            (ExecutionState::Pending, None, attempt(1)),
+            (ExecutionState::Failed, Some(attempt(1)), attempt(2)),
+        ] {
+            let number = expected.number().get();
+            let task = task_of(TaskFields {
+                execution,
+                workspace: Some(workspace()),
+                current_attempt: current,
+                ..fields()
+            });
 
-        let (recorded, run_dir) = task
-            .record_launching(&state_root(), later())
-            .expect("前提を満たす");
+            let (recorded, run_dir) = task
+                .record_launching(&state_root(), later())
+                .expect("前提を満たす");
 
-        let expected = attempt(2);
-        assert_eq!(run_dir, *expected.run_dir());
-        assert_eq!(
-            recorded.execution(),
-            &ExecutionState::Launching {
-                recorded_at: later()
-            }
-        );
-        assert_eq!(recorded.current_attempt(), Some(&expected));
-        assert_eq!(recorded.updated_at(), later());
+            assert_eq!(run_dir, *expected.run_dir(), "attempt-{number}");
+            assert_eq!(
+                recorded.execution(),
+                &ExecutionState::Launching {
+                    recorded_at: later()
+                },
+                "attempt-{number}"
+            );
+            assert_eq!(
+                recorded.current_attempt(),
+                Some(&expected),
+                "attempt-{number}"
+            );
+            assert_eq!(recorded.updated_at(), later(), "attempt-{number}");
+        }
     }
 
     #[test]

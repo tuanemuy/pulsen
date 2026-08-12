@@ -204,12 +204,19 @@ impl WorktreeManager for GitCliWorktreeManager {
                         ),
                     });
                 }
-                if !entry.prunable {
+                // 実体の有無を直接観測する。`prunable` の注記は git のバージョンで出力
+                // されないことがあり、注記だけを見ると実体の消えた登録が「達成済み」に
+                // 倒れる。そのまま `Ok` を返すと spawn まで進み、エージェントは cwd 不在の
+                // 126 をリトライのたびに繰り返す。
+                let present = path.try_exists().map_err(|error| WorktreeError::Failed {
+                    message: format!("{}: パスを確認できない: {error}", path.display()),
+                })?;
+                if present && !entry.prunable {
                     return Ok(());
                 }
-                // 登録は残っているが実体が消えている。鍵が自タスクのパスと一致し、その
-                // エントリが自タスクのブランチを指していることを確認した後なので、`-f` が
-                // 外す保護は「登録は残るが実体が無い」1つに閉じる。
+                // 鍵が自タスクのパスと一致し、そのエントリが自タスクのブランチを指している
+                // ことを確認した後なので、`-f` が外す保護は「登録は残るが実体が無い」1つに
+                // 閉じる。
                 self.require_success(
                     repo,
                     [

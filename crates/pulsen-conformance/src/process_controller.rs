@@ -5,10 +5,10 @@
 //! 扱う。
 //!
 //! スイートを2つに分けるのは、`spawn_wrapper` の3件だけがラッパーモードの実装(実バイナリ)
-//! を要するため(ADR-011)。`own_identity` / `run_agent` の13件はアダプター単体で閉じる。
+//! を要するため(ADR-075)。`own_identity` / `run_agent` の13件はアダプター単体で閉じる。
 //!
 //! 期待結果は契約の語彙(「非0の符号化値」「実行単位」)で書き、プラットフォーム固有の
-//! 具体値(`128+シグナル番号`)には踏み込まない(ADR-010)。
+//! 具体値(`128+シグナル番号`)には踏み込まない(ADR-074)。
 
 /// `own_identity` / `run_agent` のスイート(13行)。
 pub mod identity_and_agent {
@@ -191,7 +191,7 @@ pub mod identity_and_agent {
             .run_agent(&command, &cwd, &stdout, &stderr);
 
         // 具体値(POSIX 慣例の 128+シグナル番号)はプラットフォーム実装の性質であり、
-        // 契約が要求するのは「常に値を返し、非0である」ことまで(ADR-010)。
+        // 契約が要求するのは「常に値を返し、非0である」ことまで(ADR-074)。
         assert!(!code.is_success(), "非0の符号化値になる: {code:?}");
         CaseOutcome::Ran
     }
@@ -280,13 +280,23 @@ pub mod spawn {
         harness: &impl ProcessControllerHarness,
     ) -> CaseOutcome {
         let spec = require!(harness.launch_spec(AgentBehavior::Exit(0)));
+        assert!(
+            require!(harness.run_dir_is_empty(&spec)),
+            "起動の前は run ディレクトリに何も無い"
+        );
 
         assert_eq!(harness.controller().spawn_wrapper(&spec), Ok(()));
 
-        // 結末は run ディレクトリ経由でのみ現れる。
+        // 結末は run ディレクトリ経由でのみ現れる。観測が起動の前後で**反転すること**
+        // まで主張する — 真偽を定数で返すハーネスはどちらかの側で落ちる(RunStore の
+        // `attempt_dir_present` と同じ規律)。
         assert!(
             require!(harness.wait_for_run_files(&spec)),
             "ラッパーが起動して run ファイルを残す"
+        );
+        assert!(
+            !require!(harness.run_dir_is_empty(&spec)),
+            "起動の後は run ディレクトリに結末が現れる"
         );
         CaseOutcome::Ran
     }
@@ -362,7 +372,7 @@ macro_rules! process_controller_identity_conformance {
 /// `spawn_wrapper` の適合スイートをアダプターに適用する。
 ///
 /// ラッパーモード(実バイナリ)の実装を前提にするため、`identity` のスイートとは別に
-/// 適用する(ADR-011)。1つのテストファイルに両方を適用できる。
+/// 適用する(ADR-075)。1つのテストファイルに両方を適用できる。
 #[macro_export]
 macro_rules! process_controller_spawn_conformance {
     ($setup:expr, $allowed_skips:expr) => {

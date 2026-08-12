@@ -25,7 +25,7 @@
 
 ## 環境で走らなくなりうる行
 
-**何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する12行だけで、区分 C の残る6行のうち4行はそれぞれ別の能力を要求する。残る2行（TC-port-process-controller-003 / 005）は spec の文面こそ「再現できるアダプター環境に限る」だが、**別ハンドルの注入**で確定的に走るためこの表に現れない（ADR-004）。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
+**何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する12行だけで、区分 C の残る6行のうち4行はそれぞれ別の能力を要求する。残る2行（TC-port-process-controller-003 / 005）は spec の文面こそ「再現できるアダプター環境に限る」だが、**別ハンドルの注入**で確定的に走るためこの表に現れない（ADR-068）。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
 
 | ID | 区分 | 前提を作れない環境 | 判定 |
 |---|---|---|---|
@@ -207,7 +207,7 @@ TC-002〜005 は別プロセスに保持させる実行ファイルを要する�
 
 `remove` の5行は、それをポートにメソッドとして足すスライスで扱う。
 
-`create` のケースが使う `ws.path` の置き場（worktree_root）は**シンボリックリンク経由のパス**として組む。同定の鍵は物理パスなので（ADR-013）、置き場が実体そのものだと正規化の分岐がどのケースからも実行されない。
+`create` のケースが使う `ws.path` の置き場（worktree_root）は**シンボリックリンク経由のパス**として組む。同定の鍵は物理パスなので（ADR-077）、置き場が実体そのものだと正規化の分岐がどのケースからも実行されない。
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
@@ -220,16 +220,16 @@ TC-002〜005 は別プロセスに保持させる実行ファイルを要する�
 | TC-port-worktree-manager-007 | 指定ブランチが存在する | B | `repo_with_commit` + `head_branch_name` |
 | TC-port-worktree-manager-008 | 指定ブランチが存在しない | B | `repo_with_commit` + `absent_branch_name` |
 | TC-port-worktree-manager-009 | git 操作自体が失敗する | C | `failing_manager` + `repo_with_commit` + `head_branch_name`（3メソッドとも `Failed`） |
-| TC-port-worktree-manager-010 | base があり、ブランチもパスも未使用 | B | `unused_workspace` + `head_branch_name` + `branch_tip`（新ブランチが base の先端から作られたこと）+ `worktree_present` |
+| TC-port-worktree-manager-010 | base があり、ブランチもパスも未使用 | B | `unused_workspace` + `head_branch_name` + `branch_tip`（新ブランチが base の先端から作られたこと）+ `worktree_present`（`ws.path` が `ws.branch` の worktree として**登録され**、実体も在ること。実体の有無だけを見ると、ブランチを作ってディレクトリを掘っただけの実装が通る） |
 | TC-port-worktree-manager-011 | worktree_root 自体が未作成 | B | `workspace_under_missing_root` + `worktree_present` |
 | TC-port-worktree-manager-012 | 自タスクの worktree が存在し、内容に変更がある | B | `unused_workspace` → `create` → `put_worktree_marker` + `worktree_marker`（内容の不変を観測） |
 | TC-port-worktree-manager-013 | 登録なし・コミットの積まれた `ws.branch` のみ存在 | B | `workspace_with_orphan_branch` + `branch_tip` + `worktree_marker`（先端の不変と成果物の復帰） |
 | TC-port-worktree-manager-014 | `ws.path` に worktree でない通常のディレクトリ | B | `workspace_over_plain_dir` + `worktree_marker` + `branch_exists` |
 | TC-port-worktree-manager-015 | `ws.path` に別ブランチの worktree | B | `workspace_over_other_branch` + `worktree_marker` + `branch_exists` |
 | TC-port-worktree-manager-016 | base に指定したブランチが存在しない | B | `absent_branch_name` + `unused_workspace` + `worktree_present` + `branch_exists` |
-| （追加ケース・ADR-013） | 自タスクの登録は残るが実体が消えている（`prunable`） | B | `workspace_with_prunable_registration` + `branch_tip` + `worktree_marker`。復旧の2分岐（`prunable` からの `add -f` と、登録なし・ブランチのみからの `add`）を**どちらも**実行させるための追加。TC-013 を `prunable` 側に寄せると、`add`（`-f` なし）の分岐がどのケースからも実行されない |
+| （追加ケース・ADR-077） | 自タスクの登録は残るが実体が消えている（`prunable`） | B | `workspace_with_prunable_registration` + `branch_tip` + `worktree_marker`。復旧の2分岐（`prunable` からの `add -f` と、登録なし・ブランチのみからの `add`）を**どちらも**実行させるための追加。TC-013 を `prunable` 側に寄せると、`add`（`-f` なし）の分岐がどのケースからも実行されない |
 
-## RunStore（本スライス該当の21行 / A 10・B 9・C 2）
+## RunStore（本スライス該当の21行 / A 10・B 9・C 2、+ 追加ケース1件）
 
 `attempt_exists` / `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の22行は、それらをポートにメソッドとして足すスライスで扱う。
 
@@ -237,8 +237,8 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
-| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-012） |
-| TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（`attempt_exists` は宣言しないため、内容の不変で観測する。ADR-012） |
+| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-076） |
+| TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（`attempt_exists` は宣言しないため、内容の不変で観測する。ADR-076） |
 | TC-port-run-store-003 | 準備済み・pid 未書き込み | A | `prepare_attempt` → `read_pid_file` |
 | TC-port-run-store-004 | attempt ディレクトリ自体が不在 | B | `expected_run_dir`（準備しないまま読む） |
 | TC-port-run-store-005 | `write_pid_file` 済み | A | `write_pid_file` → `read_pid_file` |
@@ -258,22 +258,23 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 | TC-port-run-store-019 | マーカー書き込み済み | A | `write_invalidation_marker` 2回 |
 | TC-port-run-store-020 | 準備済み・マーカー未書き込み | A | `marker_exists` |
 | TC-port-run-store-021 | マーカー書き込み済み | A | `write_invalidation_marker` → `marker_exists` |
+| （追加ケース・write 系の置き場作成） | 準備を経ていない attempt ディレクトリが不在 | B | `expected_run_dir` → `write_starttime` / `write_pid_file` / `write_exit` → 各 read 系（`attempt_dir_present` があれば書き込み前の不在もそこで観測する）。台帳行がディレクトリ作成を主張するのはマーカー（TC-018）だけで、`prepare_attempt` の失敗後も起動を続ける経路が残る3つの write 系の同じ契約に乗っている |
 
 ## ProcessController（本スライス該当の16行 / A 0・B 12・C 4）
 
 `starttime_of` / `kill` / `try_kill_remnants` の8行は、それらをポートにメソッドとして足すスライスで扱う。
 
-スイートは2つに分かれる（ADR-011）。`identity_and_agent` は `own_identity` / `run_agent` の13行で、アダプター単体で閉じる。`spawn` は `spawn_wrapper` の3行で、ラッパーモード（実バイナリ）の実装を前提にする。1つのテストファイルに両方を適用する。
+スイートは2つに分かれる（ADR-075）。`identity_and_agent` は `own_identity` / `run_agent` の13行で、アダプター単体で閉じる。`spawn` は `spawn_wrapper` の3行で、ラッパーモード（実バイナリ）の実装を前提にする。1つのテストファイルに両方を適用する。
 
-テスト用エージェントは `agent_command` に**振る舞いの意味**（`AgentBehavior`）だけを渡して組む。プラットフォーム固有のコマンド名やシェルをケースに持ち込まないため（ADR-010）。
+テスト用エージェントは `agent_command` に**振る舞いの意味**（`AgentBehavior`）だけを渡して組む。プラットフォーム固有のコマンド名やシェルをケースに持ち込まないため（ADR-074）。
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
-| TC-port-process-controller-001 | 用意済みの run_dir・実在する worktree・テスト用エージェント | B | `launch_spec` + `wait_for_run_files`（結末は run ディレクトリ経由でのみ現れる） |
+| TC-port-process-controller-001 | 用意済みの run_dir・実在する worktree・テスト用エージェント | B | `launch_spec` + `run_dir_is_empty` + `wait_for_run_files`（結末は run ディレクトリ経由でのみ現れる。観測が起動の**前後で反転すること**まで主張する。真偽を定数で返すハーネスはどちらかの側で落ちる） |
 | TC-port-process-controller-002 | 一定時間実行し続けるエージェントで `spawn_wrapper` 済み | B | `launch_spec(Sleep)` + `spawn_from_other_process`（呼び出し側プロセスの終了）+ `wait_for_run_files` |
-| TC-port-process-controller-003 | ラッパーの起動自体が不可能 | C | `failing_controller`（存在しないパスを自バイナリとして注入。ADR-004）+ `run_dir_is_empty` |
+| TC-port-process-controller-003 | ラッパーの起動自体が不可能 | C | `failing_controller`（存在しないパスを自バイナリとして注入。ADR-068）+ `run_dir_is_empty` |
 | TC-port-process-controller-004 | テストプロセス自身 | B | `observe_wall_clock`（呼び出し前後の範囲）。pid は `std::process::id()` と突き合わせる |
-| TC-port-process-controller-005 | 同定情報の取得機構自体が失敗する | C | `failing_identity_controller`（存在しない取得元を注入。ADR-004） |
+| TC-port-process-controller-005 | 同定情報の取得機構自体が失敗する | C | `failing_identity_controller`（存在しない取得元を注入。ADR-068） |
 | TC-port-process-controller-017 | exit 0 で終了するコマンド | B | `agent_command(Exit(0))` + `worktree` + `log_paths` |
 | TC-port-process-controller-018 | 非0（7）で終了するコマンド | B | `agent_command(Exit(7))` |
 | TC-port-process-controller-019 | 作業ディレクトリを検査するコマンド | B | `agent_command(CheckCwd(worktree))` |
@@ -281,7 +282,7 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 | TC-port-process-controller-021 | シェルのメタ文字・空白・プレースホルダを含むトークン | B | `agent_command(EchoArgs(tokens))`（受け取ったトークンが標準出力に1行ずつ現れ、渡した列と一致する） |
 | TC-port-process-controller-022 | 存在しないコマンド名 | B | `missing_command` |
 | TC-port-process-controller-023 | 実行不能なファイル | C | `non_executable_command`（起動が拒否されることを確かめてから `Some`） |
-| TC-port-process-controller-024 | 外部から強制終了されるコマンド | B | `agent_command(Abort)`（期待は**非0の符号化値**まで。`128+シグナル番号` の具体値はアダプターのユニットテストが固定する。ADR-010） |
+| TC-port-process-controller-024 | 外部から強制終了されるコマンド | B | `agent_command(Abort)`（期待は**非0の符号化値**まで。`128+シグナル番号` の具体値はアダプターのユニットテストが固定する。ADR-074） |
 | TC-port-process-controller-025 | stdout のリダイレクト先が開けない | C | `unwritable_log_path`（起動していれば 0 が返るため、126 が「エージェントの副作用が生じていない」の観測になる） |
 | TC-port-process-controller-026 | cwd が存在しない | B | `missing_worktree` |
 | TC-port-process-controller-027 | 一定時間実行してから終了するコマンド | B | `agent_command(Sleep)`（経過時間で同期実行を観測） |

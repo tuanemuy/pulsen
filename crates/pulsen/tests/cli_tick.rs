@@ -13,7 +13,8 @@ use std::fs;
 use std::path::Path;
 
 use common::{
-    Home, Repo, Run, add, agent_probe, git, probe_config, run_cli, scratch, tick, wait_until,
+    Home, Repo, Run, Untouched, add, agent_probe, git, probe_config, run_cli, scratch, tick,
+    wait_until,
 };
 use serde_json::{Value, json};
 
@@ -62,6 +63,22 @@ fn read_json(path: &Path) -> Value {
 
 fn branch_of(id: &str) -> String {
     format!("pulsen/{id}")
+}
+
+/// ラッパー自身を長とする実行単位を指す kill 同定子。
+///
+/// デタッチせずに起動すると、この値は呼び出し側(cron / シェル)のプロセスグループを
+/// 指したまま pid ファイルとタスクファイルに永続化され、終了処理が無関係なプロセス群へ
+/// 届く経路が開く。
+#[cfg(unix)]
+fn own_unit_kill_ident(pid: u64) -> String {
+    format!("-{pid}")
+}
+
+/// プロセスグループ相当の実行単位を扱う手段が無いため、同定子は pid そのものになる。
+#[cfg(not(unix))]
+fn own_unit_kill_ident(pid: u64) -> String {
+    pid.to_string()
 }
 
 #[test]
@@ -113,12 +130,11 @@ fn 次のtickはpidの出現をもってrunningへ取り込む() {
     let task = home.task(&id);
     assert_eq!(task["execution"]["state"], json!("running"));
     let process = &task["current_attempt"]["process"];
-    assert!(process["pid"].is_u64(), "pid が取り込まれる");
-    assert!(
-        process["kill_ident"]
-            .as_str()
-            .is_some_and(|s| !s.is_empty()),
-        "kill 同定子が取り込まれる"
+    let pid = process["pid"].as_u64().expect("pid が取り込まれる");
+    assert_eq!(
+        process["kill_ident"],
+        json!(own_unit_kill_ident(pid)),
+        "kill 同定子はラッパー自身の実行単位を指す"
     );
     assert!(process["starttime"]["ident"].is_string());
     assert_eq!(task["counters"]["spawn_fail_count"], json!(0));
@@ -354,13 +370,51 @@ fn スナップショットだけが壊れたタスクは報告されて書き�
 }
 
 #[test]
+fn グローバル設定が不在なら非0で終わり状態を変えない() {
+    let home = probe_home(&PRINT_INPUT);
+    let repo = Repo::with_commit();
+    let id = register(&home, &repo);
+    home.remove_config();
+    let untouched = Untouched::of([home.task_path(&id)]);
+
+    let run = run_tick(&home);
+
+    run.assert_rejected().assert_reports(&["未初期化"]);
+    untouched.assert_unchanged();
+    assert!(!home.worktree(&id).exists(), "worktree は作られない");
+    assert!(
+        !home.run_dir(&id, 1).exists(),
+        "runディレクトリも作られない"
+    );
+}
+
+#[test]
+fn グローバル設定がパース不能なら非0で終わり状態を変えない() {
+    let home = probe_home(&PRINT_INPUT);
+    let repo = Repo::with_commit();
+    let id = register(&home, &repo);
+    home.write_config("agents: [\n");
+    let untouched = Untouched::of([home.task_path(&id)]);
+
+    let run = run_tick(&home);
+
+    run.assert_rejected().assert_reports(&["解釈できません"]);
+    untouched.assert_unchanged();
+    assert!(!home.worktree(&id).exists(), "worktree は作られない");
+    assert!(
+        !home.run_dir(&id, 1).exists(),
+        "runディレクトリも作られない"
+    );
+}
+
+#[test]
 fn 別の操作がロックを保持していればスキップして0で終わる() {
     let home = probe_home(&PRINT_INPUT);
     let repo = Repo::with_commit();
     let id = register(&home, &repo);
 
     let Some(holder) = common::lock::hold(&home.lock_path()) else {
-        common::skipped("tc_exec_tick_016", "lock::hold");
+        common::skipped("tc_exec_tick_015", "lock::hold");
         return;
     };
 

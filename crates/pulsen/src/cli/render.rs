@@ -9,7 +9,7 @@ use pulsen_domain::definition::{
     AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, WorkflowLoadError,
     WorkflowParseError, WorkflowStructureError,
 };
-use pulsen_domain::execution::{RunFileError, TargetError};
+use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
 use pulsen_domain::task::{
     AbsolutePathError, AttemptNumber, CreateError, SaveError, TaskId, TransitionError,
 };
@@ -57,6 +57,7 @@ pub fn tick_summary(summary: &TickSummary) -> String {
 
     let mut out = String::from("tick を実行しました。\n");
     push_ids(&mut out, "起動", &summary.launched);
+    push_ids(&mut out, "起動確認", &summary.confirmed_running);
     push_ids(&mut out, "遷移", &summary.transitioned);
     push_ids(&mut out, "実行待ちへ復帰", &summary.skipped_back);
     push_ids(&mut out, "凍結", &summary.frozen);
@@ -118,9 +119,16 @@ fn tick_issue(issue: &TickIssue) -> String {
             task_id.as_str(),
             run_file_error(error)
         ),
-        TickIssue::InconsistentRunFiles { task_id, message } => {
-            format!("{}: {message}", task_id.as_str())
+        TickIssue::InconsistentRunFiles { task_id, kind } => {
+            format!("{}: {}", task_id.as_str(), inconsistent_run_files(kind))
         }
+        TickIssue::WorktreeCreateFailed { task_id, message } => {
+            format!("{}: worktree を作成できません({message})", task_id.as_str())
+        }
+        TickIssue::CommandExpansionFailed { task_id, message } => format!(
+            "{}: 起動コマンドを組み立てられません({message})",
+            task_id.as_str()
+        ),
         TickIssue::MarkerWriteFailed { task_id, message } => format!(
             "{}: 無効化マーカーを書けません({message})",
             task_id.as_str()
@@ -153,6 +161,16 @@ fn transition_error(error: &TransitionError) -> String {
             status.as_str()
         ),
         TransitionError::InvariantViolated { message } => message.clone(),
+    }
+}
+
+/// ラッパーの書き込み順序の破れ。次の tick が再観測するので、修復の指示は添えない。
+fn inconsistent_run_files(kind: &InconsistentRunFiles) -> String {
+    match kind {
+        InconsistentRunFiles::MissingStartTime => {
+            "pid ファイルがあるのに starttime ファイルがありません(ラッパーは starttime を先に書く)"
+                .to_owned()
+        }
     }
 }
 
@@ -842,6 +860,92 @@ mod tests {
             "tick を実行しました。\n  \
              起動: 20260812t101112-abcd1234\n  \
              凍結: 20260812t101112-efgh5678"
+        );
+    }
+
+    #[test]
+    fn すべての項目が埋まったサマリーは決まった順で並ぶ() {
+        let summary = TickSummary {
+            launched: vec![task("20260812t101112-aaaa0001")],
+            confirmed_running: vec![task("20260812t101112-aaaa0002")],
+            transitioned: vec![task("20260812t101112-aaaa0003")],
+            skipped_back: vec![task("20260812t101112-aaaa0004")],
+            frozen: vec![task("20260812t101112-aaaa0005")],
+            notified: vec![task("20260812t101112-aaaa0006")],
+            archived: vec![task("20260812t101112-aaaa0007")],
+            errors: vec![TickIssue::MissingCurrentAttempt {
+                task_id: task("20260812t101112-aaaa0008"),
+            }],
+            gc_deleted: vec![(
+                "20260812t101112-aaaa0009".to_owned(),
+                AttemptNumber::parse(1).expect("受理される"),
+            )],
+            gc_errors: vec![(
+                "20260812t101112-aaaa0010".to_owned(),
+                AttemptNumber::parse(2).expect("受理される"),
+            )],
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             起動: 20260812t101112-aaaa0001\n  \
+             起動確認: 20260812t101112-aaaa0002\n  \
+             遷移: 20260812t101112-aaaa0003\n  \
+             実行待ちへ復帰: 20260812t101112-aaaa0004\n  \
+             凍結: 20260812t101112-aaaa0005\n  \
+             通知: 20260812t101112-aaaa0006\n  \
+             終端処理: 20260812t101112-aaaa0007\n  \
+             gcで削除: 20260812t101112-aaaa0009/attempt-1\n  \
+             gcで削除できず: 20260812t101112-aaaa0010/attempt-2\n  \
+             スキップ(1件):\n    \
+             - 20260812t101112-aaaa0008: 起動記録済みですが現在 attempt がありません\
+             (タスクファイルの修復が必要です)"
+        );
+    }
+
+    #[test]
+    fn 起動を確認したタスクはサマリーに現れる() {
+        let summary = TickSummary {
+            confirmed_running: vec![task("20260812t101112-abcd1234")],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  起動確認: 20260812t101112-abcd1234"
+        );
+    }
+
+    #[test]
+    fn 記録した失敗はスキップの一覧に原因つきで並ぶ() {
+        let summary = TickSummary {
+            errors: vec![
+                TickIssue::WorktreeCreateFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    message: "git worktree add に失敗".to_owned(),
+                },
+                TickIssue::CommandExpansionFailed {
+                    task_id: task("20260812t101112-efgh5678"),
+                    message: "エージェント `claude` は config.yaml に定義されていません".to_owned(),
+                },
+                TickIssue::InconsistentRunFiles {
+                    task_id: task("20260812t101112-ijkl9012"),
+                    kind: InconsistentRunFiles::MissingStartTime,
+                },
+            ],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             スキップ(3件):\n    \
+             - 20260812t101112-abcd1234: worktree を作成できません(git worktree add に失敗)\n    \
+             - 20260812t101112-efgh5678: 起動コマンドを組み立てられません\
+             (エージェント `claude` は config.yaml に定義されていません)\n    \
+             - 20260812t101112-ijkl9012: pid ファイルがあるのに starttime ファイルが\
+             ありません(ラッパーは starttime を先に書く)"
         );
     }
 

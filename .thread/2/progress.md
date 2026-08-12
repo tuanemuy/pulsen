@@ -4,7 +4,7 @@
 
 ### Windows の `KillIdent` は pid 文字列のまま
 
-`unsafe` 禁止のままジョブオブジェクトを扱えないため、Windows ではプロセスグループに相当する同定子を永続化できない。#3 の `try_kill_remnants` が「グループごと落とす」契約を Windows で満たせない可能性がある。ADR-003 の申し送りとして残し、Issue #10（クロスプラットフォーム検証）で実機確認する。
+`unsafe` 禁止のままジョブオブジェクトを扱えないため、Windows ではプロセスグループに相当する同定子を永続化できない。#3 の `try_kill_remnants` が「グループごと落とす」契約を Windows で満たせない可能性がある。ADR-067 の申し送りとして残し、Issue #10（クロスプラットフォーム検証）で実機確認する。
 
 影響範囲: Windows 実機のみ。Unix 系では PGID を観測して永続化しているため影響しない。
 
@@ -22,10 +22,12 @@
 
 実装で spec と食い違った、または spec が規定していない箇所。いずれも既存規約を優先した結果で、コード側の修正は不要。
 
-- `CommandLine::rehydrate` の追加 — `DOM-definition-023` は「`expand` の結果としてのみ生成される」としているが、ラッパーが argv から復元するために生成経路が2つになった（ADR-007）
-- `RunDirPath::state_root` の追加 — ラッパーが config もホームも読まずに `RunStore` を構築するための逆写像。台帳に無い追加（ADR-006 / ADR-015）
-- `wrapper` の終了コード — spec は引数不正の1行しか規定していない。「ラッパー自身が責務を果たせたか」を表す規約を置いた（ADR-017）
-- tick の `errors` — spec は `message: String` だが、文言の組み立てを CLI 層に寄せる規約に従って構造化した値にした（ADR-009）
+- `CommandLine::rehydrate` の追加 — `DOM-definition-023` は「`expand` の結果としてのみ生成される」としているが、ラッパーが argv から復元するために生成経路が2つになった（ADR-071）
+- `RunDirPath::state_root` の追加 — ラッパーが config もホームも読まずに `RunStore` を構築するための逆写像。台帳に無い追加（ADR-070 / ADR-079）
+- `wrapper` の終了コード — spec は引数不正の1行しか規定していない。「ラッパー自身が責務を果たせたか」を表す規約を置いた（ADR-081）
+- tick の `errors` — spec は `message: String` だが、文言の組み立てを CLI 層に寄せる規約に従って構造化した値にした（ADR-073）
+- tick のサマリー DTO の拡張 — `UC-execution-002` の出力DTO に無い `confirmed_running: Vec<TaskId>` を足した。launching → running の取込は `transitioned` にも `skipped_back` にも語義が合わず、集計先が無いと「書き込んだ tick が処理対象なしと表示される」（ADR-086 / ADR-084）
+- `RunStore` の write 系がディレクトリを作る契約 — `spec/domains/execution.md` のポート表に無い契約をポートの doc で宣言し、適合ケースで主張している。`prepare_attempt` の失敗後も spawn は行われる設計なので、ラッパーが自力でディレクトリを作って書けることが自己修復の前提になる（ADR-072）
 
 ## 未着手（後続フェーズで行う）
 

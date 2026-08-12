@@ -1,7 +1,7 @@
 //! プラットフォーム依存のプロセス操作による `ProcessController` の実装。
 //!
 //! OS 依存の分岐はこのファイルだけに置く(CLAUDE.md 技術方針)。`unsafe` は使わず、
-//! std の安全 API と外部コマンドの起動だけで組む(ADR-003)。
+//! std の安全 API と外部コマンドの起動だけで組む(ADR-067)。
 //!
 //! 同定情報(起動時刻・プロセスグループ)の取得は、プラットフォームごとの `identity`
 //! モジュールにある**1つの関数**に閉じる。記録側(`own_identity`)と照合側が同じ表現を
@@ -42,7 +42,7 @@ const NOT_FOUND: i32 = 127;
 /// 何を指すかはプラットフォームで違う(POSIX 非 Linux は `ps` の実行ファイル、Linux は
 /// procfs のルート、Windows は powershell の実行ファイル)。構築時に注入することで、
 /// 適合テストが「取得機構そのものが失敗する状況」を別のインスタンスとして作れる
-/// (ADR-004)。
+/// (ADR-068)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentitySource(PathBuf);
 
@@ -77,19 +77,32 @@ struct ObservedProcess {
 /// std の安全 API と外部コマンドの起動でプラットフォーム抽象を満たすコントローラー。
 #[derive(Debug, Clone)]
 pub struct SystemProcessController {
-    self_exe: PathBuf,
+    self_exe: Option<PathBuf>,
     identity_source: IdentitySource,
     clock: SystemClock,
 }
 
 impl SystemProcessController {
-    /// 自バイナリのパスと同定情報の取得元を受け取る(ADR-004)。
+    /// 自バイナリのパスと同定情報の取得元を受け取る(ADR-068)。
     ///
     /// `std::env::current_exe()` を読むのは合成ルートの1箇所だけにする — 適合テストは
     /// テストバイナリではなく本物の `pulsen` を注入する必要がある。
     pub fn new(self_exe: PathBuf, identity_source: IdentitySource, clock: SystemClock) -> Self {
         Self {
-            self_exe,
+            self_exe: Some(self_exe),
+            identity_source,
+            clock,
+        }
+    }
+
+    /// 自バイナリのパスを持たない構築。
+    ///
+    /// `self_exe` を使うのは `spawn_wrapper` だけなので、ラッパー自身のように起動を行わない
+    /// 経路は自バイナリのパスを解決せずに組める(各コマンドは自身の動作に必要なリソース
+    /// だけを検証する)。この構成での `spawn_wrapper` は `SpawnError` を返す。
+    pub fn without_self_exe(identity_source: IdentitySource, clock: SystemClock) -> Self {
+        Self {
+            self_exe: None,
             identity_source,
             clock,
         }
@@ -98,7 +111,10 @@ impl SystemProcessController {
 
 impl ProcessController for SystemProcessController {
     fn spawn_wrapper(&self, spec: &WrapperLaunchSpec) -> Result<(), SpawnError> {
-        let mut command = Command::new(&self.self_exe);
+        let self_exe = self.self_exe.as_ref().ok_or_else(|| SpawnError::Failed {
+            message: "自バイナリのパスを持たないため、ラッパーを起動できない".to_owned(),
+        })?;
+        let mut command = Command::new(self_exe);
         command
             .arg(WRAPPER_SUBCOMMAND)
             .arg(RUN_DIR_FLAG)
@@ -118,17 +134,14 @@ impl ProcessController for SystemProcessController {
             .spawn()
             .map(|_child| ())
             .map_err(|error| SpawnError::Failed {
-                message: format!(
-                    "ラッパー ({}) を起動できない: {error}",
-                    self.self_exe.display()
-                ),
+                message: format!("ラッパー ({}) を起動できない: {error}", self_exe.display()),
             })
     }
 
     fn own_identity(&self) -> Result<WrapperIdentity, Io> {
         let pid = Pid::new(std::process::id());
         // 自プロセスの観測なので「対象が存在しない」はありえない。三値を二値へ畳むのは
-        // 呼び出し側の責務であって、共有する取得関数には持ち込まない(ADR-003)。
+        // 呼び出し側の責務であって、共有する取得関数には持ち込まない(ADR-067)。
         let observed =
             identity::observe(&self.identity_source, pid)?.ok_or_else(|| Io::Failed {
                 message: format!("自プロセス (pid {}) を観測できない", pid.get()),
@@ -153,7 +166,8 @@ impl ProcessController for SystemProcessController {
             return ExitCode::new(NOT_EXECUTABLE);
         }
         let (Ok(out), Ok(err)) = (File::create(stdout), File::create(stderr)) else {
-            // リダイレクト先を開けないときはエージェントを起動しない(副作用を生まない)。
+            // リダイレクト先を開けないときはエージェントを起動しない。両辺を評価するため、
+            // 片方だけ開けたときはそのログが空のまま残る。
             return ExitCode::new(NOT_EXECUTABLE);
         };
 
@@ -625,14 +639,28 @@ mod identity {
         PathBuf::from("powershell")
     }
 
+    /// スクリプトが捕まえた取得機構の失敗を表す終了コード。
+    ///
+    /// PowerShell 自身が構文エラー等で使う 1 と重ならない値にして、非0の由来を終了コード
+    /// から読めるようにする(どちらも `Err(Io)` に写る)。
+    const MECHANISM_FAILURE: i32 = 3;
+
     /// 起動時刻を不変形式で取る。
     ///
     /// `ToString()` はカルチャ依存なので、丸め込みの効かない `"o"`(ISO 8601 の往復可能
     /// 形式)を明示する。該当プロセスが無ければ出力が空になり、不在として返る。
+    ///
+    /// 既定の `$ErrorActionPreference` は `Continue` で、`Get-CimInstance` の非終端エラー
+    /// (アクセス拒否・CIM サービスの異常)は exit 0・stdout 空になる — 不在と同じ形をして
+    /// おり、そのままでは生存中のプロセスを死亡と読む。`Stop` に変えて `catch` で非0終了に
+    /// 落とし、機構の失敗を出力の形ではなく終了コードから区別する。
     pub fn observe(source: &IdentitySource, pid: Pid) -> Result<Option<ObservedProcess>, Io> {
         let script = format!(
-            "$p = Get-CimInstance Win32_Process -Filter \"ProcessId={}\"; \
-             if ($p) {{ $p.CreationDate.ToUniversalTime().ToString(\"o\") }}",
+            "$ErrorActionPreference = 'Stop'; \
+             try {{ \
+             $p = Get-CimInstance Win32_Process -Filter \"ProcessId={}\"; \
+             if ($p) {{ $p.CreationDate.ToUniversalTime().ToString(\"o\") }} \
+             }} catch {{ exit {MECHANISM_FAILURE} }}",
             pid.get()
         );
         let output = Command::new(source.as_path())
@@ -653,6 +681,16 @@ mod identity {
         let text = String::from_utf8_lossy(&output.stdout);
         let trimmed = text.trim();
         if trimmed.is_empty() {
+            // 診断に何かが書かれている状態での空出力は、対象の不在ではなく取得機構の失敗。
+            if !output.stderr.is_empty() {
+                return Err(Io::Failed {
+                    message: format!(
+                        "同定情報の取得が失敗した (pid {}): {}",
+                        pid.get(),
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                });
+            }
             return Ok(None);
         }
         let starttime = ProcessStartTime::parse(trimmed.to_owned()).map_err(|_| Io::Failed {
@@ -672,9 +710,12 @@ mod identity {
 
 #[cfg(test)]
 mod tests {
-    use pulsen_domain::task::WorktreePath;
+    use pulsen_domain::task::{AttemptNumber, RunDirPath, StateRoot, TaskId, WorktreePath};
 
     use super::*;
+
+    /// run ディレクトリの導出に使うタスクID(形式を満たす固定値)。
+    const TASK_ID: &str = "20260811t091530-k3f9qa1b";
 
     fn controller() -> SystemProcessController {
         SystemProcessController::new(
@@ -709,6 +750,30 @@ mod tests {
     }
 
     #[test]
+    fn 自バイナリのパスを持たない構築ではラッパーを起動できない() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let state_root = StateRoot::parse(base.path().join("state")).expect("絶対パスになる");
+        let spec = WrapperLaunchSpec::new(
+            RunDirPath::derive(
+                &state_root,
+                &TaskId::parse(TASK_ID.to_owned()).expect("形式を満たす"),
+                AttemptNumber::parse(1).expect("1以上"),
+            ),
+            CommandLine::rehydrate(vec!["true".to_owned()]).expect("受理される"),
+            worktree(base.path()),
+        );
+        let controller = SystemProcessController::without_self_exe(
+            IdentitySource::platform_default(),
+            SystemClock::new(),
+        );
+
+        assert!(matches!(
+            controller.spawn_wrapper(&spec),
+            Err(SpawnError::Failed { .. })
+        ));
+    }
+
+    #[test]
     fn 作業ディレクトリが存在しなければエージェントを起動せず起動不能を返す() {
         let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let missing = base.path().join("gone");
@@ -726,7 +791,7 @@ mod tests {
     }
 
     /// シグナル死の符号化(`128+シグナル番号`)は POSIX の慣例で、適合スイート側は
-    /// 「非0の符号化値」までしか主張しない(ADR-010)。具体値はここで固定する。
+    /// 「非0の符号化値」までしか主張しない(ADR-074)。具体値はここで固定する。
     #[cfg(unix)]
     #[test]
     fn シグナルで終了したエージェントは128足すシグナル番号に符号化される() {

@@ -10,7 +10,7 @@ mod tick_fixture;
 
 use pulsen::application::tick::TickIssue;
 use pulsen_conformance::doubles::{RunStoreCall, ScriptedRunStore};
-use pulsen_domain::execution::{Io, RunFileError};
+use pulsen_domain::execution::{InconsistentRunFiles, Io, RunFileError};
 use pulsen_domain::task::{
     AttemptRef, ExecutionState, ExecutionStateKind, FailureKind, FailureNote, StopReason,
 };
@@ -56,6 +56,11 @@ fn pidとstarttimeが揃っていれば同定情報を取り込んでrunningに�
     );
     assert_eq!(saved.counters().spawn_fail_count(), 0);
     assert!(summary.errors.is_empty());
+    assert_eq!(
+        summary.confirmed_running,
+        vec![task_id(TASK)],
+        "取り込みを行った tick は処理対象なしにならない"
+    );
 }
 
 #[test]
@@ -212,6 +217,10 @@ fn 再確認でもpidが無ければspawn失敗として起動待ちへ戻す() 
         "attempt 参照は起動記録でのみ置き換わる"
     );
     assert!(summary.frozen.is_empty());
+    assert!(
+        matches!(summary.errors.as_slice(), [TickIssue::SpawnFailed { .. }]),
+        "起動待ちへ戻した tick は処理対象なしにならない"
+    );
 }
 
 #[test]
@@ -320,6 +329,123 @@ fn runファイルを読めなければ報告してスキップする() {
 }
 
 #[test]
+fn starttimeを読めなければ報告してスキップする() {
+    let error = RunFileError::Corrupt {
+        path: run_dir(TASK, 1).starttime_file(),
+        message: "JSON として読めない".to_owned(),
+    };
+    let harness = launching(
+        ScriptedRunStore::new()
+            .with_read_pid_file([Ok(None)])
+            .with_read_starttime([Err(error.clone())]),
+    );
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::RunFileUnreadable {
+            task_id: task_id(TASK),
+            error,
+        }]
+    );
+    assert!(harness.tasks.saved().is_empty(), "書き込まない");
+}
+
+#[test]
+fn マーカーを書いた後にstarttimeを読めなければ報告してスキップする() {
+    let error = RunFileError::Io {
+        message: "starttime ファイルを読めない".to_owned(),
+    };
+    let harness = launching(
+        ScriptedRunStore::new()
+            .with_read_pid_file([Ok(None), Ok(None)])
+            .with_read_starttime([Ok(None), Err(error.clone())])
+            .with_write_invalidation_marker([Ok(())]),
+    );
+    harness.clock.set(after(31));
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::RunFileUnreadable {
+            task_id: task_id(TASK),
+            error,
+        }]
+    );
+    assert!(
+        harness.tasks.saved().is_empty(),
+        "再読が成立しない観測から spawn 失敗を確定させない"
+    );
+}
+
+#[test]
+fn runファイルの破損が続く限り繰り返しても報告とスキップだけが続く() {
+    let error = RunFileError::Corrupt {
+        path: run_dir(TASK, 1).pid_file(),
+        message: "JSON として読めない".to_owned(),
+    };
+    let harness = launching(
+        ScriptedRunStore::new().with_read_pid_file(std::iter::repeat_n(Err(error.clone()), 3)),
+    );
+    harness.clock.set(after(31));
+
+    for round in 1..=3 {
+        let summary = harness.completed();
+
+        assert_eq!(
+            summary.errors,
+            vec![TickIssue::RunFileUnreadable {
+                task_id: task_id(TASK),
+                error: error.clone(),
+            }],
+            "{round}回目"
+        );
+        assert!(summary.frozen.is_empty(), "{round}回目: 凍結しない");
+        assert!(
+            harness.tasks.saved().is_empty(),
+            "{round}回目: 書き込まない"
+        );
+    }
+}
+
+#[test]
+fn 破損したrunファイルが削除されれば不在として無効化マーカー経路に合流する() {
+    let error = RunFileError::Corrupt {
+        path: run_dir(TASK, 1).pid_file(),
+        message: "JSON として読めない".to_owned(),
+    };
+    let harness = launching(
+        ScriptedRunStore::new()
+            .with_read_pid_file([Err(error.clone()), Ok(None), Ok(None)])
+            .with_read_starttime([Ok(None), Ok(None)])
+            .with_write_invalidation_marker([Ok(())]),
+    );
+    harness.clock.set(after(31));
+
+    let reported = harness.completed();
+    assert_eq!(
+        reported.errors,
+        vec![TickIssue::RunFileUnreadable {
+            task_id: task_id(TASK),
+            error,
+        }]
+    );
+    assert!(harness.tasks.saved().is_empty(), "破損の間は書き込まない");
+
+    let decided = harness.completed();
+
+    let saved = harness.saved(TASK);
+    assert_eq!(saved.execution(), &ExecutionState::Pending);
+    assert_eq!(saved.counters().spawn_fail_count(), 1);
+    assert!(matches!(
+        decided.errors.as_slice(),
+        [TickIssue::SpawnFailed { .. }]
+    ));
+}
+
+#[test]
 fn pidだけが現れている観測は書き込み順序の破れとして報告される() {
     let harness = launching(
         ScriptedRunStore::new()
@@ -329,12 +455,13 @@ fn pidだけが現れている観測は書き込み順序の破れとして報�
 
     let summary = harness.completed();
 
-    let expected = task_id(TASK);
-    assert!(matches!(
-        summary.errors.as_slice(),
-        [TickIssue::InconsistentRunFiles { task_id, message }]
-            if task_id == &expected && !message.is_empty()
-    ));
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::InconsistentRunFiles {
+            task_id: task_id(TASK),
+            kind: InconsistentRunFiles::MissingStartTime,
+        }]
+    );
     assert!(harness.tasks.saved().is_empty(), "書き込まない");
 }
 

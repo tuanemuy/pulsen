@@ -1,5 +1,5 @@
 //! RunStore の適合ケース(`spec/testcases/ports/run-store.md` のうち、本スライスで
-//! 使う9メソッド分の21行)。
+//! 使う9メソッド分の21行)と、write 系のディレクトリ作成の追加1件。
 //!
 //! `attempt_exists` / `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の
 //! 22行は、それらをポートに足すスライスで扱う。
@@ -373,6 +373,52 @@ pub fn tc_port_run_store_021_マーカー書き込み済みは真になる(
     CaseOutcome::Ran
 }
 
+/// 台帳行に対応しない追加ケース。
+///
+/// 「write 系はいずれも書き込み先のディレクトリを必要に応じて作る」はポートの契約で、
+/// `prepare_attempt` が失敗しても起動を続ける経路がこれに乗っている。台帳行が主張するのは
+/// マーカー(TC-018)の分だけで、残る3つの write 系には対応する行が無い。
+pub fn write_準備を経ない書き込みも置き場ごと作って残る(
+    harness: &impl RunStoreHarness,
+) -> CaseOutcome {
+    let store = harness.store();
+
+    let starttime_dir =
+        require!(harness.expected_run_dir(&task_id("task-a"), AttemptNumber::FIRST));
+    assert_attempt_dir_absent(harness, &starttime_dir);
+    let record = starttime("871234");
+    store
+        .write_starttime(&starttime_dir, &record)
+        .expect("starttime を書ける");
+    assert_eq!(store.read_starttime(&starttime_dir), Ok(Some(record)));
+
+    let pid_dir = require!(harness.expected_run_dir(&task_id("task-b"), AttemptNumber::FIRST));
+    assert_attempt_dir_absent(harness, &pid_dir);
+    let content = pid_content(4242, "-4242");
+    store
+        .write_pid_file(&pid_dir, &content)
+        .expect("pid を書ける");
+    assert_eq!(store.read_pid_file(&pid_dir), Ok(Some(content)));
+
+    let exit_dir = require!(harness.expected_run_dir(&task_id("task-c"), AttemptNumber::FIRST));
+    assert_attempt_dir_absent(harness, &exit_dir);
+    store
+        .write_exit(&exit_dir, &ExitCode::new(7))
+        .expect("exit を書ける");
+    assert_eq!(store.read_exit(&exit_dir), Ok(Some(ExitCode::new(7))));
+    CaseOutcome::Ran
+}
+
+/// 書き込みの前に attempt ディレクトリが無いことを確かめる。
+///
+/// 観測できない実装でもケースの主張(書いた値が読み戻せる)は成立するため、この分岐だけを
+/// 飛ばす(TC-018 と同じ扱い)。
+fn assert_attempt_dir_absent(harness: &impl RunStoreHarness, run_dir: &RunDirPath) {
+    if let Some(present) = harness.attempt_dir_present(run_dir) {
+        assert!(!present, "書き込みの前は attempt ディレクトリが無い");
+    }
+}
+
 /// 最初の attempt を用意する。
 fn prepare(harness: &impl RunStoreHarness, id: &TaskId) -> RunDirPath {
     harness
@@ -541,6 +587,7 @@ macro_rules! run_store_conformance {
                 tc_port_run_store_019_マーカーの書き込みは冪等,
                 tc_port_run_store_020_マーカー未書き込みは偽になる,
                 tc_port_run_store_021_マーカー書き込み済みは真になる,
+                write_準備を経ない書き込みも置き場ごと作って残る,
             ]
         );
     };

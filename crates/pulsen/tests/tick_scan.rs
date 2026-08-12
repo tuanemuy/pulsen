@@ -4,7 +4,7 @@
 //! 実アダプターでは外から作れないため、分岐の網羅はここで行う。
 //!
 //! 本スライスで配線しないアーム(Cleanup / Running / Completed / Stopped)には期待を
-//! 持たせない — 期待を書くと Issue #3 / #6 がアームを埋めた時点で書き換えになる(ADR-001)。
+//! 持たせない — 期待を書くと Issue #3 / #6 がアームを埋めた時点で書き換えになる(ADR-065)。
 
 mod tick_fixture;
 
@@ -277,6 +277,8 @@ fn issue_task(issue: &TickIssue) -> Option<String> {
         | TickIssue::Transition { task_id, .. }
         | TickIssue::RunFileUnreadable { task_id, .. }
         | TickIssue::InconsistentRunFiles { task_id, .. }
+        | TickIssue::WorktreeCreateFailed { task_id, .. }
+        | TickIssue::CommandExpansionFailed { task_id, .. }
         | TickIssue::MarkerWriteFailed { task_id, .. }
         | TickIssue::PrepareAttemptFailed { task_id, .. }
         | TickIssue::SpawnFailed { task_id, .. }

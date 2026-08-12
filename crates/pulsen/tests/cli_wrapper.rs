@@ -73,7 +73,7 @@ impl Launch {
 
 /// テスト用エージェントの実行ファイル。
 ///
-/// 不在はスキップにしない — 作り忘れが緑にならないようにする(ADR-010 と同じ扱い)。
+/// 不在はスキップにしない — 作り忘れが緑にならないようにする(ADR-074 と同じ扱い)。
 fn probe_program() -> PathBuf {
     agent_probe().expect("examples/agent_probe がビルドされている")
 }

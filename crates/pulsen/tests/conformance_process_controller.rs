@@ -1,6 +1,6 @@
 //! ProcessController の適合スイートを `SystemProcessController` に適用する。
 //!
-//! テスト用エージェントは `examples/agent_probe` を使う(ADR-010)。見つからない場合は
+//! テスト用エージェントは `examples/agent_probe` を使う(ADR-074)。見つからない場合は
 //! フックが `None` を返してスキップになるが、**スキップ許容集合には入れない** —
 //! 「examples を作り忘れた」が緑にならないようにする。
 
@@ -40,7 +40,7 @@ impl SystemProcessControllerHarness {
         let root = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let self_exe = PathBuf::from(env!("CARGO_BIN_EXE_pulsen"));
         // 存在しないパスを取得元として注入すると、どのプラットフォームでも「取得機構
-        // そのものの失敗」に落ちる(ADR-003 の写像表・ADR-004)。本番のインスタンスは
+        // そのものの失敗」に落ちる(ADR-067 の写像表・ADR-068)。本番のインスタンスは
         // イミュータブルなまま保たれる。
         let failing_identity = SystemProcessController::new(
             self_exe.clone(),
@@ -73,7 +73,7 @@ impl SystemProcessControllerHarness {
     /// `<state_root>/runs/<task-id>/attempt-1` を作って返す。
     ///
     /// ラッパーは run ディレクトリから状態のルートを復元するため、パスは
-    /// `RunDirPath::derive` の像でなければならない(ADR-015)。
+    /// `RunDirPath::derive` の像でなければならない(ADR-079)。
     fn prepared_run_dir(&self) -> Option<RunDirPath> {
         let state_root = StateRoot::parse(self.dir("state")).ok()?;
         let run_dir = RunDirPath::derive(
@@ -312,7 +312,7 @@ const SIGNAL_CASES: [&str; 1] = ["tc_port_process_controller_024"];
 /// この環境でスキップを許容するケース。
 ///
 /// 取得機構の失敗(TC-005)は取得元の注入で作れるため、権限にも root の可否にも依存せず
-/// 走る(ADR-004)。`agent_probe` の不在は許容しない — 作り忘れを緑にしないため。
+/// 走る(ADR-068)。`agent_probe` の不在は許容しない — 作り忘れを緑にしないため。
 fn allowed_skips() -> Vec<&'static str> {
     let mut allowed = Vec::new();
     if !pulsen_conformance::permission_restrictions_effective() {
@@ -331,7 +331,7 @@ pulsen_conformance::process_controller_identity_conformance!(
 
 // `spawn` スイートはどのケースもスキップを許容しない。起動不能(TC-003)は自バイナリの
 // 注入で確定的に走り、デタッチ性(TC-002)は `examples/spawn_probe` を要するが、examples の
-// 不在は許容しない — 作り忘れを緑にしないため(ADR-010 / ADR-011)。
+// 不在は許容しない — 作り忘れを緑にしないため(ADR-074 / ADR-075)。
 pulsen_conformance::process_controller_spawn_conformance!(
     SystemProcessControllerHarness::new(),
     Vec::new()

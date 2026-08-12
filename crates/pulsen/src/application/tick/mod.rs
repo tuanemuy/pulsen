@@ -6,6 +6,9 @@
 //!
 //! 1タスクの処理失敗は `errors` に記録して残りを続行する(requirements §9)。tick 全体を
 //! 失敗させるのは、走査そのものができない場合とロック機構の異常だけ。
+//!
+//! タスクファイルに書き込んだ経路は、必ずサマリーのいずれかのフィールドを埋める
+//! (ADR-084 / ADR-086)。埋めないと、状態を変えた tick が「処理対象なし」と表示される。
 
 mod confirm_spawn;
 mod launch;
@@ -14,11 +17,12 @@ use std::path::PathBuf;
 
 use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition};
 use pulsen_domain::execution::{
-    ExclusiveLock, LockError, ProcessController, RunFileError, RunStore, WorktreeManager,
+    ExclusiveLock, InconsistentRunFiles, LockError, ProcessController, RunFileError, RunStore,
+    WorktreeManager,
 };
 use pulsen_domain::task::{
-    AttemptNumber, Clock, ExecutionState, ReadError, SaveError, StateRoot, Task, TaskEntry, TaskId,
-    TaskRecord, TaskRepository, Timestamp, TransitionError, WorktreeRoot,
+    AttemptNumber, Clock, ExecutionState, ExecutionStateKind, ReadError, SaveError, StateRoot,
+    Task, TaskEntry, TaskId, TaskRecord, TaskRepository, Timestamp, TransitionError, WorktreeRoot,
 };
 
 /// tick 1回の結末。
@@ -53,7 +57,7 @@ pub enum TickError {
 
 /// 個別タスクの処理をスキップした理由。
 ///
-/// 文言ではなく分類として持ち、利用者に見せる言葉は `cli::render` が決める(ADR-009)。
+/// 文言ではなく分類として持ち、利用者に見せる言葉は `cli::render` が決める(ADR-073)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TickIssue {
     /// タスクファイル全体を読めない。
@@ -93,7 +97,21 @@ pub enum TickIssue {
     InconsistentRunFiles {
         /// 対象のタスク。
         task_id: TaskId,
-        /// 破れの説明。
+        /// 破れの種別。
+        kind: InconsistentRunFiles,
+    },
+    /// worktree を作成できず、ツール操作の失敗として記録した。
+    WorktreeCreateFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 原因の説明。
+        message: String,
+    },
+    /// エージェントの起動コマンドを展開できず、spawn 失敗として記録した。
+    CommandExpansionFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 原因の説明。
         message: String,
     },
     /// 無効化マーカーを書けない。
@@ -110,7 +128,7 @@ pub enum TickIssue {
         /// 原因の説明。
         message: String,
     },
-    /// ラッパーの起動自体が失敗した。
+    /// ラッパーを起動できなかった(同期エラー、または猶予内に pid が現れない)。
     SpawnFailed {
         /// 対象のタスク。
         task_id: TaskId,
@@ -128,12 +146,15 @@ pub enum TickIssue {
 
 /// tick パスの結果。
 ///
-/// spec の全フィールドを持つ。本スライスで値が入るのは、配線した手続きが埋める
-/// `launched` / `frozen` / `errors` だけになる(ADR-001)。
+/// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` を足した形
+/// (ADR-086)。本スライスで値が入るのは、配線した手続きが埋める `launched` /
+/// `confirmed_running` / `frozen` / `errors` だけになる(ADR-065)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。
     pub launched: Vec<TaskId>,
+    /// 起動を確認して running へ取り込んだタスク。
+    pub confirmed_running: Vec<TaskId>,
     /// タスクステータスが遷移したタスク。
     pub transitioned: Vec<TaskId>,
     /// skipped 判定で起動待ちへ戻したタスク。
@@ -154,8 +175,12 @@ pub struct TickSummary {
 
 impl TickSummary {
     /// 記録すべきことが1つも起きなかったか。
+    ///
+    /// タスクファイルに書き込んだ tick は、書き込みの内容がいずれかのフィールドに
+    /// 現れるため偽になる(ADR-084)。
     pub fn is_empty(&self) -> bool {
         self.launched.is_empty()
+            && self.confirmed_running.is_empty()
             && self.transitioned.is_empty()
             && self.skipped_back.is_empty()
             && self.frozen.is_empty()
@@ -279,12 +304,12 @@ where
     /// 遷移の結果を永続化し、凍結ならサマリーに記録する。
     ///
     /// stopped を書いたすべての経路がここを通る。Issue #3 は共通手続き notify の呼び出しを
-    /// この関数の中に足すだけでよい(ADR-002)。stopped は `notified_at: None` で永続化
+    /// この関数の中に足すだけでよい(ADR-066)。stopped は `notified_at: None` で永続化
     /// されるので、通知が無い間も次以降の tick が catch-up できる。
     fn commit(&self, task: &Task, summary: &mut TickSummary) -> Persisted {
         match self.tasks.save(task) {
             Ok(()) => {
-                if is_stopped(task) {
+                if task.execution_kind() == ExecutionStateKind::Stopped {
                     summary.frozen.push(task.id().clone());
                 }
                 Persisted::Saved
@@ -366,17 +391,5 @@ fn branch_of(task: &Task) -> Branch {
         ExecutionState::Running => Branch::Observe,
         ExecutionState::Completed => Branch::Advance,
         ExecutionState::Stopped { .. } => Branch::Notify,
-    }
-}
-
-/// 凍結したか。
-fn is_stopped(task: &Task) -> bool {
-    match task.execution() {
-        ExecutionState::Stopped { .. } => true,
-        ExecutionState::Pending
-        | ExecutionState::Launching { .. }
-        | ExecutionState::Running
-        | ExecutionState::Completed
-        | ExecutionState::Failed => false,
     }
 }

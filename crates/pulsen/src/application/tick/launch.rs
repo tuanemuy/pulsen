@@ -38,12 +38,17 @@ where
         };
 
         let id = task.id().clone();
-        let number = task.next_attempt_number();
         let now = self.clock.now();
         let (recorded, run_dir) = match task.record_launching(self.state_root, now) {
             Ok(recorded) => recorded,
             Err(error) => return self.report_transition(id, error, summary),
         };
+        // 採番はドメインの遷移関数だけが行う。番号と run ディレクトリを別々に導出すると、
+        // 採番規則が変わったときに帳簿と実体が食い違う。
+        let number = recorded
+            .current_attempt()
+            .expect("起動記録は現在 attempt を置く")
+            .number();
         match self.commit(&recorded, summary) {
             Persisted::Saved => {}
             Persisted::Failed => return,
@@ -99,10 +104,19 @@ where
             Err(WorktreeError::Failed { message }) => {
                 let limit = retry_limit(&task);
                 let now = self.clock.now();
-                match task.record_tool_failure(FailureKind::WorktreeCreate, message, limit, now) {
-                    Ok(failed) => {
-                        self.commit(&failed, summary);
-                    }
+                match task.record_tool_failure(
+                    FailureKind::WorktreeCreate,
+                    message.clone(),
+                    limit,
+                    now,
+                ) {
+                    Ok(failed) => match self.commit(&failed, summary) {
+                        Persisted::Saved => summary.errors.push(TickIssue::WorktreeCreateFailed {
+                            task_id: id,
+                            message,
+                        }),
+                        Persisted::Failed => {}
+                    },
                     Err(error) => self.report_transition(id, error, summary),
                 }
                 None
@@ -171,10 +185,18 @@ where
     fn record_expansion_failure(&self, task: Task, message: String, summary: &mut TickSummary) {
         let id = task.id().clone();
         let now = self.clock.now();
-        match task.record_spawn_failure_in_place(message, self.config.spawn_fail_limit(), now) {
-            Ok(recorded) => {
-                self.commit(&recorded, summary);
-            }
+        match task.record_spawn_failure_in_place(
+            message.clone(),
+            self.config.spawn_fail_limit(),
+            now,
+        ) {
+            Ok(recorded) => match self.commit(&recorded, summary) {
+                Persisted::Saved => summary.errors.push(TickIssue::CommandExpansionFailed {
+                    task_id: id,
+                    message,
+                }),
+                Persisted::Failed => {}
+            },
             Err(error) => self.report_transition(id, error, summary),
         }
     }

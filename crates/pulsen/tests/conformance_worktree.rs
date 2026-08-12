@@ -17,6 +17,8 @@ const HEAD_BRANCH: &str = "main";
 const ABSENT_BRANCH: &str = "no-such-branch";
 /// worktree の内容を観測するためのファイル名。
 const MARKER_FILE: &str = "marker.txt";
+/// worktree の登録が持つブランチの完全な参照名の接頭辞。
+const BRANCH_REF_PREFIX: &str = "refs/heads/";
 
 /// 一時ディレクトリに git リポジトリを用意するハーネス。
 struct GitCliWorktreeManagerHarness {
@@ -56,7 +58,7 @@ impl GitCliWorktreeManagerHarness {
 
     /// worktree の置き場。**シンボリックリンク経由**のパスとして組む。
     ///
-    /// 同定の鍵は物理パスなので(ADR-013)、置き場が実体そのものだと正規化の分岐が
+    /// 同定の鍵は物理パスなので(ADR-077)、置き場が実体そのものだと正規化の分岐が
     /// どのケースからも実行されない。リンクを作れない環境では実体へ落とす。
     fn worktree_root(&self) -> PathBuf {
         let real = self.dir("worktrees-real");
@@ -230,8 +232,23 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
         Some(fs::read_to_string(self.marker_path(workspace)).unwrap_or_default())
     }
 
+    /// `ws.path` が `ws.branch` の worktree として用意されているか。
+    ///
+    /// 実体の有無だけを見ると、ブランチを作ってディレクトリを掘っただけの実装が
+    /// 「用意された」として通る。登録が `ws.branch` を指し、実体も在ることまで観測する。
     fn worktree_present(&self, workspace: &Workspace) -> Option<bool> {
-        Some(workspace.path().as_path().is_dir())
+        let repo = self.repo_dir()?;
+        let path = workspace.path().as_path();
+        let Some(registration) = common::git::worktree_registration(&repo, path) else {
+            return Some(false);
+        };
+        let checked_out = registration
+            .branch
+            .as_deref()
+            .and_then(|reference| reference.strip_prefix(BRANCH_REF_PREFIX));
+        // 実体は登録の注記(`prunable`)ではなくパスそのもので見る — 注記が出ない環境でも
+        // 「実体が在る」の主張を落とさない。
+        Some(checked_out == Some(workspace.branch().as_str()) && path.is_dir())
     }
 
     fn branch_tip(&self, name: &BranchName) -> Option<String> {

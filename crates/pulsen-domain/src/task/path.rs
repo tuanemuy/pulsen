@@ -336,6 +336,7 @@ mod tests {
             vec!["state", "runs", "20260811t091530-k3f9qa1b"],
             vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-0"],
             vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-01"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-+1"],
             vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-x"],
             vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-"],
             vec!["state", "runs", "20260811t091530-k3f9qa1b", "1"],

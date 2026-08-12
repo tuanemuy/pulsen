@@ -609,7 +609,7 @@ pub trait ExclusiveLockHarness {
 ///
 /// 適合ケースは「exit code を制御できる」「引数どおりに出力する」といった**意味**だけを
 /// 渡し、それを満たすコマンドの組み立てはハーネスに委ねる。プラットフォーム固有の
-/// コマンド名やシェルをケースに持ち込まないための口(ADR-010)。
+/// コマンド名やシェルをケースに持ち込まないための口(ADR-074)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentBehavior {
     /// 指定の exit code で終了する。
@@ -634,7 +634,7 @@ pub enum AgentBehavior {
 /// ProcessController の適合スイートが要求する環境。
 ///
 /// スイートは `own_identity` / `run_agent` の [`process_controller::identity_and_agent`] と
-/// `spawn_wrapper` の [`process_controller::spawn`] に分かれる(ADR-011)。前者はアダプター
+/// `spawn_wrapper` の [`process_controller::spawn`] に分かれる(ADR-075)。前者はアダプター
 /// 単体で閉じ、後者はラッパーモードの実装を要するため適用の時期が違う。
 pub trait ProcessControllerHarness {
     /// 検証対象。
@@ -652,7 +652,7 @@ pub trait ProcessControllerHarness {
     /// (TC-port-process-controller-005)。
     ///
     /// 存在しない取得元を注入した2つ目のコントローラを返す形にすると、権限操作にも
-    /// root 実行の可否にも依存せず確定的に走る(ADR-004)。
+    /// root 実行の可否にも依存せず確定的に走る(ADR-068)。
     fn failing_identity_controller(&self) -> Option<&Self::Controller> {
         None
     }
@@ -719,7 +719,7 @@ pub trait ProcessControllerHarness {
 
     /// ラッパーの起動自体が不可能な状態の実装(TC-port-process-controller-003)。
     ///
-    /// 存在しないパスを自バイナリとして注入した2つ目のコントローラを返す(ADR-004)。
+    /// 存在しないパスを自バイナリとして注入した2つ目のコントローラを返す(ADR-068)。
     fn failing_controller(&self) -> Option<&Self::Controller> {
         None
     }
@@ -839,7 +839,7 @@ pub trait WorktreeManagerHarness {
     /// パスもブランチも未使用のワークスペース(TC-port-worktree-manager-010/016)。
     ///
     /// `ws.path` の親(worktree_root)は存在する。正規化の分岐を必ず通すため、置き場は
-    /// シンボリックリンクを経由するパスとして組む(ADR-013)。
+    /// シンボリックリンクを経由するパスとして組む(ADR-077)。
     fn unused_workspace(&self) -> Option<Workspace> {
         None
     }
@@ -857,7 +857,7 @@ pub trait WorktreeManagerHarness {
     }
 
     /// 自タスクのパスとブランチの登録は残るが実体が消えた(`prunable`)ワークスペースと、
-    /// 消える前にコミットしたマーカーの内容(ADR-013 由来の追加ケース)。
+    /// 消える前にコミットしたマーカーの内容(ADR-077 由来の追加ケース)。
     fn workspace_with_prunable_registration(&self) -> Option<(Workspace, String)> {
         None
     }

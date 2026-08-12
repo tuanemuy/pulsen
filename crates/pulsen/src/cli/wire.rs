@@ -194,7 +194,7 @@ pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
 /// ラッパーモードだけが使うアダプター。
 ///
 /// ホームも config も読まない — ラッパーが必要とする情報はすべて起動引数で受け取る
-/// (ADR-006)。`Runtime` とは別の型にすることで、ラッパーの経路にホーム解決や設定の
+/// (ADR-070)。`Runtime` とは別の型にすることで、ラッパーの経路にホーム解決や設定の
 /// 読み込みが後から紛れ込まないようにする。
 pub struct WrapperRuntime {
     runs: FsRunStore,
@@ -218,6 +218,9 @@ impl WrapperRuntime {
 /// `--home` は `global = true` なので `wrapper` にも付くが、ラッパーはこれを使わない。
 /// tick が spawn したラッパーは `--home` を受け取らないため、ホームを解決すると既定の
 /// `~/.pulsen` へ落ちる。値が使われないことに依存した配線は次の変更で壊れる。
+///
+/// `current_exe()` も読まない — ラッパーが呼ぶのは自身の同定情報の取得とエージェントの
+/// 起動だけで、自バイナリのパスを要するのはラッパーを spawn する側だけ(ADR-068)。
 pub fn compose_wrapper(run_dir: &RunDirPath) -> Result<WrapperRuntime, WireError> {
     let state_root = run_dir
         .state_root()
@@ -227,14 +230,17 @@ pub fn compose_wrapper(run_dir: &RunDirPath) -> Result<WrapperRuntime, WireError
 
     Ok(WrapperRuntime {
         runs: FsRunStore::new(state_root),
-        processes: process_controller()?,
+        processes: SystemProcessController::without_self_exe(
+            IdentitySource::platform_default(),
+            SystemClock::new(),
+        ),
     })
 }
 
 /// 自バイナリのパスと同定情報の取得元を解決してプロセス操作を組む。
 ///
 /// `compose` には載せない — `ProcessController` を要するのはプロセスを起動する経路
-/// だけであり、`current_exe()` の失敗で `add` が落ちるのは筋が通らない(ADR-004)。
+/// だけであり、`current_exe()` の失敗で `add` が落ちるのは筋が通らない(ADR-068)。
 pub fn process_controller() -> Result<SystemProcessController, WireError> {
     let self_exe = env::current_exe().map_err(|error| WireError::SelfExeUnavailable {
         message: error.to_string(),

@@ -113,8 +113,43 @@ fn worktree作成の失敗はツール操作の失敗として記録され次tic
         saved.last_failure().map(FailureNote::message),
         Some("git worktree add に失敗")
     );
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::WorktreeCreateFailed {
+            task_id: task_id(TASK),
+            message: "git worktree add に失敗".to_owned(),
+        }],
+        "失敗を記録した tick は処理対象なしにならない"
+    );
     assert!(summary.launched.is_empty());
     assert!(summary.frozen.is_empty());
+}
+
+#[test]
+fn 失敗確定のタスクのworktree確保が成功してもリトライカウンタは保持される() {
+    let (worktrees, runs, processes) = ready();
+    let harness = Harness {
+        tasks: repository(vec![
+            task(TASK)
+                .execution(ExecutionState::Failed)
+                .counters(2, 1, 3)
+                .entry(),
+        ]),
+        worktrees,
+        runs,
+        processes,
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    let saved = harness.tasks.saved();
+    assert_eq!(saved.len(), 2, "ワークスペース確定と起動記録が保存される");
+    for task in &saved {
+        assert_eq!(task.counters().attempt_count(), 2);
+        assert_eq!(task.counters().judge_attempt_count(), 1);
+    }
+    assert_eq!(summary.launched, vec![task_id(TASK)], "起動は続行する");
 }
 
 #[test]
@@ -181,6 +216,13 @@ fn テンプレート展開の失敗はどの経路でも同期的なspawn失敗
             "{label}: 起動もしない"
         );
         assert!(summary.launched.is_empty(), "{label}");
+        assert!(
+            matches!(
+                summary.errors.as_slice(),
+                [TickIssue::CommandExpansionFailed { .. }]
+            ),
+            "{label}: 失敗を記録した tick は処理対象なしにならない"
+        );
     }
 }
 

@@ -13,7 +13,7 @@ use pulsen_domain::task::{
     Clock, ProcessIdent, RunDirPath, StartTimeRecord, Task, TaskId, TaskRepository, Timestamp,
 };
 
-use super::{Tick, TickIssue, TickSummary};
+use super::{Persisted, Tick, TickIssue, TickSummary};
 
 /// 1回の観測で読んだ run ファイル。
 struct RunFiles {
@@ -62,7 +62,7 @@ where
             Ok(LaunchingDecision::SuspectSpawnFailure) => {
                 self.invalidate_and_recheck(task, run_dir, now, summary);
             }
-            Err(inconsistent) => report_inconsistent(id, &inconsistent, summary),
+            Err(inconsistent) => report_inconsistent(id, inconsistent, summary),
         }
     }
 
@@ -100,14 +100,22 @@ where
                     "起動から {} 秒のうちに pid ファイルが現れませんでした",
                     LaunchingClassifier::GRACE_PERIOD.seconds()
                 );
-                match task.record_spawn_failure(message, self.config.spawn_fail_limit(), now) {
-                    Ok(failed) => {
-                        self.commit(&failed, summary);
-                    }
+                match task.record_spawn_failure(
+                    message.clone(),
+                    self.config.spawn_fail_limit(),
+                    now,
+                ) {
+                    Ok(failed) => match self.commit(&failed, summary) {
+                        Persisted::Saved => summary.errors.push(TickIssue::SpawnFailed {
+                            task_id: id,
+                            message,
+                        }),
+                        Persisted::Failed => {}
+                    },
                     Err(error) => self.report_transition(id, error, summary),
                 }
             }
-            Err(inconsistent) => report_inconsistent(id, &inconsistent, summary),
+            Err(inconsistent) => report_inconsistent(id, inconsistent, summary),
         }
     }
 
@@ -121,9 +129,10 @@ where
     ) {
         let id = task.id().clone();
         match task.confirm_running(ident, now) {
-            Ok(running) => {
-                self.commit(&running, summary);
-            }
+            Ok(running) => match self.commit(&running, summary) {
+                Persisted::Saved => summary.confirmed_running.push(id),
+                Persisted::Failed => {}
+            },
             Err(error) => self.report_transition(id, error, summary),
         }
     }
@@ -163,13 +172,8 @@ where
 }
 
 /// 書き込み順序の破れを報告する。次の tick が再観測する。
-fn report_inconsistent(
-    task_id: TaskId,
-    inconsistent: &InconsistentRunFiles,
-    summary: &mut TickSummary,
-) {
-    summary.errors.push(TickIssue::InconsistentRunFiles {
-        task_id,
-        message: inconsistent.message().to_owned(),
-    });
+fn report_inconsistent(task_id: TaskId, kind: InconsistentRunFiles, summary: &mut TickSummary) {
+    summary
+        .errors
+        .push(TickIssue::InconsistentRunFiles { task_id, kind });
 }
