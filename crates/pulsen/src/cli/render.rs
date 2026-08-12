@@ -11,7 +11,8 @@ use pulsen_domain::definition::{
 };
 use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
 use pulsen_domain::task::{
-    AbsolutePathError, AttemptNumber, CreateError, SaveError, TaskId, TransitionError,
+    AbsolutePathError, AttemptNumber, CreateError, ExecutionStateKind, SaveError, TaskId,
+    TransitionError,
 };
 
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
@@ -66,16 +67,49 @@ pub fn tick_summary(summary: &TickSummary) -> String {
     push_attempts(&mut out, "gcで削除", &summary.gc_deleted);
     push_attempts(&mut out, "gcで削除できず", &summary.gc_errors);
 
-    if !summary.errors.is_empty() {
-        out.push_str(&format!("  スキップ({}件):\n", summary.errors.len()));
-        for issue in &summary.errors {
-            out.push_str("    - ");
-            out.push_str(&tick_issue(issue));
-            out.push('\n');
-        }
-    }
+    let (recorded, skipped): (Vec<&TickIssue>, Vec<&TickIssue>) = summary
+        .errors
+        .iter()
+        .partition(|issue| recorded_failure(issue));
+    push_issues(&mut out, "失敗を記録", &recorded);
+    push_issues(&mut out, "スキップ", &skipped);
 
     out.trim_end().to_owned()
+}
+
+/// 報告がタスクファイルへの記録を伴うか。
+///
+/// 記録した失敗はカウンタを消費し、上限を超えれば同じ tick で凍結する。何も記録せず
+/// 次の tick がそのまま再試行するスキップとは、運用者が次に取る行動が違う。
+fn recorded_failure(issue: &TickIssue) -> bool {
+    match issue {
+        TickIssue::WorktreeCreateFailed { .. }
+        | TickIssue::CommandExpansionFailed { .. }
+        | TickIssue::SpawnNotObserved { .. } => true,
+        TickIssue::CorruptTaskFile { .. }
+        | TickIssue::SnapshotUnreadable { .. }
+        | TickIssue::MissingCurrentAttempt { .. }
+        | TickIssue::Transition { .. }
+        | TickIssue::RunFileUnreadable { .. }
+        | TickIssue::InconsistentRunFiles { .. }
+        | TickIssue::MarkerWriteFailed { .. }
+        | TickIssue::PrepareAttemptFailed { .. }
+        | TickIssue::SpawnFailed { .. }
+        | TickIssue::SaveFailed { .. } => false,
+    }
+}
+
+/// 見出しと件数を伴う報告の一覧。空なら見出しごと出さない。
+fn push_issues(out: &mut String, label: &str, issues: &[&TickIssue]) {
+    if issues.is_empty() {
+        return;
+    }
+    out.push_str(&format!("  {label}({}件):\n", issues.len()));
+    for issue in issues {
+        out.push_str("    - ");
+        out.push_str(&tick_issue(issue));
+        out.push('\n');
+    }
 }
 
 /// `tick` の失敗。
@@ -140,6 +174,10 @@ fn tick_issue(issue: &TickIssue) -> String {
         TickIssue::SpawnFailed { task_id, message } => {
             format!("{}: ラッパーを起動できません({message})", task_id.as_str())
         }
+        TickIssue::SpawnNotObserved { task_id, message } => format!(
+            "{}: 起動を確認できず spawn 失敗として記録しました({message})",
+            task_id.as_str()
+        ),
         TickIssue::SaveFailed { task_id, error } => format!(
             "{}: タスクファイルを保存できません({})",
             task_id.as_str(),
@@ -151,16 +189,24 @@ fn tick_issue(issue: &TickIssue) -> String {
 /// 遷移の前提の破れ。修復は人間に委ねるため、破れた前提そのものを示す。
 fn transition_error(error: &TransitionError) -> String {
     match error {
-        TransitionError::InvalidState { expected, actual } => {
-            format!("実行状態が {} ではなく {}", expected, actual.as_str())
-        }
+        TransitionError::InvalidState { expected, actual } => format!(
+            "実行状態が {} ではなく {}",
+            expected
+                .iter()
+                .map(ExecutionStateKind::as_str)
+                .collect::<Vec<_>>()
+                .join(" | "),
+            actual.as_str()
+        ),
         TransitionError::WorkspaceAlreadySet => "ワークスペースが確定済み".to_owned(),
         TransitionError::WorkspaceNotSet => "ワークスペースが未確定".to_owned(),
         TransitionError::NotAgentRunStatus { status } => format!(
             "ステータス `{}` はエージェント実行ではない",
             status.as_str()
         ),
-        TransitionError::InvariantViolated { message } => message.clone(),
+        TransitionError::MissingCurrentAttempt => {
+            "起動記録済みなのに現在 attempt が無い".to_owned()
+        }
     }
 }
 
@@ -918,20 +964,24 @@ mod tests {
     }
 
     #[test]
-    fn 記録した失敗はスキップの一覧に原因つきで並ぶ() {
+    fn 記録した失敗と素通しのスキップは別の見出しに分かれる() {
         let summary = TickSummary {
             errors: vec![
                 TickIssue::WorktreeCreateFailed {
                     task_id: task("20260812t101112-abcd1234"),
                     message: "git worktree add に失敗".to_owned(),
                 },
+                TickIssue::InconsistentRunFiles {
+                    task_id: task("20260812t101112-ijkl9012"),
+                    kind: InconsistentRunFiles::MissingStartTime,
+                },
                 TickIssue::CommandExpansionFailed {
                     task_id: task("20260812t101112-efgh5678"),
                     message: "エージェント `claude` は config.yaml に定義されていません".to_owned(),
                 },
-                TickIssue::InconsistentRunFiles {
-                    task_id: task("20260812t101112-ijkl9012"),
-                    kind: InconsistentRunFiles::MissingStartTime,
+                TickIssue::SpawnNotObserved {
+                    task_id: task("20260812t101112-mnop3456"),
+                    message: "起動から 30 秒のうちに pid ファイルが現れませんでした".to_owned(),
                 },
             ],
             ..TickSummary::default()
@@ -940,12 +990,40 @@ mod tests {
         assert_eq!(
             tick_summary(&summary),
             "tick を実行しました。\n  \
-             スキップ(3件):\n    \
+             失敗を記録(3件):\n    \
              - 20260812t101112-abcd1234: worktree を作成できません(git worktree add に失敗)\n    \
              - 20260812t101112-efgh5678: 起動コマンドを組み立てられません\
              (エージェント `claude` は config.yaml に定義されていません)\n    \
+             - 20260812t101112-mnop3456: 起動を確認できず spawn 失敗として記録しました\
+             (起動から 30 秒のうちに pid ファイルが現れませんでした)\n  \
+             スキップ(1件):\n    \
              - 20260812t101112-ijkl9012: pid ファイルがあるのに starttime ファイルが\
              ありません(ラッパーは starttime を先に書く)"
+        );
+    }
+
+    #[test]
+    fn 遷移の前提の破れは破れた前提そのものを示す() {
+        let transition = |error: TransitionError| {
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::Transition {
+                    task_id: task("20260812t101112-abcd1234"),
+                    error,
+                }],
+                ..TickSummary::default()
+            })
+        };
+
+        assert!(
+            transition(TransitionError::InvalidState {
+                expected: &[ExecutionStateKind::Pending, ExecutionStateKind::Failed],
+                actual: ExecutionStateKind::Running,
+            })
+            .ends_with("遷移の前提が成立しません(実行状態が pending | failed ではなく running)"),
+        );
+        assert!(
+            transition(TransitionError::MissingCurrentAttempt)
+                .ends_with("遷移の前提が成立しません(起動記録済みなのに現在 attempt が無い)"),
         );
     }
 

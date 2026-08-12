@@ -9,7 +9,7 @@ pub struct WorkspacePlanner;
 
 impl WorkspacePlanner {
     /// タスクのブランチ名の接頭辞。
-    pub const BRANCH_PREFIX: &'static str = "pulsen/";
+    const BRANCH_PREFIX: &'static str = "pulsen/";
 
     /// `path = <worktree_root>/<task-id>`、`branch = pulsen/<task-id>` を導出する。
     ///

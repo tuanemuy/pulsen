@@ -22,7 +22,10 @@ use serde_json::{Value, json};
 const PRINT_INPUT: [&str; 3] = ["print", "{input}", ""];
 
 /// 起動されたエージェントを滞留させるモード。
-const SLEEP: [&str; 2] = ["sleep", "800"];
+///
+/// 滞留は「次の tick を打つ間ラッパーが生きている」状況を作るためのもの。生きていたこと
+/// 自体は `exit` の未出現で主張するので、この長さは余裕であって主張の根拠ではない。
+const SLEEP: [&str; 2] = ["sleep", "5000"];
 
 /// `probe` エージェントとワークフローを備えたホーム。
 fn probe_home(mode: &[&str]) -> Home {
@@ -92,9 +95,11 @@ fn 登録したタスクはworktreeを確保して起動され成果物がrunデ
     assert!(run.stdout.contains(&id), "起動したタスクが表示される");
 
     assert!(home.worktree(&id).is_dir(), "worktree が作られる");
-    assert!(
-        git::branch_tip(repo.path(), &branch_of(&id)).is_some(),
-        "base から作られたブランチが存在する"
+    let base_tip = git::branch_tip(repo.path(), "main").expect("base の先端を取れる");
+    assert_eq!(
+        git::branch_tip(repo.path(), &branch_of(&id)).as_deref(),
+        Some(base_tip.as_str()),
+        "ブランチは base の先端から作られる"
     );
 
     let task = home.task(&id);
@@ -170,6 +175,12 @@ fn 滞留するエージェントを起動したままでも次のtickは競合�
 
     let run = run_tick(&home);
 
+    // ラッパーが既に終わっていればロックは解放済みで、継承していても競合は起きない。
+    // 主張が空虚に成立しないよう、生存を成果物で確かめてから結果を読む。
+    assert!(
+        !run_dir.join("exit").is_file(),
+        "2回目の tick はラッパーの生存中に走る"
+    );
     run.assert_succeeded();
     assert!(
         !run.stdout.contains("スキップしました"),
@@ -447,11 +458,13 @@ fn 同一リポジトリの複数タスクは別々のworktreeとブランチで
 
     run_tick(&home).assert_succeeded();
 
+    let base_tip = git::branch_tip(repo.path(), "main").expect("base の先端を取れる");
     for id in &ids {
         assert!(home.worktree(id).is_dir(), "{id}: worktree");
-        assert!(
-            git::branch_tip(repo.path(), &branch_of(id)).is_some(),
-            "{id}: ブランチ"
+        assert_eq!(
+            git::branch_tip(repo.path(), &branch_of(id)).as_deref(),
+            Some(base_tip.as_str()),
+            "{id}: ブランチは base の先端から作られる"
         );
         assert_eq!(home.task(id)["execution"]["state"], json!("launching"));
     }

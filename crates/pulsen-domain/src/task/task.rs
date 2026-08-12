@@ -5,7 +5,7 @@ use crate::definition::{StatusDefinition, StatusName, WorkflowName, WorkflowSnap
 use super::attempt::{AttemptNumber, AttemptRef};
 use super::branch::{Target, Workspace};
 use super::counters::RetryCounters;
-use super::failure::{FailureKind, FailureNote};
+use super::failure::{FailureKind, FailureNote, ToolFailureKind};
 use super::id::TaskId;
 use super::path::{RunDirPath, StateRoot};
 use super::process::ProcessIdent;
@@ -209,8 +209,9 @@ impl Task {
     /// 現ステータスがエージェント実行か。
     ///
     /// 動作種別の問い合わせ3種は spec が一組で定める読み取り口。真偽だけが要る経路
-    /// (`record_launching` の前提検査、待機の素通し、手続きBの終端処理)がこれらを使い、
-    /// 判別と同時に定義の中身が要る経路は `current_status_def` の網羅 `match` を通る。
+    /// (`record_launching` の前提検査など)がこれらを使い、判別と同時に定義の中身が要る
+    /// 経路は `current_status_def` の網羅 `match` を通る — tick の分岐がこちらで、
+    /// 動作種別ごとに違う値を取り出すため真偽では足りない(ADR-083)。
     pub fn is_agent_run(&self) -> bool {
         match self.current_status_def() {
             StatusDefinition::AgentRun { .. } => true,
@@ -310,12 +311,10 @@ impl Task {
         now: Timestamp,
     ) -> Result<Self, TransitionError> {
         self.ensure_launching()?;
-        let attempt =
-            self.current_attempt
-                .take()
-                .ok_or_else(|| TransitionError::InvariantViolated {
-                    message: "起動記録済みのタスクに現在 attempt がありません".to_owned(),
-                })?;
+        let attempt = self
+            .current_attempt
+            .take()
+            .ok_or(TransitionError::MissingCurrentAttempt)?;
 
         Ok(Self {
             execution: ExecutionState::Running,
@@ -386,7 +385,7 @@ impl Task {
     /// 前提: 起動待ちまたは失敗確定。
     pub fn record_tool_failure(
         self,
-        kind: FailureKind,
+        kind: ToolFailureKind,
         message: String,
         retry_limit: u32,
         now: Timestamp,
@@ -403,7 +402,7 @@ impl Task {
         Ok(Self {
             execution,
             counters,
-            last_failure: Some(FailureNote::record(kind, message, now)),
+            last_failure: Some(FailureNote::record(kind.recorded(), message, now)),
             updated_at: now,
             ..self
         })
@@ -439,10 +438,11 @@ impl Task {
     }
 }
 
-/// 再起動できる状態の表記(前提の不一致の報告に使う)。
-const RESTARTABLE: &str = "pending | failed";
-/// 起動記録済みの状態の表記。
-const LAUNCHING: &str = "launching";
+/// 再起動できる状態(前提の不一致の報告に使う)。
+const RESTARTABLE: &[ExecutionStateKind] =
+    &[ExecutionStateKind::Pending, ExecutionStateKind::Failed];
+/// 起動記録済みの状態。
+const LAUNCHING: &[ExecutionStateKind] = &[ExecutionStateKind::Launching];
 
 /// 上限の超過は加算後の値が上限を**上回った**ときにのみ成立する(等号では凍結しない)。
 ///
@@ -470,7 +470,7 @@ mod tests {
     };
     use crate::task::attempt::AttemptNumber;
     use crate::task::branch::BranchName;
-    use crate::task::failure::FailureKind;
+    use crate::task::failure::{FailureKind, ToolFailureKind};
     use crate::task::path::{RepoPath, RunDirPath, StateRoot, WorktreePath};
     use crate::task::process::{KillIdent, Pid, ProcessIdent, ProcessStartTime, StartTimeRecord};
     use crate::task::state::{ExecutionStateKind, StopReason};
@@ -1025,29 +1025,67 @@ mod tests {
             ..fields()
         });
 
-        match task.confirm_running(process(), later()) {
-            Err(TransitionError::InvariantViolated { message }) => assert!(!message.is_empty()),
-            Err(error) => panic!("不変条件の破れとして報告される: {error:?}"),
-            Ok(task) => panic!("不変条件の破れとして報告される: {task:?}"),
-        }
+        assert_eq!(
+            task.confirm_running(process(), later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
     }
 
     #[test]
     fn 猶予超過のspawn失敗は起動待ちへ戻し失敗要因を残す() {
-        let task = ready_task(ExecutionState::Launching { recorded_at: now() });
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Launching { recorded_at: now() },
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(1, 2, 3),
+            ..fields()
+        });
 
         let failed = task
-            .record_spawn_failure("起動を確認できない".to_owned(), 3, later())
+            .record_spawn_failure("起動を確認できない".to_owned(), 9, later())
             .expect("起動記録済み");
 
         assert_eq!(failed.execution(), &ExecutionState::Pending);
-        assert_eq!(failed.counters().spawn_fail_count(), 1);
+        assert_eq!(
+            failed.counters(),
+            RetryCounters::rehydrate(1, 2, 4),
+            "進むのは spawn_fail_count だけで、実行と判定のカウンタは保持される"
+        );
         assert_eq!(
             failed.last_failure().map(FailureNote::kind),
             Some(FailureKind::SpawnFail)
         );
         assert_eq!(failed.last_failure().map(FailureNote::at), Some(later()));
         assert_eq!(failed.current_attempt(), Some(&attempt(1)));
+        assert_eq!(failed.updated_at(), later());
+    }
+
+    #[test]
+    fn 猶予超過のspawn失敗は起動記録済みからのみ記録できる() {
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let result = ready_task(execution).record_spawn_failure(
+                "起動を確認できない".to_owned(),
+                3,
+                later(),
+            );
+
+            match kind {
+                ExecutionStateKind::Launching => assert!(result.is_ok(), "{kind:?}"),
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Running
+                | ExecutionStateKind::Completed
+                | ExecutionStateKind::Failed
+                | ExecutionStateKind::Stopped => assert_eq!(
+                    result,
+                    Err(TransitionError::InvalidState {
+                        expected: LAUNCHING,
+                        actual: kind,
+                    }),
+                    "{kind:?}"
+                ),
+            }
+        }
     }
 
     #[test]
@@ -1181,7 +1219,7 @@ mod tests {
 
         let failed = task
             .record_tool_failure(
-                FailureKind::WorktreeCreate,
+                ToolFailureKind::WorktreeCreate,
                 "git worktree add に失敗".to_owned(),
                 2,
                 later(),
@@ -1206,7 +1244,12 @@ mod tests {
             counters: RetryCounters::rehydrate(1, 0, 0),
             ..fields()
         })
-        .record_tool_failure(FailureKind::WorktreeCreate, "失敗".to_owned(), 2, later())
+        .record_tool_failure(
+            ToolFailureKind::WorktreeCreate,
+            "失敗".to_owned(),
+            2,
+            later(),
+        )
         .expect("前提を満たす");
         assert_eq!(at_limit.execution(), &ExecutionState::Failed);
         assert_eq!(at_limit.counters().attempt_count(), 2);
@@ -1215,7 +1258,12 @@ mod tests {
             counters: RetryCounters::rehydrate(2, 0, 0),
             ..fields()
         })
-        .record_tool_failure(FailureKind::WorktreeCreate, "失敗".to_owned(), 2, later())
+        .record_tool_failure(
+            ToolFailureKind::WorktreeCreate,
+            "失敗".to_owned(),
+            2,
+            later(),
+        )
         .expect("前提を満たす");
         assert_eq!(
             over_limit.execution(),
@@ -1230,7 +1278,12 @@ mod tests {
     #[test]
     fn リトライ上限が0のステータスは最初のツール操作失敗で凍結する() {
         let frozen = task_of(fields())
-            .record_tool_failure(FailureKind::WorktreeCreate, "失敗".to_owned(), 0, later())
+            .record_tool_failure(
+                ToolFailureKind::WorktreeCreate,
+                "失敗".to_owned(),
+                0,
+                later(),
+            )
             .expect("前提を満たす");
 
         assert_eq!(
@@ -1248,7 +1301,7 @@ mod tests {
         for execution in every_execution_state() {
             let kind = execution.kind();
             let result = ready_task(execution).record_tool_failure(
-                FailureKind::WorktreeCreate,
+                ToolFailureKind::WorktreeCreate,
                 "失敗".to_owned(),
                 2,
                 later(),

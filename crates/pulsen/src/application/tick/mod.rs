@@ -128,8 +128,18 @@ pub enum TickIssue {
         /// 原因の説明。
         message: String,
     },
-    /// ラッパーを起動できなかった(同期エラー、または猶予内に pid が現れない)。
+    /// ラッパーの起動が同期エラーで失敗した。状態もカウンタも変えていない。
     SpawnFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 原因の説明。
+        message: String,
+    },
+    /// 猶予時間のうちに起動を観測できず、spawn 失敗として記録した。
+    ///
+    /// 同期エラーと分けるのは結末が違うため — こちらは `spawn_fail_count` を消費し、
+    /// 上限を超えれば凍結する。分類が同じだと、実装が両者を取り違えても報告は変わらない。
+    SpawnNotObserved {
         /// 対象のタスク。
         task_id: TaskId,
         /// 原因の説明。
@@ -306,11 +316,12 @@ where
     /// stopped を書いたすべての経路がここを通る。Issue #3 は共通手続き notify の呼び出しを
     /// この関数の中に足すだけでよい(ADR-066)。stopped は `notified_at: None` で永続化
     /// されるので、通知が無い間も次以降の tick が catch-up できる。
-    fn commit(&self, task: &Task, summary: &mut TickSummary) -> Persisted {
+    fn commit(&self, task: &Task, freeze: Freeze, summary: &mut TickSummary) -> Persisted {
         match self.tasks.save(task) {
             Ok(()) => {
-                if task.execution_kind() == ExecutionStateKind::Stopped {
-                    summary.frozen.push(task.id().clone());
+                match freeze {
+                    Freeze::Frozen => summary.frozen.push(task.id().clone()),
+                    Freeze::NotFrozen => {}
                 }
                 Persisted::Saved
             }
@@ -346,6 +357,36 @@ enum Persisted {
     Saved,
     /// 永続化できず、報告済み。
     Failed,
+}
+
+/// この保存が凍結を意味するか。
+///
+/// 凍結は遷移の結果であり、遷移を呼んだ側だけが知っている。保存後の状態が Stopped か
+/// どうかで導出すると、既に凍結しているタスクを別の理由で保存する経路(#3 の catch-up
+/// 通知は `mark_notified` した Stopped を保存する)が、過去の凍結を毎 tick 再計上する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Freeze {
+    /// この遷移が上限超過で凍結させた。
+    Frozen,
+    /// 凍結ではない。
+    NotFrozen,
+}
+
+impl Freeze {
+    /// 上限超過で凍結しうる遷移の結果から決める。
+    ///
+    /// 前提: 遷移前は凍結ではない(3つの記録系遷移は起動待ち・失敗確定・起動記録済みしか
+    /// 受け付けない)。この前提のもとでのみ、遷移後の Stopped は「今回凍結した」と同値。
+    fn of_recorded_failure(task: &Task) -> Self {
+        match task.execution_kind() {
+            ExecutionStateKind::Stopped => Self::Frozen,
+            ExecutionStateKind::Pending
+            | ExecutionStateKind::Launching
+            | ExecutionStateKind::Running
+            | ExecutionStateKind::Completed
+            | ExecutionStateKind::Failed => Self::NotFrozen,
+        }
+    }
 }
 
 /// tick がタスク1件に対して選ぶ分岐。

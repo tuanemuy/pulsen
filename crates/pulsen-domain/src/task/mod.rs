@@ -25,7 +25,7 @@ pub use attempt::{AttemptNumber, AttemptNumberError, AttemptRef};
 pub use branch::{BranchName, BranchNameError, Target, Workspace};
 pub use counters::RetryCounters;
 pub use degraded::{DegradedTask, DegradedTaskFields};
-pub use failure::{FailureKind, FailureNote, FailureNoteError};
+pub use failure::{FailureKind, FailureNote, FailureNoteError, ToolFailureKind};
 pub use id::{TaskId, TaskIdError};
 pub use path::{
     AbsolutePathError, RepoPath, RunDirPath, StateRoot, TaskFilePath, WorktreePath, WorktreeRoot,

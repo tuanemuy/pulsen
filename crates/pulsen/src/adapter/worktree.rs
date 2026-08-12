@@ -197,10 +197,16 @@ impl WorktreeManager for GitCliWorktreeManager {
         match registered_entry(&listing.stdout, &key) {
             Some(entry) => {
                 if entry.branch.as_deref() != Some(reference.as_str()) {
+                    // 突き合わせた鍵と登録の指す先を載せる。載せないと、本当に別の worktree が
+                    // 居るのか、鍵の作り方が環境と噛み合わずに別の登録を掴んだのかが、
+                    // この失敗だけでは分けられない。
                     return Err(WorktreeError::Failed {
                         message: format!(
-                            "{} には別の worktree が登録されている(自動修復しない)",
-                            path.display()
+                            "{} には別の worktree が登録されている(自動修復しない): \
+                             鍵 {} の登録は {} を指す(期待は {reference})",
+                            path.display(),
+                            key.display(),
+                            entry.branch.as_deref().unwrap_or("ブランチ以外の何か"),
                         ),
                     });
                 }
@@ -235,8 +241,10 @@ impl WorktreeManager for GitCliWorktreeManager {
                 if occupied {
                     return Err(WorktreeError::Failed {
                         message: format!(
-                            "{} に worktree でない実体がある(自動修復しない)",
-                            path.display()
+                            "{} に worktree でない実体がある(自動修復しない): \
+                             鍵 {} に一致する登録は無い",
+                            path.display(),
+                            key.display(),
                         ),
                     });
                 }

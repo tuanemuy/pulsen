@@ -99,7 +99,11 @@ impl SystemProcessController {
     ///
     /// `self_exe` を使うのは `spawn_wrapper` だけなので、ラッパー自身のように起動を行わない
     /// 経路は自バイナリのパスを解決せずに組める(各コマンドは自身の動作に必要なリソース
-    /// だけを検証する)。この構成での `spawn_wrapper` は `SpawnError` を返す。
+    /// だけを検証する)。
+    ///
+    /// この構成の `spawn_wrapper` は構造上必ず `SpawnError` を返すため、`spawn_wrapper` の
+    /// 適合契約の対象外である — 適合スイートが検証するのは [`SystemProcessController::new`]
+    /// の構成に限る。ラッパー自身は spawn を行わないので、この経路には到達しない(ADR-068)。
     pub fn without_self_exe(identity_source: IdentitySource, clock: SystemClock) -> Self {
         Self {
             self_exe: None,
@@ -252,8 +256,13 @@ mod identity {
     use super::{IdentitySource, ObservedProcess};
 
     /// 既定の取得元。
+    ///
+    /// 絶対パスで固定する。記録した tick と照合する tick で PATH が違えば(cron の
+    /// `/usr/bin:/bin` と対話シェルの `/opt/homebrew/bin:...`)別実装の `ps` に解決され、
+    /// `lstart` の整形が変わって生存中のプロセスを Dead と誤判定しうる — ロケール非固定の
+    /// 場合と同じ結末になる。`/usr/bin/ps` は macOS に無いため `/bin/ps` を採る。
     pub fn default_source() -> PathBuf {
-        PathBuf::from("ps")
+        PathBuf::from("/bin/ps")
     }
 
     /// 起動時刻とプロセスグループを1回の `ps` の起動から取る。
@@ -635,6 +644,10 @@ mod identity {
     use super::{IdentitySource, ObservedProcess};
 
     /// 既定の取得元。
+    ///
+    /// POSIX 側と違い PATH 解決の名前のままにする。`%SystemRoot%\System32\...` の絶対パスは
+    /// 本環境で実測できず、誤った固定値は取得そのものを不能にする。PATH が tick 間で変わると
+    /// 照合が壊れうる制約は Issue #10 の実機確認に申し送る(ADR-067)。
     pub fn default_source() -> PathBuf {
         PathBuf::from("powershell")
     }
@@ -681,16 +694,9 @@ mod identity {
         let text = String::from_utf8_lossy(&output.stdout);
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            // 診断に何かが書かれている状態での空出力は、対象の不在ではなく取得機構の失敗。
-            if !output.stderr.is_empty() {
-                return Err(Io::Failed {
-                    message: format!(
-                        "同定情報の取得が失敗した (pid {}): {}",
-                        pid.get(),
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    ),
-                });
-            }
+            // 機構の失敗は終了コードで判定済みなので、完走した空出力は対象の不在だけを表す。
+            // stderr の非空を機構の失敗に足すと、警告・情報ストリームを stderr に流した完走が
+            // 死亡したプロセスを `Err(Io)` に畳み、#3 で running のまま永久滞留する。
             return Ok(None);
         }
         let starttime = ProcessStartTime::parse(trimmed.to_owned()).map_err(|_| Io::Failed {

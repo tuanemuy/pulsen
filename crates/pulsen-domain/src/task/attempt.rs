@@ -63,10 +63,7 @@ pub struct AttemptRef {
 }
 
 impl AttemptRef {
-    /// 永続化からの再構築。
-    ///
-    /// 新規採番は起動記録(後続スライス)が担い、そこでは `run_dir` を `number` から
-    /// 導出して番号とパスの整合を構成で保証する。
+    /// 永続化からの再構築。新規採番は [`AttemptRef::launching`] が担う。
     pub fn rehydrate(
         number: AttemptNumber,
         run_dir: RunDirPath,

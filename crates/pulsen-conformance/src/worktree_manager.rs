@@ -4,6 +4,7 @@
 //! `remove` の5行は、それをポートに足すスライスで扱う。
 
 use pulsen_domain::execution::{TargetError, WorktreeError, WorktreeManager};
+use pulsen_domain::task::Workspace;
 
 use crate::{CaseOutcome, WorktreeManagerHarness, require};
 
@@ -192,7 +193,9 @@ pub fn tc_port_worktree_manager_014_worktreeでない通常のディレクトリ
     let base = require!(harness.head_branch_name());
     let (workspace, existing) = require!(harness.workspace_over_plain_dir());
 
-    assert_create_failed(harness.manager().create(&repo, &base, &workspace));
+    assert_create_failed(harness.manager().create(&repo, &base, &workspace), || {
+        occupancy_report(harness, &workspace, &existing)
+    });
 
     assert_eq!(
         require!(harness.worktree_marker(&workspace)),
@@ -213,8 +216,22 @@ pub fn tc_port_worktree_manager_015_別ブランチのworktreeがあれば失敗
     let repo = require!(harness.repo_with_commit());
     let base = require!(harness.head_branch_name());
     let (workspace, existing) = require!(harness.workspace_over_other_branch());
+    // 占有 worktree が `create` を呼ぶ時点で在ることを主張してから進む。前提が破れたまま
+    // 進むと、以降の失敗が「前提が消えた」のか「同定が外れた」のかを名指しできない。
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        existing,
+        "占有 worktree の実体が ws.path にある"
+    );
+    assert_eq!(
+        harness.manager().branch_exists(&repo, workspace.branch()),
+        Ok(false),
+        "占有 worktree は ws.branch 以外のブランチを指す"
+    );
 
-    assert_create_failed(harness.manager().create(&repo, &base, &workspace));
+    assert_create_failed(harness.manager().create(&repo, &base, &workspace), || {
+        occupancy_report(harness, &workspace, &existing)
+    });
 
     assert_eq!(
         require!(harness.worktree_marker(&workspace)),
@@ -236,7 +253,9 @@ pub fn tc_port_worktree_manager_016_baseが存在しなければブランチもw
     let base = require!(harness.absent_branch_name());
     let workspace = require!(harness.unused_workspace());
 
-    assert_create_failed(harness.manager().create(&repo, &base, &workspace));
+    assert_create_failed(harness.manager().create(&repo, &base, &workspace), || {
+        occupancy_report(harness, &workspace, "")
+    });
 
     assert!(!require!(harness.worktree_present(&workspace)));
     assert_eq!(
@@ -275,13 +294,33 @@ pub fn create_prunable_実体の消えた登録は先端を変えずに張り直
 }
 
 /// 自動修復せず、原因の説明を伴って失敗することを確かめる。
-fn assert_create_failed(result: Result<(), WorktreeError>) {
+///
+/// `report` は成功してしまったときにだけ評価される観測で、`ws.path` の状態を失敗の場に
+/// 残す。成功は「同定が外れて別の実体を掴んだ」ことを意味するため、掴んだ先が何だったかが
+/// 分からないと次の一手が決まらない。
+fn assert_create_failed(result: Result<(), WorktreeError>, report: impl FnOnce() -> String) {
     match result {
         Err(WorktreeError::Failed { message }) => {
             assert!(!message.is_empty(), "原因が説明される");
         }
-        Ok(()) => panic!("既存の実体には触れず失敗する"),
+        Ok(()) => panic!("既存の実体には触れず失敗する: {}", report()),
     }
+}
+
+/// `create` が失敗すべき状況で成功したときに残す、`ws.path` の観測。
+fn occupancy_report(
+    harness: &impl WorktreeManagerHarness,
+    workspace: &Workspace,
+    expected_marker: &str,
+) -> String {
+    format!(
+        "path={} branch={} 期待した内容={expected_marker:?} 観測した内容={:?} \
+         ws.branch の worktree として登録されているか={:?}",
+        workspace.path().as_path().display(),
+        workspace.branch().as_str(),
+        harness.worktree_marker(workspace),
+        harness.worktree_present(workspace),
+    )
 }
 
 /// 実行環境のエラーであり、対象の分類のいずれでもないことを確かめる。

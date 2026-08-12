@@ -3,8 +3,10 @@
 //! ポートはすべてテストダブルに差し替える(ADR-028)。ロック機構の異常・走査自体の失敗は
 //! 実アダプターでは外から作れないため、分岐の網羅はここで行う。
 //!
-//! 本スライスで配線しないアーム(Cleanup / Running / Completed / Stopped)には期待を
-//! 持たせない — 期待を書くと Issue #3 / #6 がアームを埋めた時点で書き換えになる(ADR-065)。
+//! 本スライスで配線しないアーム(Cleanup / Running / Completed / Stopped)に、何が起きるか
+//! の期待は持たせない — 書くと Issue #3 / #6 がアームを埋めた時点で書き換えになる(ADR-065)。
+//! 「エージェントを起動しない」ことだけは主張する — 実行中・終端処理待ちのタスクに対して
+//! 2本目のラッパーが起動する誤りは、本スライスのマーカープロトコルでは防げない。
 
 mod tick_fixture;
 
@@ -14,7 +16,7 @@ use pulsen_conformance::doubles::{
     ScriptedTaskRepository,
 };
 use pulsen_domain::execution::RunFileError;
-use pulsen_domain::task::{ExecutionState, ExecutionStateKind, ReadError};
+use pulsen_domain::task::{ExecutionState, ExecutionStateKind, ReadError, StopReason};
 
 use tick_fixture::{
     Harness, NOW, TASK, absolute, after, at, corrupt_entry, degraded_entry, pid_content,
@@ -134,6 +136,54 @@ fn 待機ステータスのタスクには起動待ちでも失敗確定でも�
             "worktree 操作は行わない"
         );
         assert!(harness.runs.calls().is_empty(), "run ファイルにも触れない");
+    }
+}
+
+#[test]
+fn 配線していない分岐のタスクにはエージェントを起動せず書き込みもしない() {
+    let unwired = [
+        ("running", "queued", ExecutionState::Running),
+        ("completed", "queued", ExecutionState::Completed),
+        (
+            "stopped",
+            "queued",
+            ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: None,
+            },
+        ),
+        ("cleanup", "done", ExecutionState::Pending),
+    ];
+
+    for (label, status, execution) in unwired {
+        let harness = Harness {
+            tasks: repository(vec![
+                task(TASK)
+                    .status(status)
+                    .workspace()
+                    .execution(execution)
+                    .attempt(1)
+                    .entry(),
+            ]),
+            ..Harness::new()
+        };
+
+        let summary = harness.completed();
+
+        assert!(summary.is_empty(), "{label}: サマリーに現れない");
+        assert!(harness.tasks.saved().is_empty(), "{label}: 書き込まない");
+        assert!(
+            harness.worktrees.calls().is_empty(),
+            "{label}: worktree 操作を行わない"
+        );
+        assert!(
+            harness.runs.calls().is_empty(),
+            "{label}: run ファイルに触れない"
+        );
+        assert!(
+            harness.processes.calls().is_empty(),
+            "{label}: ラッパーを起動しない"
+        );
     }
 }
 
@@ -282,6 +332,7 @@ fn issue_task(issue: &TickIssue) -> Option<String> {
         | TickIssue::MarkerWriteFailed { task_id, .. }
         | TickIssue::PrepareAttemptFailed { task_id, .. }
         | TickIssue::SpawnFailed { task_id, .. }
+        | TickIssue::SpawnNotObserved { task_id, .. }
         | TickIssue::SaveFailed { task_id, .. } => Some(task_id.as_str().to_owned()),
     }
 }

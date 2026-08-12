@@ -11,10 +11,10 @@ use pulsen_domain::execution::{
     WrapperLaunchSpec,
 };
 use pulsen_domain::task::{
-    Clock, FailureKind, Task, TaskRepository, WorkspacePlanner, WorktreePath,
+    Clock, Task, TaskRepository, ToolFailureKind, WorkspacePlanner, WorktreePath,
 };
 
-use super::{Persisted, Tick, TickIssue, TickSummary};
+use super::{Freeze, Persisted, Tick, TickIssue, TickSummary};
 
 impl<R, L, K, W, S, P> Tick<'_, R, L, K, W, S, P>
 where
@@ -49,7 +49,7 @@ where
             .current_attempt()
             .expect("起動記録は現在 attempt を置く")
             .number();
-        match self.commit(&recorded, summary) {
+        match self.commit(&recorded, Freeze::NotFrozen, summary) {
             Persisted::Saved => {}
             Persisted::Failed => return,
         }
@@ -92,7 +92,7 @@ where
 
         match created {
             Ok(()) => match task.confirm_workspace(workspace, self.clock.now()) {
-                Ok(confirmed) => match self.commit(&confirmed, summary) {
+                Ok(confirmed) => match self.commit(&confirmed, Freeze::NotFrozen, summary) {
                     Persisted::Saved => Some(confirmed),
                     Persisted::Failed => None,
                 },
@@ -105,18 +105,22 @@ where
                 let limit = retry_limit(&task);
                 let now = self.clock.now();
                 match task.record_tool_failure(
-                    FailureKind::WorktreeCreate,
+                    ToolFailureKind::WorktreeCreate,
                     message.clone(),
                     limit,
                     now,
                 ) {
-                    Ok(failed) => match self.commit(&failed, summary) {
-                        Persisted::Saved => summary.errors.push(TickIssue::WorktreeCreateFailed {
-                            task_id: id,
-                            message,
-                        }),
-                        Persisted::Failed => {}
-                    },
+                    Ok(failed) => {
+                        match self.commit(&failed, Freeze::of_recorded_failure(&failed), summary) {
+                            Persisted::Saved => {
+                                summary.errors.push(TickIssue::WorktreeCreateFailed {
+                                    task_id: id,
+                                    message,
+                                })
+                            }
+                            Persisted::Failed => {}
+                        }
+                    }
                     Err(error) => self.report_transition(id, error, summary),
                 }
                 None
@@ -190,13 +194,15 @@ where
             self.config.spawn_fail_limit(),
             now,
         ) {
-            Ok(recorded) => match self.commit(&recorded, summary) {
-                Persisted::Saved => summary.errors.push(TickIssue::CommandExpansionFailed {
-                    task_id: id,
-                    message,
-                }),
-                Persisted::Failed => {}
-            },
+            Ok(recorded) => {
+                match self.commit(&recorded, Freeze::of_recorded_failure(&recorded), summary) {
+                    Persisted::Saved => summary.errors.push(TickIssue::CommandExpansionFailed {
+                        task_id: id,
+                        message,
+                    }),
+                    Persisted::Failed => {}
+                }
+            }
             Err(error) => self.report_transition(id, error, summary),
         }
     }

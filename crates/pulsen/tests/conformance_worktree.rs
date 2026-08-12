@@ -5,8 +5,9 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use pulsen::adapter::worktree::GitCliWorktreeManager;
+use pulsen::adapter::worktree::{GitCliWorktreeManager, INHERITED_GIT_ENV};
 use pulsen_conformance::WorktreeManagerHarness;
 use pulsen_domain::task::{BranchName, RepoPath, Workspace, WorktreePath};
 use tempfile::TempDir;
@@ -19,6 +20,10 @@ const ABSENT_BRANCH: &str = "no-such-branch";
 const MARKER_FILE: &str = "marker.txt";
 /// worktree の登録が持つブランチの完全な参照名の接頭辞。
 const BRANCH_REF_PREFIX: &str = "refs/heads/";
+/// `ws.path` を占有する別タスクのブランチ名。
+const OCCUPANT_BRANCH: &str = "occupant";
+/// 占有 worktree に置く内容。
+const OCCUPANT_MARKER: &str = "別タスクの成果物";
 
 /// 一時ディレクトリに git リポジトリを用意するハーネス。
 struct GitCliWorktreeManagerHarness {
@@ -110,6 +115,66 @@ fn symlink_dir(original: &Path, link: &Path) {
 
 #[cfg(not(any(unix, windows)))]
 fn symlink_dir(_original: &Path, _link: &Path) {}
+
+/// 用意した占有 worktree が、登録・実体ともに揃っていることを確かめる。
+///
+/// 揃っていなければ、ケースが観測するのは `create` の判断ではなく前提の破れになる。
+/// 前提を作れなかったこと(スキップ)とは違うので、その場で落として git の生の観測を残す。
+fn assert_occupied(repo: &Path, path: &Path, occupant: &str) {
+    let registration = common::git::worktree_registration(repo, path);
+    let expected = format!("{BRANCH_REF_PREFIX}{occupant}");
+    let checked_out = registration
+        .as_ref()
+        .and_then(|found| found.branch.as_deref());
+    let present = path.try_exists();
+    assert!(
+        checked_out == Some(expected.as_str()) && present.as_ref().is_ok_and(|found| *found),
+        "占有 worktree の前提が成立しない: path={} 期待する登録={expected} 実際の登録={registration:?} \
+         try_exists={present:?}\n{}\n{}",
+        path.display(),
+        worktree_listing(repo),
+        parent_listing(path),
+    );
+}
+
+/// 診断に残す `git worktree list --porcelain` の生出力。
+///
+/// 環境を落とす集合はアダプターと同じ(`INHERITED_GIT_ENV`)にする — 突き合わせる相手は
+/// アダプターが見る出力なので、別の環境で採ると比べる意味が無くなる。
+fn worktree_listing(repo: &Path) -> String {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "list", "--porcelain"]);
+    for name in INHERITED_GIT_ENV {
+        command.env_remove(name);
+    }
+    match command.output() {
+        Ok(output) => format!(
+            "worktree list --porcelain (exit {:?}):\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout)
+        ),
+        Err(error) => format!("worktree list --porcelain を採れない: {error}"),
+    }
+}
+
+/// 診断に残す親ディレクトリの一覧。
+fn parent_listing(path: &Path) -> String {
+    let Some(parent) = path.parent() else {
+        return format!("{} に親ディレクトリが無い", path.display());
+    };
+    match fs::read_dir(parent) {
+        Ok(entries) => {
+            let names: Vec<String> = entries
+                .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+                .collect();
+            format!("{} の一覧: {names:?}", parent.display())
+        }
+        Err(error) => format!("{} を一覧できない: {error}", parent.display()),
+    }
+}
 
 impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
     type Manager = GitCliWorktreeManager;
@@ -217,11 +282,12 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
         common::git::add_worktree_with_branch(
             &repo,
             workspace.path().as_path(),
-            "occupant",
+            OCCUPANT_BRANCH,
             HEAD_BRANCH,
         )?;
-        common::git::commit_file(workspace.path().as_path(), MARKER_FILE, "別タスクの成果物")?;
-        Some((workspace, "別タスクの成果物".to_owned()))
+        common::git::commit_file(workspace.path().as_path(), MARKER_FILE, OCCUPANT_MARKER)?;
+        assert_occupied(&repo, workspace.path().as_path(), OCCUPANT_BRANCH);
+        Some((workspace, OCCUPANT_MARKER.to_owned()))
     }
 
     fn put_worktree_marker(&self, workspace: &Workspace, text: &str) -> Option<()> {

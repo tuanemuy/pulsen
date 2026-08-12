@@ -218,7 +218,10 @@ fn 再確認でもpidが無ければspawn失敗として起動待ちへ戻す() 
     );
     assert!(summary.frozen.is_empty());
     assert!(
-        matches!(summary.errors.as_slice(), [TickIssue::SpawnFailed { .. }]),
+        matches!(
+            summary.errors.as_slice(),
+            [TickIssue::SpawnNotObserved { .. }]
+        ),
         "起動待ちへ戻した tick は処理対象なしにならない"
     );
 }
@@ -441,7 +444,7 @@ fn 破損したrunファイルが削除されれば不在として無効化マ�
     assert_eq!(saved.counters().spawn_fail_count(), 1);
     assert!(matches!(
         decided.errors.as_slice(),
-        [TickIssue::SpawnFailed { .. }]
+        [TickIssue::SpawnNotObserved { .. }]
     ));
 }
 

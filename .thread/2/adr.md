@@ -41,7 +41,7 @@ Proposed
 ### Consequences
 
 - 良い点: 後続スライスの作業が「アームを1つ埋める」に閉じる。骨格の正しさ(走査・破損の扱い・サマリー・exit code)を本スライスで確定できる。
-- トレードオフ: `Cleanup` / `Running` / `Completed` / `Stopped` のタスクは #3 / #6 がマージされるまで tick が黙って素通りする。本スライスの受け入れテストはこれらのアームに対する期待を持たない(持たせると #3 / #6 で書き換えることになる)。
+- トレードオフ: `Cleanup` / `Running` / `Completed` / `Stopped` のタスクは #3 / #6 がマージされるまで tick が黙って素通りする。本スライスのテストはこれらのアームに**何が起きるか**の期待を持たない(持たせると #3 / #6 で書き換えることになる)。一方で「エージェントを起動しない・書き込まない」という否定的な主張はスライスをまたいで真であり、アームが埋まっても書き換えにならないので固定する — 実行中や終端処理待ちのタスクに2本目のラッパーが起動する誤りは、新しい attempt の run ディレクトリに無効化マーカーが無いため本スライスのマーカープロトコルでは防げない。
 - `UC-execution-002` と `TC-exec-tick-013` は、未配線のアームが残る限り台帳の PASS 要件を満たさない(部分消化)。チェックは付けず、消化範囲を Issue のコメントに残す(plan.md「チェックリスト行にチェックを付ける基準」)。
 
 ---
@@ -60,7 +60,7 @@ Proposed
 
 ### Decision
 
-本スライスは **stopped の記録(`save`)と `frozen` への集計まで**を実装し、通知は行わない。手続きA・Cの中で「stopped になった」ことを1つの内部関数(`freeze` 相当)に集約し、#3 がその関数の中で notify を呼ぶだけで済む形にする。
+本スライスは **stopped の記録(`save`)と `frozen` への集計まで**を実装し、通知は行わない。手続きA・Cの中で「stopped になった」ことを保存の単一地点(`commit`)に集約し、#3 がその関数の中で notify を呼ぶだけで済む形にする。凍結かどうかは保存後の状態から導出せず、遷移を呼んだ側が `commit` に渡す(ADR-089) — #3 が足す catch-up 通知は `mark_notified` した `Stopped` を保存するため、状態からの導出では過去の凍結を毎 tick 再計上する。
 
 根拠は requirements §8 の at-least-once — stopped は `notified_at: None` で永続化され、`notified_at` のない stopped は以降のすべての tick が検出して通知する。#3 がマージされた後の最初の tick が catch-up するため、経路として穴は開かない。
 
@@ -111,7 +111,7 @@ workspace lints に `unsafe_code = "forbid"` があり、`pulsen` クレート�
   - 三値を本スライスで確定させるのは、#3 の `starttime_of` の契約が `Ok(Some)` / `Ok(None)`(死亡)/ `Err(Io)`(機構失敗)の三値であり、`TC-port-process-controller-007` / `011` がこの区別そのものを検証するため。二値に確定させると #3 が共有関数の署名を変えることになり、「同一の取得手段を構成で保証する」が最初の追加で崩れる。さらに実測では不在も**エラーの形**で返る(macOS の `ps -o lstart=,pgid= -p <不在pid>` は exit 1・stdout 空、Linux の `/proc/<pid>/stat` は `NotFound`)ため、二値のままだと `Err(Io)` に畳む実装が自然に書けてしまう。畳むと #3 で「生存プロセスを観測できない tick が状態を変更せずスキップし続け、`DiedWithoutExit` にも `KillOnTimeout` にも到達しない」= running のまま永久滞留になる。
   - 取得元(POSIX 非 Linux は `ps` の実行ファイルパス、Linux は procfs のルート、Windows は powershell の実行ファイルパス)は構築時に注入する(ADR-068)。
 - Linux: `<procfs_root>/<pid>/stat`(既定は `/proc`)の起動時刻(clock ticks)を **boot id と合成した `<boot_id>:<ticks>`** とする。ファイル読み取りのみで、表現は整数と UUID なのでロケール非依存。ticks は**最後の `)` より後ろを空白で分割した20番目**(全体の22番目)として読む — 2番目のフィールド(comm)は実行ファイル名を `()` で囲んだもので、名前に空白や `)` を含むと素朴な空白分割では位置がずれる(実測: `sleep` を `sl ee) p` という名前で起動すると素朴な22番目は `1` を返し、この規則では正しい `939856880` を返す)。自プロセス名では顕在化しないが、この関数は任意 pid を取る #3 の `starttime_of` と共有される。boot id は `<procfs_root>/sys/kernel/random/boot_id`(非 root で読め、同一 boot 内では何度読んでも同じ値であることを実測)。
-- その他の POSIX(macOS 等): `<identity_source> -o lstart=,pgid= -p <pid>`(既定は `ps`)の1行の出力を、最後の空白で区切って PGID(最終トークン)と `lstart`(残りを trim した文字列)に分ける。ただし `ps` の起動時に `LC_ALL=C` と `TZ=UTC` を**注入**し、`LANG` / `LC_TIME` / `LC_ALL` の継承を落とす(`adapter/worktree.rs` の `INHERITED_GIT_ENV` + `env_remove` と同型)。trim はこの関数の内側で1回だけ行う(末尾に空白パディングが付く。実測: `LC_ALL=C TZ=UTC` で `Wed Aug 12 11:44:13 2026     96379`)。キーワードの順を逆にすると `lstart` 側にパディングが残るので、`lstart=,pgid=` の順で固定する。
+- その他の POSIX(macOS 等): `<identity_source> -o lstart=,pgid= -p <pid>`(既定は `/bin/ps`)の1行の出力を、最後の空白で区切って PGID(最終トークン)と `lstart`(残りを trim した文字列)に分ける。ただし `ps` の起動時に `LC_ALL=C` と `TZ=UTC` を**注入**し、`LANG` / `LC_TIME` / `LC_ALL` の継承を落とす(`adapter/worktree.rs` の `INHERITED_GIT_ENV` + `env_remove` と同型)。trim はこの関数の内側で1回だけ行う(末尾に空白パディングが付く。実測: `LC_ALL=C TZ=UTC` で `Wed Aug 12 11:44:13 2026     96379`)。キーワードの順を逆にすると `lstart` 側にパディングが残るので、`lstart=,pgid=` の順で固定する。
 - Windows: `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=<pid>\").CreationDate"` 相当。`ToString()` はカルチャ依存なので `.ToUniversalTime().ToString("o")` の**不変形式**を明示する(実機検証は #10 だが、形式の決定は本スライスの責務)。
 - `StartTimeRecord.wall` は注入した `Clock` から取る。
 
@@ -146,6 +146,16 @@ LC_ALL=C TZ=UTC Wed Aug 12 11:14:45 2026
 
 ラッパーは tick から環境を継承して起動されるため、「cron の tick(`LANG` 未設定)が spawn したラッパーが記録 → 対話シェル(`ja_JP.UTF-8`)の tick が照合」で不一致になる。結果は `IdentityCheck = Dead` → `DiedWithoutExit` → 再起動 → **エージェント実行中の同一 worktree での並走**で、plan.md が「最悪の失敗モード」と書いている経路に精度ではなく表現の非決定性から到達する。`LC_ALL=C TZ=UTC` の注入は周囲の `LANG` / `LC_TIME` を上書きすることを実測で確認した。
 
+**既定の取得元は絶対パスで固定する**
+
+環境の固定だけでは足りない。固定したのは実行時の環境であって、**どの実行ファイルが起動されるか**は PATH に委ねられたままになる。cron の tick(`PATH=/usr/bin:/bin`)と対話シェルの tick(`PATH=/opt/homebrew/bin:...`)で `ps` が別実装に解決されれば `lstart` の整形が変わり、結末はロケール非固定の場合とまったく同じ — requirements §4.3 の「記録と照合は同一の取得手段」が PATH の安定性に依存する。`git` を PATH 解決している判断(ADR-024)とは性質が違う。git は結果を分類にしか使わないが、`ps` の出力は**帳簿に永続化されて後の tick と突き合わされる**。
+
+- POSIX 非 Linux: 既定を `/bin/ps` とする。`/usr/bin/ps` は macOS に存在しない(実測)。
+- Linux: `/proc` が元から絶対パスなので影響しない。
+- Windows: 既定を `powershell` の PATH 解決のまま残す。`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe` は本環境で実測できず、検証していない絶対パスを固定すると取得そのものが不能になる — PATH 解決より悪い結末になる。
+
+Windows だけ PATH の安定性への依存が残る。この非対称は既知の制限として progress.md に載せ、Issue #10(CI とクロスプラットフォーム検証)の実機確認に申し送る。注入点(ADR-068)はどのプラットフォームでも変わらないので、既定値の差は適合テストの構成にもアダプターのユニットテストにも現れない。
+
 **`run_agent`**
 
 - `Command` を直接起動(シェル非経由)。cwd = worktree。stdout / stderr は `File::create` したログへ。
@@ -159,6 +169,7 @@ LC_ALL=C TZ=UTC Wed Aug 12 11:14:45 2026
 - トレードオフ: macOS / Windows では外部プロセス(`ps` / `powershell`)の起動が要る(1回あたり数十ms)。`ps -o lstart=` は秒精度なので、1秒以内の PID 再利用は検出できない(spec は「同一マシン内での等価比較」しか要求していないので契約上は満たす)。macOS の `ps` にはエポック秒を出す keyword が無く(`etimes` は未サポート、`start` は精度が落ちる)、整形済み文字列を固定した環境で読む以外の手段が取れない。Windows の起動時刻取得は本環境で実測できないため、Issue #10(CI とクロスプラットフォーム検証)に委ねる。
 - **`process_group(0)` はセッションを分けない**(`setsid` 相当ではない)。適合契約(呼び出し側プロセスの終了後も完走する)は満たすが、ラッパーは同一セッションに残って制御端末を保持し続けるため、端末セッションの強制終了(vhangup 等)では SIGHUP が届きうる — `nohup` 相当の耐性は無い。cron 運用が主経路なので実害は小さいが、`setsid(1)` に依存しない判断とセットで残す。
 - **Windows の `KillIdent`(pid 文字列)は POSIX の実行単位に相当しない**。requirements §4.3 は Windows のkill同定子として「タスクID・attempt番号から決定的に導出する名前付きジョブオブジェクト名」を例示し、`TC-port-process-controller-014`(ラッパーのみ死亡し、エージェントが実行単位に属したまま生存)は `try_kill_remnants` で `Killed` を要求する。pid 文字列 + プロセスツリー終了ではラッパー死亡時点で辿る根が無く、この契約を満たせない。`KillIdent` は pidファイルとタスクファイルに**永続化される**値なので、後から形式を変えると既存の帳簿が無効になる。`unsafe` 禁止のままジョブオブジェクトを扱う手段が無い以上、#3 / #10 で依存追加か lint 緩和の判断が要りうる申し送りとして残す。
+- トレードオフ: 既定の取得元の性質がプラットフォームで揃わない(POSIX は絶対パス、Windows は PATH 解決)。requirements §4.3 の「記録と照合は同一の取得手段」が Windows でだけ PATH の安定性に依存したまま残る。
 - `#[cfg(unix)]` / `#[cfg(windows)]` の出現箇所が `adapter/process.rs` に増える(既存は `util/atomic.rs` のみ)。AC-1 の grep の期待値を更新する。
 
 ---
@@ -188,12 +199,21 @@ requirements §4.1 はラッパーを「ツール自身のバイナリをラッ�
 - 取得機構失敗の再現(`TC-port-process-controller-005`)は同型で、**存在しないパスを `identity_source` として構築した2つ目のコントローラ**を `failing_identity_controller` フックが返す形にする。ADR-067 の写像表により、どのプラットフォームでもこの構成は `Err(Io)` に落ちる — POSIX 非 Linux は `ps` の起動自体の失敗、Linux は procfs ルートの不在(`<root>/<pid>/stat` の `NotFound` と区別して機構失敗に写す規則を ADR-067 が持つ)。`005` はこのフックによって確定的に走り、スキップ見込みの行ではなくなる。
 - スイートを2つに分けている(ADR-075)ので、フックも `spawn` スイートの `failing_controller` と `identity_and_agent` スイートの `failing_identity_controller` に分かれる。
 
+**ラッパーの合成だけは `self_exe` を持たない構成を使う**
+
+`wire::process_controller()` の3引数固定から外れ、`cli/wrapper.rs` は `SystemProcessController::without_self_exe(identity_source, clock)` を組む。ラッパーが呼ぶのは `own_identity` と `run_agent` だけで、`spawn_wrapper` は呼ばない。それでも `current_exe()` を解決させると、その失敗**だけ**でラッパーが何も書かずに非0終了し、tick の猶予経路が spawn 失敗として積む — 使わないリソースの検証が失敗経路を1本増やす形になる。ADR-068 が `compose()` から `process_controller()` を切り出したのと同じ規則(各コマンドは自身の動作に必要なリソースだけを検証する)を、コマンドの中でもう一段適用する。
+
+この構成の `spawn_wrapper` は構造上必ず `SpawnError` を返す。適合契約の対象は `new(...)` の構成に限ると宣言し、`without_self_exe` の doc にその範囲を書く。
+
+`spawn_wrapper` を持たない狭いポート(`own_identity` + `run_agent`)を切り出して型で閉じる案を採らない理由: ポートの分割は #3 が足す kill 系メソッドの配置と一緒に決めるべきもので、先に分けると二度分けることになる。
+
 ### Consequences
 
 - 良い点: 適合スイートが実バイナリのラッパー動作を検証でき、`spawn_wrapper` の3件が「再現できるアダプター環境に限る」のスキップに落ちない。`current_exe()` の失敗経路がプロセス起動を行うコマンドだけに閉じる。`TC-005` も権限操作にも root の可否にも依存せず走る。
 - 良い点: この注入点は、ADR-067 の三値化(不在 / 機構失敗の区別)が正しく実装されたことを #3 が `starttime_of` に対して検証するときの足場にもなる。
 - トレードオフ: 合成ルートで `current_exe()` が失敗したときの経路が増える(`WireError` に1変種)。tick はそれを実行環境エラーとして非0で終え、wrapper は何も書かずに非0で終える(猶予経路が spawn 失敗として分類する)。
 - トレードオフ: 本番の構築が引数3つになり、`IdentitySource::platform_default()` という「既定値を返す関数」が1つ増える。既定を型の中に置くことで、合成ルートがプラットフォームごとの取得元を知らずに済む形を選んだ。
+- トレードオフ: 本番に結線されるポート実装が2構成になり、うちラッパー側は `spawn_wrapper` が必ず失敗する。後続スライスがラッパーの経路で `spawn_wrapper` を使っても型は止めず、実行時エラーになる。この構成は適合契約の対象外であることを doc の宣言で担保している。
 
 ---
 
@@ -718,3 +738,116 @@ launching → running の取込にだけ、フィールド `confirmed_running: V
 - 良い点: 後続スライスは `transitioned` / `skipped_back` を spec の語義のまま使える。
 - トレードオフ: 出力DTO が spec から1フィールド分ずれる。`spec/usecases/execution.md` への反映を progress.md の「spec 追従の提起」に積む。
 - トレードオフ: 1つのタスクが1回の tick で `errors` と `frozen` の両方に現れうる(上限超過で凍結した失敗)。失敗の原因と結末は別の情報なので、どちらか一方に畳まない。
+
+---
+
+## ADR-087: ツール操作の失敗を記録する遷移は、専用の失敗種別だけを受け取る
+
+### Status
+
+Proposed
+
+### Context
+
+`spec/domains/task.md` の遷移表は `record_tool_failure` の引数を `kind` とだけ書き、実装は `FailureKind`(`WorktreeCreate | WorktreeRemove | ArchiveMove | SpawnFail | JudgeFail`)をそのまま受け取っていた。しかし後ろの2値は専用の遷移(`record_spawn_failure` / `record_spawn_failure_in_place` / #3 の `record_judge_failure`)が `spawn_fail_count` / `judge_attempt_count` を進めながら記録するものである。
+
+`record_tool_failure(FailureKind::SpawnFail, ..)` は型として書けてしまい、書けた場合は `attempt_count` を進めつつ `SpawnFail` の失敗要因を残す — カウンタと失敗種別が食い違った帳簿が生まれ、`applicable_retry_limit` の併記(ADR-014)が実態と合わなくなる。
+
+### Decision
+
+`ToolFailureKind`(`WorktreeCreate | WorktreeRemove | ArchiveMove`)を新設し、`record_tool_failure` の引数をこれに絞る。帳簿に残す `FailureKind` への写像はドメイン内部(`ToolFailureKind::recorded`、`pub(super)`)に閉じ、呼び出し側は写像を知らない。永続化される値としての `FailureKind` は5値のまま変えない — タスクファイルの直列化形式と `FailureNote::kind()` の読み取り口は spec のとおり。
+
+spec の表記から逸脱するが、CLAUDE.md の「不正な状態を型で表現不能にする」を優先する。spec 側は「`kind` はツール操作の3種に限る」の追従提起として残す。
+
+### Consequences
+
+- 良い点: カウンタと失敗種別が食い違う帳簿が型として書けなくなる。#6 の手続きB(`WorktreeRemove` / `ArchiveMove`)も同じ入口を使う。
+- トレードオフ: 失敗種別の型が2つになる(永続化される `FailureKind` と、遷移の入口の `ToolFailureKind`)。写像はドメイン内部の1関数に閉じており、外からは見えない。
+- トレードオフ: spec/domains/task.md の遷移表と引数型が一致しない。spec 追従の提起に積む。
+
+---
+
+## ADR-088: `TransitionError` は分類だけを持ち、文言は `cli::render` が組み立てる
+
+### Status
+
+Proposed
+
+### Context
+
+`TransitionError::InvalidState` の `expected` には `"pending | failed"` という表示用の文字列が入り、`InvariantViolated { message: String }` は日本語の完成文をドメインが作っていた。ADR-073 は同じ tick の報告について「文言は CLI 層で組み立てる」と決め、`TickIssue` / `InconsistentRunFiles` からは完成文言を外している。
+
+`TemplateError::describe` 系(ADR-082)は「タスクファイルに失敗要因として永続化される」という why が付くので別扱いだが、`TransitionError` は永続化されず表示にしか使われないため、その why が効かない。
+
+選択肢:
+
+1. 検査をドメインに残し、分類だけを持たせて文言を `cli::render` に寄せる
+2. 前提の検査を呼び出し側に移し、`TransitionError` から該当の変種を落とす
+
+### Decision
+
+1 を採る。前提の検査はドメインに残す — 遷移関数を全域に保つことは「不正な状態を型で表現不能にする」の一部で、呼び出し側の規律に依存させると手動修復で破れた帳簿がドメインを素通りする。
+
+そのうえで完成文言をドメインから落とす。`InvalidState.expected` は `&'static [ExecutionStateKind]`(前提として受理される実行状態そのもの)にし、`InvariantViolated { message: String }` は破れの種別を表す `MissingCurrentAttempt` に置き換える。`cli::render` が `ExecutionStateKind::as_str()` を連結して `"pending | failed"` を組み立て、`MissingCurrentAttempt` の説明文も持つ。
+
+2 を採らない理由: 前提の検査が呼び出し側に散り、手続きが増えるたびに検査の書き漏れが起こりうる。
+
+### Consequences
+
+- 良い点: `TickIssue` / `InconsistentRunFiles` と同じ規則(表示専用のエラーは分類だけを持つ)がドメインのエラー型にも通る。表示の変更がドメインに触れずに済む。
+- 良い点: `expected` がデータになり、前提の実行状態を足しても文言が自動で追随する。
+- トレードオフ: spec/domains/task.md のエラー型定義(`expected: &'static str` / `InvariantViolated { message: String }`)と一致しない。spec 追従の提起に積む。
+- `TransitionError::MissingCurrentAttempt` と `TickIssue::MissingCurrentAttempt` は同じ事実の別文脈での報告になる(手続きCは観測前に検出し、遷移関数は前提として検査する)。どちらも分類なので、文言の重複は `cli::render` の中だけに閉じる。
+
+---
+
+## ADR-089: 凍結の判定は保存後の状態から導出せず、遷移を呼んだ側から渡す
+
+### Status
+
+Proposed
+
+### Context
+
+`commit` は「保存した結果の実行状態が `Stopped` であること」で `frozen` への集計を決めていた。`frozen` の語義は spec の出力DTO のとおり「このtickで凍結した」である。
+
+ADR-066 は「#3 は共通手続き notify の呼び出しをこの関数の中に足すだけでよい」と設計しているが、共通手続き notify のステップ4 は `mark_notified(now)` → `save` であり、保存対象は `Stopped { notified_at: Some(..) }` のままである。この保存が `commit` を通ると、何tick も前に凍結したタスクが通知に成功したtickで毎回 `frozen` に載る。spec 手順7(`Stopped` アーム)の catch-up 通知も同じ経路を通る。
+
+### Decision
+
+`commit(&task, freeze, summary)` の形にし、凍結かどうかを呼び出し側から渡す。`Freeze::of_recorded_failure(&task)` は「遷移前が凍結ではない」という前提(記録系3遷移は起動待ち・失敗確定・起動記録済みしか受け付けない)のもとでのみ遷移後の `Stopped` を凍結と同値に扱い、その前提を持たない保存経路は `Freeze::NotFrozen` を渡す。
+
+`commit` は保存と集計の単一地点のまま保つ — #3 の notify も引き続きこの関数の中に足せる(`Freeze::Frozen` の枝で呼ぶ)。catch-up 通知は `Branch::Notify` の保存として `Freeze::NotFrozen` を通り、`frozen` を汚さない。
+
+### Consequences
+
+- 良い点: 凍結が「状態の観測」ではなく「遷移の結果」として表現され、#3 が catch-up 通知を足しても誤集計が起きない。
+- 良い点: 保存経路を足す側が凍結の意味を明示せざるを得ないので、判断が暗黙の導出に戻らない。
+- トレードオフ: `commit` の引数が1つ増える。凍結しうる保存は3経路しかなく、いずれも遷移の直後にあるため判定の重複はない。
+
+---
+
+## ADR-090: 猶予超過の spawn 失敗を独立した分類にし、記録した失敗をスキップと別の見出しで表示する
+
+### Status
+
+Proposed
+
+### Context
+
+`TickIssue::SpawnFailed` は結末の異なる2つの経路を兼ねていた — (a) `spawn_wrapper` の同期エラー(状態不変・`Launching` 維持・カウンタ非消費・猶予経路が後で分類する)と、(b) 猶予超過の再確認で確定した spawn 失敗(`Pending` 復帰・`spawn_fail_count` 加算・上限超過なら凍結)。運用上は「まだ起動中かもしれない」と「起動をあきらめてカウンタを1つ消費した」で次に取る行動が違い、テストが分類だけを主張しても取り違えを検出できない。
+
+同じ問題が表示にもある。`cli::render` は `errors` をすべて「スキップ」の見出しに束ねていたが、`WorktreeCreateFailed` / `CommandExpansionFailed` / 猶予経路の spawn 失敗はタスクファイルに書き込んだ後の報告で、カウンタを消費し上限を超えれば同じtickで凍結する。ADR-084 は「cron 運用ではこの出力が唯一の窓」を根拠に「処理対象なし」の判定を設計しており、その窓が記録した失敗と素通しのスキップを同じ語で束ねていた。
+
+### Decision
+
+猶予超過で確定した spawn 失敗を `TickIssue::SpawnNotObserved` として分ける。`TickIssue::SpawnFailed` は同期エラー専用にする。ADR-086 は記録した失敗を `errors` に載せることを決めただけで、1つの変種に畳むことまでは根拠づけていない。
+
+表示では `errors` を「タスクファイルへの記録を伴うか」で2つの見出しに分ける — `WorktreeCreateFailed` / `CommandExpansionFailed` / `SpawnNotObserved` は「失敗を記録(N件)」、それ以外は「スキップ(N件)」。判別は `cli::render` の網羅 `match` に置き、分類が増えたときに振り分け先を決めないと通らないようにする。
+
+### Consequences
+
+- 良い点: 分類だけで「カウンタを消費したか」が読め、同期エラー側で `record_spawn_failure` を呼ぶような取り違えをテストが検出する。
+- 良い点: 唯一の出力窓で「記録された失敗」と「次tickでそのまま再試行されるスキップ」が読み分けられる。
+- トレードオフ: spec の `errors` の分類が1つ増える。spec 追従の提起に積む。
+- トレードオフ: 見出しが2つになるぶん、両方が埋まるtickの出力が長くなる。どちらも空なら見出しごと出さないので、通常運用では従来と同じ行数になる。

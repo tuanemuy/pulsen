@@ -17,6 +17,32 @@ pub enum FailureKind {
     JudgeFail,
 }
 
+/// ツール操作の失敗種別。
+///
+/// `attempt_count` を進める遷移が受け取る種別を、この3値に閉じる。spawn と判定の失敗は
+/// 専用の遷移が `spawn_fail_count` / `judge_attempt_count` とともに記録するため、
+/// カウンタと失敗種別が食い違った帳簿は型として書けない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFailureKind {
+    /// worktree の作成。
+    WorktreeCreate,
+    /// worktree の削除。
+    WorktreeRemove,
+    /// アーカイブへの移動。
+    ArchiveMove,
+}
+
+impl ToolFailureKind {
+    /// 帳簿に残す失敗種別。
+    pub(super) fn recorded(self) -> FailureKind {
+        match self {
+            Self::WorktreeCreate => FailureKind::WorktreeCreate,
+            Self::WorktreeRemove => FailureKind::WorktreeRemove,
+            Self::ArchiveMove => FailureKind::ArchiveMove,
+        }
+    }
+}
+
 /// 失敗要因の生成失敗。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailureNoteError {
@@ -106,6 +132,17 @@ mod tests {
             FailureNote::parse(FailureKind::SpawnFail, String::new(), at()),
             Err(FailureNoteError::EmptyMessage)
         );
+    }
+
+    #[test]
+    fn ツール操作の失敗種別は対応する失敗種別として記録される() {
+        for (tool, expected) in [
+            (ToolFailureKind::WorktreeCreate, FailureKind::WorktreeCreate),
+            (ToolFailureKind::WorktreeRemove, FailureKind::WorktreeRemove),
+            (ToolFailureKind::ArchiveMove, FailureKind::ArchiveMove),
+        ] {
+            assert_eq!(tool.recorded(), expected, "{tool:?}");
+        }
     }
 
     #[test]

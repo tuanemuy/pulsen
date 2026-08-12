@@ -183,6 +183,31 @@ fn worktree作成の失敗がリトライ上限を超えるとタスクは凍結
 }
 
 #[test]
+fn ワークスペースを確定しただけで終わるtickは存在しない() {
+    let harness = Harness {
+        tasks: repository(vec![task(TASK).entry()]),
+        config: config_with(vec![("other", "other {input}", None)], None),
+        worktrees: ScriptedWorktreeManager::new().with_create([Ok(())]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        harness.saved(TASK).workspace(),
+        Some(&WorkspacePlanner::derive(&worktree_root(), &task_id(TASK))),
+        "ワークスペースは確定して保存される"
+    );
+    assert!(
+        matches!(
+            summary.errors.as_slice(),
+            [TickIssue::CommandExpansionFailed { .. }]
+        ),
+        "書き込んだ tick は必ずサマリーに現れる(ADR-084)"
+    );
+}
+
+#[test]
 fn テンプレート展開の失敗はどの経路でも同期的なspawn失敗として記録される() {
     for (label, harness) in expansion_failures() {
         let summary = harness.completed();

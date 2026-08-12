@@ -13,7 +13,7 @@ use pulsen_domain::task::{
     Clock, ProcessIdent, RunDirPath, StartTimeRecord, Task, TaskId, TaskRepository, Timestamp,
 };
 
-use super::{Persisted, Tick, TickIssue, TickSummary};
+use super::{Freeze, Persisted, Tick, TickIssue, TickSummary};
 
 /// 1回の観測で読んだ run ファイル。
 struct RunFiles {
@@ -105,13 +105,15 @@ where
                     self.config.spawn_fail_limit(),
                     now,
                 ) {
-                    Ok(failed) => match self.commit(&failed, summary) {
-                        Persisted::Saved => summary.errors.push(TickIssue::SpawnFailed {
-                            task_id: id,
-                            message,
-                        }),
-                        Persisted::Failed => {}
-                    },
+                    Ok(failed) => {
+                        match self.commit(&failed, Freeze::of_recorded_failure(&failed), summary) {
+                            Persisted::Saved => summary.errors.push(TickIssue::SpawnNotObserved {
+                                task_id: id,
+                                message,
+                            }),
+                            Persisted::Failed => {}
+                        }
+                    }
                     Err(error) => self.report_transition(id, error, summary),
                 }
             }
@@ -129,7 +131,7 @@ where
     ) {
         let id = task.id().clone();
         match task.confirm_running(ident, now) {
-            Ok(running) => match self.commit(&running, summary) {
+            Ok(running) => match self.commit(&running, Freeze::NotFrozen, summary) {
                 Persisted::Saved => summary.confirmed_running.push(id),
                 Persisted::Failed => {}
             },

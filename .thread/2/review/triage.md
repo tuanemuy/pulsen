@@ -15,8 +15,8 @@
 | `cli/wire.rs:compose_wrapper/依存` | R1 | fix | ラッパーが使わない `current_exe()` の失敗で起動できない（統合元: Use Case / Architecture の同一指摘） | 0 |
 | `adapter/worktree.rs:create/達成済み判定` | R1 | fix | 実体の存在を観測せず git の `prunable` 注記だけに依存し、復旧分岐が開かない環境がある | 0 |
 | `adapter/process.rs:identity(windows)::observe` | R1 | fix | 非終端エラーが「プロセス不在」に畳まれ、ADR-003 の写像表と逆向き。構造だけ直し実機確認は #10 | 0 |
-| `conformance/process_controller.rs:spawn::tc_002/デタッチ性` | R1 | fix | `detach()` を消しても全緑。永続化される `KillIdent` の破れを受け入れテストで止める | 0 |
-| `adapter/process.rs:run_agent/ログ順序` | R1 | fix-editorial | 契約（エージェントを起動しない）は守られており、コメントの主張範囲を実態に合わせる | 0 |
+| `conformance/process_controller.rs:spawn::tc_002/デタッチ性` | R1 | fix | `detach()` を消しても全緑。永続化される `KillIdent` の破れを受け入れテストで止める | 1 |
+| `adapter/process.rs:run_agent/ログ順序` | R1 | fix-editorial | 契約（エージェントを起動しない）は守られており、コメントの主張範囲を実態に合わせる | 1 |
 | `tests/common/mod.rs:LOCK_HOLDER_CASES/スキップID` | R1 | fix | スキップ宣言IDの取り違えがチェックリストの根拠を直接誤らせる | 0 |
 | `conformance_worktree.rs:worktree_present/アサーション` | R1 | fix | `is_dir()` 止まりで `git branch` + `mkdir` の実装でも通る | 0 |
 | `conformance/process_controller.rs:spawn/フック契約` | R1 | fix | 常に `Some(true)` を返すハーネスで3件とも通る。RunStore 側の規律を spawn にも適用する | 0 |
@@ -26,5 +26,28 @@
 | `task/task.rs:execution_kind,is_wait,is_cleanup/未使用pub` | R1 | fix-editorial | AC-4 が要求する問い合わせなので落とさず、why を doc に添える（`execution_kind` は `is_stopped` の修正で呼び出し元がつく） | 0 |
 | `cli/render.rs:push_attempts/到達不能` | R1 | fix | 誰も見たことのない表示が #3 / #6 でそのまま利用者に出る。表示規則を本スライスで確定させる | 0 |
 | `execution/port.rs:read_exit/未使用` | R1 | fix-editorial | モジュール doc の宣言規則の唯一の例外が無説明。doc を1行精密化する | 0 |
+| `adapter/worktree.rs:create/同定の間欠破れ` | R2 | fix | 3つの観測の連言に fail-closed が無く、外れると別ブランチの worktree を掴んだまま `Ok` になる。診断情報も残らない | 0 |
+| `adapter/process.rs:identity(windows)::observe/stderr分岐` | R2 | fix | 終了コードで機構失敗を判定済みなのに stderr 非空で「不在」を `Err(Io)` に畳み、ADR-067 の写像表に無い3本目の分岐になっている | 0 |
+| `adapter/process.rs:identity/default_source` | R2 | fix | 記録と照合の取得手段が PATH の安定性に依存する。既定を絶対パスにする（requirements §4.3） | 0 |
+| `adapter/process.rs:without_self_exe/逸脱の記録` | R2 | fix-editorial | ADR-068 の3引数固定からの逸脱と「この構成は spawn_wrapper の適合契約の外」が記録されていない | 0 |
+| `task/task.rs:is_wait,is_cleanup/whyの記述` | R2 | fix-editorial | R1 で添えた why が挙げる3用途のうち「待機の素通し」は `branch_of` の網羅 `match` が担い、実態と食い違う | 0 |
+| `task/planner.rs:BRANCH_PREFIX/未使用pub` | R2 | fix | 自モジュールと自テストからしか参照されない `pub`。ADR-061 の既定に従って落とす | 0 |
+| `task/task.rs:record_spawn_failure/カバレッジ` | R2 | fix | 6遷移で唯一、前提状態の掃引と他カウンタの保持が主張されていない（AC-5 の網羅要求） | 0 |
+| `task/task.rs:record_tool_failure/kindの絞り込み` | R2 | fix | `SpawnFail` / `JudgeFail` を受理でき、カウンタと失敗種別が食い違う帳簿が型で書ける | 0 |
+| `task/attempt.rs:rehydrate/docのスライス参照` | R2 | fix-editorial | 「新規採番は後続スライスが担う」が、同じファイルの `launching` を未来形で説明する文になっている | 0 |
+| `execution/launching.rs:InconsistentRunFiles/spec追従提起` | R2 | fix-editorial | 決定は ADR-086 にあるが、spec の `message: String` との食い違いが progress.md の提起一覧に無い | 0 |
+| `task/transition.rs:TransitionError/表示文言` | R2 | fix | 永続化されない表示専用のエラーが `"pending \| failed"` と日本語の完成文をドメインに持つ（ADR-073 と不整合） | 0 |
+| `tick/mod.rs:commit/frozenの導出` | R2 | fix | 凍結を「保存後の状態が Stopped」で判定しており、ADR-066 が定めた #3 の拡張点でそのまま誤集計になる。ADR-084 の不変も呼び出し側の規律頼み | 0 |
+| `cli/render.rs:tick_summary/スキップ見出し` | R2 | fix | カウンタを消費した記録済みの失敗が、消費しなかったスキップと同じ見出しに束ねられる | 0 |
+| `tick/mod.rs:TickIssue::SpawnFailed/経路の兼務` | R2 | fix | 同期エラー（状態不変）と猶予超過の確定（カウンタ消費・凍結あり）が同じ分類で、取り違えを分類が止めない | 0 |
+| `tests/tick_scan.rs/未配線アームの否定的主張` | R2 | fix | `Running` / `Completed` / `Stopped` / Pending × `Cleanup` が「起動されない」ことを守るものが目視だけ。否定的主張はスライスをまたいで真 | 0 |
+| `tests/cli_tick.rs/滞留エージェントの空虚合格` | R2 | fix | 滞留 800ms のため負荷次第でラッパー終了後に2回目の tick が走り、FD を継承していても緑になる | 0 |
+| `tests/cli_wrapper.rs/TC-019の値域` | R2 | fix | 境界値の行なのに実バイナリ経路が 0 / 3 / 42 のみで、126 / 127 / 128+n を通していない | 0 |
+| `tests/cli_wrapper.rs/TC-015の合成経路` | R2 | fix | シグナル死の符号化が適合スイートとユニットの2層に分かれ、実バイナリで結線が閉じていない | 0 |
+| `tests/cli_tick.rs/F6の主張` | R2 | fix | 「base から作られたブランチが存在する」という名前に対し、主張が存在の有無まで | 0 |
+| `conformance/HOOKS.md:環境依存表` | R2 | fix-editorial | 28行目の但し書き（003 は表に現れない）と41行目の列挙（003 を含む）が矛盾する | 0 |
+| `steps.md:ステップ19/ADR件数` | R2 | fix-editorial | 「adr.md の14件」とあるが ADR-065〜086 の22件。選別対象が漏れる | 0 |
 
 R1: 新規 24 / fix 20 / fix-editorial 4 / wont-fix 0 / defer 0 / 継承 0
+
+R2: 新規 21 / fix 15 / fix-editorial 6 / wont-fix 0 / defer 0 / 継承 2

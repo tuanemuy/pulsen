@@ -134,7 +134,9 @@ fn 同定情報はstarttimeとpidの両方に記録される() {
 fn エージェントの終了コードはそのままexitファイルに現れる() {
     let program = probe_program();
 
-    for code in [0, 3, 42] {
+    // 126 / 127 / 128+n はラッパー自身が起動不能・コマンド不在・シグナル死に使う符号化値
+    // でもある。エージェントがその値で終わったときも書き換えずに通すことを含める。
+    for code in [0, 3, 42, 126, 127, 134] {
         let launch = Launch::new();
 
         wrapper(launch.run_dir(), launch.workspace())
@@ -144,6 +146,28 @@ fn エージェントの終了コードはそのままexitファイルに現れ�
 
         assert_eq!(launch.exit_code(), code, "exit code {code}");
     }
+}
+
+/// シグナル死の符号化は POSIX 慣例の `128+シグナル番号`。シグナルの概念が無い環境では
+/// 符号化値が「非0」までしか決まらないため、具体値の主張は POSIX に限る。
+#[test]
+fn シグナルで死んだエージェントは非ゼロの符号化値としてexitファイルに現れる() {
+    let program = probe_program();
+    let launch = Launch::new();
+
+    wrapper(launch.run_dir(), launch.workspace())
+        .agent_cmd(probe(&program, &["abort"]))
+        .run()
+        .assert_succeeded();
+
+    assert!(
+        launch.run_dir().join("stdout.log").is_file(),
+        "エージェントは起動されている"
+    );
+    let code = launch.exit_code();
+    assert_ne!(code, 0, "非0で符号化される");
+    #[cfg(unix)]
+    assert_eq!(code, 128 + 6, "SIGABRT で死んだ");
 }
 
 #[test]

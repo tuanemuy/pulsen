@@ -8,12 +8,15 @@ use super::state::ExecutionStateKind;
 ///
 /// 状態間整合の不変条件(2〜4)は手動修復で破られたまま再構築されうるため、遷移関数が
 /// 前提として検査し値で返す。パニックは遷移関数自身が事後条件を破った場合に限る。
+///
+/// この値は永続化されず表示にしか使われないため、分類だけを持ち、利用者に見せる文言は
+/// 表示側が組み立てる(ADR-073)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransitionError {
     /// 前提状態の不一致。
     InvalidState {
-        /// 前提となる実行状態。
-        expected: &'static str,
+        /// 前提として受理される実行状態。
+        expected: &'static [ExecutionStateKind],
         /// 実際の実行状態。
         actual: ExecutionStateKind,
     },
@@ -26,9 +29,6 @@ pub enum TransitionError {
         /// 呼び出し時のタスクステータス。
         status: StatusName,
     },
-    /// 手動修復で破られた不変条件(起動記録済みなのに現在 attempt が無い等)。
-    InvariantViolated {
-        /// 破れの説明。
-        message: String,
-    },
+    /// 手動修復で破られた不変条件2 — 起動記録済みなのに現在 attempt が無い。
+    MissingCurrentAttempt,
 }
