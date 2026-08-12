@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use pulsen::adapter::process;
 use pulsen_conformance::{Restore, SkipBudget};
@@ -30,7 +31,7 @@ const STATE_DIR: &str = "state";
 const PERMISSION_CASES: [&str; 2] = ["tc_task_register_task_016", "tc_task_register_task_021"];
 
 /// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
-const LOCK_HOLDER_CASES: [&str; 1] = ["tc_task_register_task_017"];
+const LOCK_HOLDER_CASES: [&str; 2] = ["tc_task_register_task_017", "tc_exec_tick_016"];
 
 /// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_task_register_task_036"];
@@ -69,6 +70,15 @@ agents:
   claude:
     cmd: claude {input}
 ";
+
+/// 期限つきポーリングの既定の期限。
+///
+/// 負荷の高い環境でも spawn からファイル出現までが収まる余裕を取る。flaky が再発した
+/// ときに動かす起点をこの1箇所にする。
+pub const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 期限つきポーリングの間隔。
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// エージェント実行1件とクリーンアップ1件を持つ定義。
 pub const WORKFLOW: &str = "\
@@ -157,6 +167,78 @@ impl Home {
     /// 現役タスクのディレクトリ。
     pub fn tasks_dir(&self) -> PathBuf {
         self.state_dir().join("tasks")
+    }
+
+    /// アーカイブ済みタスクのディレクトリ。
+    pub fn archive_dir(&self) -> PathBuf {
+        self.state_dir().join("archive")
+    }
+
+    /// run ディレクトリのルート。
+    pub fn runs_dir(&self) -> PathBuf {
+        self.state_dir().join("runs")
+    }
+
+    /// attempt の run ディレクトリ `state/runs/<task-id>/attempt-<n>`。
+    pub fn run_dir(&self, id: &str, attempt: u32) -> PathBuf {
+        self.runs_dir().join(id).join(format!("attempt-{attempt}"))
+    }
+
+    /// worktree のルート。
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.path().join("worktrees")
+    }
+
+    /// タスクの worktree `worktrees/<task-id>`。
+    pub fn worktree(&self, id: &str) -> PathBuf {
+        self.worktrees_dir().join(id)
+    }
+
+    /// 現役タスクファイルのパス。
+    pub fn task_path(&self, id: &str) -> PathBuf {
+        self.tasks_dir().join(format!("{id}.json"))
+    }
+
+    /// ちょうど1件だけ作られたタスクのID。
+    pub fn only_task_id(&self) -> String {
+        self.only_task()["task_id"]
+            .as_str()
+            .expect("タスクIDは文字列である")
+            .to_owned()
+    }
+
+    /// タスクファイルの内容。
+    pub fn task(&self, id: &str) -> Value {
+        let bytes = fs::read(self.task_path(id)).expect("タスクファイルを読める");
+        serde_json::from_slice(&bytes).expect("タスクファイルは JSON である")
+    }
+
+    /// タスクファイルを読み、書き換えて置き直す。
+    ///
+    /// 本スライスの CLI(`add` / `tick`)だけでは作れない前提(失敗確定・破損した
+    /// スナップショット・ワークスペース未確定のまま残った残骸)を作るために使う。
+    /// DTO を組み直さず実物を書き換えるので、直列化形式の知識がテストに漏れない。
+    pub fn patch_task(&self, id: &str, patch: impl FnOnce(&mut Value)) {
+        let mut task = self.task(id);
+        patch(&mut task);
+        let text = serde_json::to_vec_pretty(&task).expect("JSON に符号化できる");
+        fs::write(self.task_path(id), text).expect("タスクファイルを書ける");
+    }
+
+    /// 任意の内容のファイルを現役タスクの置き場に置く(パース不能なファイルを混ぜる)。
+    pub fn write_raw_task(&self, id: &str, text: &str) -> PathBuf {
+        fs::create_dir_all(self.tasks_dir()).expect("置き場を作れる");
+        let path = self.task_path(id);
+        fs::write(&path, text).expect("タスクファイルを書ける");
+        path
+    }
+
+    /// タスクファイルをアーカイブへ直接移す(走査対象から外れることの観測に使う)。
+    pub fn move_task_to_archive(&self, id: &str) -> PathBuf {
+        fs::create_dir_all(self.archive_dir()).expect("アーカイブの置き場を作れる");
+        let to = self.archive_dir().join(format!("{id}.json"));
+        fs::rename(self.task_path(id), &to).expect("アーカイブへ移せる");
+        to
     }
 
     /// 排他ロックのパス。
@@ -439,6 +521,118 @@ impl Add {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
+    }
+}
+
+/// `pulsen tick` の1回の実行。
+pub struct Tick {
+    home_flag: Option<OsString>,
+    cwd: Option<PathBuf>,
+}
+
+/// `pulsen tick` を組み立てる。
+pub fn tick() -> Tick {
+    Tick {
+        home_flag: None,
+        cwd: None,
+    }
+}
+
+impl Tick {
+    /// `--home` フラグを付ける。
+    pub fn home(mut self, path: &Path) -> Self {
+        self.home_flag = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// 起動時のカレントディレクトリ。
+    ///
+    /// tick は外部スケジューラーから任意の作業ディレクトリで起動される。帳簿がすべて
+    /// 絶対パスで閉じていれば、対象リポジトリの外から起動しても結果は変わらない。
+    pub fn cwd(mut self, dir: &Path) -> Self {
+        self.cwd = Some(dir.to_path_buf());
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        let sandbox = detached_home(&mut command);
+        if let Some(dir) = self.cwd {
+            command.current_dir(dir);
+        }
+        if let Some(home) = self.home_flag {
+            command.arg("--home").arg(home);
+        }
+        command.arg("tick");
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+}
+
+/// テスト用エージェントを `probe` として定義したグローバル設定。
+///
+/// 実在するエージェント(`claude` 等)に依存せずに起動経路を通すためのフィクスチャ。
+/// `cmd` は配列形式で組む — 実行ファイルのパスに空白が入っても壊れない。
+pub fn probe_config(program: &Path, mode: &[&str]) -> String {
+    let mut text = String::from("agents:\n  probe:\n    cmd:\n");
+    text.push_str(&format!(
+        "      - {}\n",
+        yaml_scalar(&program.display().to_string())
+    ));
+    for token in mode {
+        text.push_str(&format!("      - {}\n", yaml_scalar(token)));
+    }
+    text
+}
+
+/// YAML のダブルクォート表記(パスやプレースホルダをそのまま1トークンにする)。
+fn yaml_scalar(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// `probe` エージェントを使うワークフロー定義。
+pub const PROBE_WORKFLOW: &str = "\
+agent: probe
+initial: queued
+statuses:
+  queued:
+    prompt: 実装して
+    next: done
+  done:
+    run: cleanup
+";
+
+/// 条件が満たされるまで期限つきでポーリングする。
+///
+/// **待ち条件はこれから観測する成果物そのものに立てる。** ラッパーの書き込み順序は
+/// starttime → pid →(マーカー確認)→ ログ生成 → exit なので、pid の出現はログや `exit`
+/// の存在を含意しない。pid だけを待って直後にログを assert すると、負荷の高い環境で
+/// 落ちる(期限を伸ばしても直らない種類の失敗になる)。
+///
+/// タイムアウトは「何が現れなかったか」と観測先の一覧を添えて落とす — cron 実行の
+/// 調査可能性と同じ理由で、待ち合わせの失敗も原因が読み取れる形で報告する。
+pub fn wait_until(expected: &str, observed: &Path, condition: impl Fn() -> bool) {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    loop {
+        if condition() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "{:?} 以内に{expected}が現れなかった。{} の内容: {:?}",
+                WAIT_TIMEOUT,
+                observed.display(),
+                listed_entries(observed)
+            );
+        }
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 

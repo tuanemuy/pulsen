@@ -8,7 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use pulsen_domain::definition::{ConfigLoadError, ConfigStore, GlobalConfig};
-use pulsen_domain::task::{AbsolutePathError, RunDirPath};
+use pulsen_domain::task::{AbsolutePathError, RunDirPath, StateRoot, WorktreeRoot};
 
 use crate::adapter::clock::SystemClock;
 use crate::adapter::config_store::FsConfigStore;
@@ -79,11 +79,14 @@ pub enum WireError {
 /// 結線済みのアダプターと、起動時に読み込んだグローバル設定。
 pub struct Runtime {
     config: GlobalConfig,
+    state_root: StateRoot,
+    worktree_root: WorktreeRoot,
     workflows: FsWorkflowStore,
     worktrees: GitCliWorktreeManager,
     ids: DefaultTaskIdGenerator<SystemClock>,
     clock: SystemClock,
     tasks: FsTaskRepository,
+    runs: FsRunStore,
     lock: FileExclusiveLock,
 }
 
@@ -91,6 +94,21 @@ impl Runtime {
     /// 読み込み済みのグローバル設定。
     pub fn config(&self) -> &GlobalConfig {
         &self.config
+    }
+
+    /// 状態のルート。
+    ///
+    /// tick は run ディレクトリのパスをここから決定的に導出する。導出はドメイン
+    /// (`RunDirPath::derive`)が行うため、合成ルートはルートの値だけを渡す。
+    pub fn state_root(&self) -> &StateRoot {
+        &self.state_root
+    }
+
+    /// worktree のルート。
+    ///
+    /// tick はタスクIDからワークスペースを導出する(`WorkspacePlanner::derive`)。
+    pub fn worktree_root(&self) -> &WorktreeRoot {
+        &self.worktree_root
     }
 
     /// ワークフロー定義のストア。
@@ -116,6 +134,11 @@ impl Runtime {
     /// タスクの永続化。
     pub fn tasks(&self) -> &FsTaskRepository {
         &self.tasks
+    }
+
+    /// run ディレクトリの読み書き。
+    pub fn runs(&self) -> &FsRunStore {
+        &self.runs
     }
 
     /// 排他ロック。
@@ -160,7 +183,10 @@ pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
         ids,
         clock: SystemClock::new(),
         tasks: FsTaskRepository::new(home.state_root().clone()),
+        runs: FsRunStore::new(home.state_root().clone()),
         lock: FileExclusiveLock::new(home.lock_path()),
+        state_root: home.state_root().clone(),
+        worktree_root: home.worktree_root().clone(),
         config,
     })
 }

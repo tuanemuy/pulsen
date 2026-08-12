@@ -50,11 +50,14 @@ fn helpの表示は0で終わり標準出力に出る() {
 }
 
 #[test]
-fn 利用者向けに提供するサブコマンドはタスク登録だけである() {
+fn 利用者向けに提供するサブコマンドはタスク登録とtickだけである() {
     let run = run_cli(&["--help"]);
     run.assert_succeeded();
 
-    assert_eq!(subcommands(&run.stdout), vec!["add", BUILTIN_SUBCOMMAND]);
+    assert_eq!(
+        subcommands(&run.stdout),
+        vec!["add", "tick", BUILTIN_SUBCOMMAND]
+    );
 }
 
 #[test]

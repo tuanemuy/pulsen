@@ -76,11 +76,40 @@ pub enum TemplateError {
     },
 }
 
+impl TemplateError {
+    /// 不備の説明。
+    ///
+    /// 登録時の案内と、起動時の展開失敗としてタスクファイルに残る失敗要因の両方に載る。
+    /// 説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::UnknownPlaceholder { token, name } => {
+                format!("`{token}` は使えないプレースホルダ `{name}` を参照しています")
+            }
+            Self::MalformedBrace { token } => {
+                format!("`{token}` の波括弧が閉じていないか空です")
+            }
+        }
+    }
+}
+
 /// 展開の失敗。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpansionError {
     /// テンプレートが参照するプレースホルダに値がない。
     MissingValue(Placeholder),
+}
+
+impl ExpansionError {
+    /// 失敗の説明。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::MissingValue(placeholder) => format!(
+                "テンプレートが参照する `{{{}}}` に与える値がありません",
+                placeholder.as_str()
+            ),
+        }
+    }
 }
 
 /// エージェント実行に与える入力。

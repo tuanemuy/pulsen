@@ -84,6 +84,22 @@ pub fn create_branch(dir: &Path, name: &str) -> Option<()> {
     run(dir, &["branch", name])
 }
 
+/// 新しいブランチにコミットを1つ積み、元のブランチへ戻る。
+///
+/// worktree の登録も実体も無く、ブランチだけがコミットを持って残っている状態を作る
+/// (`worktree remove` / `prune` / 終端処理の後に実際に起こる残骸)。
+pub fn commit_on_new_branch(
+    dir: &Path,
+    branch: &str,
+    base: &str,
+    file_name: &str,
+    content: &str,
+) -> Option<()> {
+    run(dir, &["checkout", "-b", branch, base])?;
+    commit_file(dir, file_name, content)?;
+    run(dir, &["checkout", base])
+}
+
 /// HEAD をブランチから切り離す。
 pub fn detach_head(dir: &Path) -> Option<()> {
     run(dir, &["checkout", "--detach"])

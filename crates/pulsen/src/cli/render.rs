@@ -6,15 +6,19 @@
 use std::path::Path;
 
 use pulsen_domain::definition::{
-    AgentDefError, AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation,
-    TemplateError, WorkflowLoadError, WorkflowParseError, WorkflowStructureError,
+    AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, WorkflowLoadError,
+    WorkflowParseError, WorkflowStructureError,
 };
-use pulsen_domain::execution::TargetError;
-use pulsen_domain::task::{AbsolutePathError, CreateError};
+use pulsen_domain::execution::{RunFileError, TargetError};
+use pulsen_domain::task::{
+    AbsolutePathError, AttemptNumber, CreateError, SaveError, TaskId, TransitionError,
+};
 
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
+use crate::application::tick::{TickError, TickIssue, TickSummary};
 
 use super::add::AddError;
+use super::tick::TickCommandError;
 use super::wire::WireError;
 use super::wrapper::WrapperError;
 
@@ -38,6 +42,162 @@ pub fn add_error(error: &AddError) -> String {
         AddError::Wire(error) => wire_error(error),
         AddError::Register(error) => register_error(error),
     }
+}
+
+/// ロック競合でスキップしたこと。cron 運用でアラートにしないため 0 で終わる。
+pub fn tick_skipped() -> String {
+    "別の操作が実行中のため、今回の tick はスキップしました。".to_owned()
+}
+
+/// tick の結果のサマリー。値の入っている項目だけを並べる。
+pub fn tick_summary(summary: &TickSummary) -> String {
+    if summary.is_empty() {
+        return "処理対象のタスクはありませんでした。".to_owned();
+    }
+
+    let mut out = String::from("tick を実行しました。\n");
+    push_ids(&mut out, "起動", &summary.launched);
+    push_ids(&mut out, "遷移", &summary.transitioned);
+    push_ids(&mut out, "実行待ちへ復帰", &summary.skipped_back);
+    push_ids(&mut out, "凍結", &summary.frozen);
+    push_ids(&mut out, "通知", &summary.notified);
+    push_ids(&mut out, "終端処理", &summary.archived);
+    push_attempts(&mut out, "gcで削除", &summary.gc_deleted);
+    push_attempts(&mut out, "gcで削除できず", &summary.gc_errors);
+
+    if !summary.errors.is_empty() {
+        out.push_str(&format!("  スキップ({}件):\n", summary.errors.len()));
+        for issue in &summary.errors {
+            out.push_str("    - ");
+            out.push_str(&tick_issue(issue));
+            out.push('\n');
+        }
+    }
+
+    out.trim_end().to_owned()
+}
+
+/// `tick` の失敗。
+pub fn tick_error(error: &TickCommandError) -> String {
+    match error {
+        TickCommandError::Wire(error) => wire_error(error),
+        TickCommandError::Tick(TickError::LockFailed { message }) => {
+            problem("排他ロックを扱えません。", &[format!("原因: {message}")])
+        }
+        TickCommandError::Tick(TickError::Scan { message }) => problem(
+            "タスクを走査できません。",
+            &[
+                format!("原因: {message}"),
+                "状態は変更していません。".to_owned(),
+            ],
+        ),
+    }
+}
+
+/// スキップしたタスク1件の理由。タスクID(または対象のパス)と原因が読み取れる形にする。
+fn tick_issue(issue: &TickIssue) -> String {
+    match issue {
+        TickIssue::CorruptTaskFile { path, message } => {
+            format!("{}: タスクファイルを読めません({message})", path.display())
+        }
+        TickIssue::SnapshotUnreadable { task_id, message } => format!(
+            "{}: 埋め込まれたワークフロー定義を読めません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::MissingCurrentAttempt { task_id } => format!(
+            "{}: 起動記録済みですが現在 attempt がありません(タスクファイルの修復が必要です)",
+            task_id.as_str()
+        ),
+        TickIssue::Transition { task_id, error } => format!(
+            "{}: 遷移の前提が成立しません({})",
+            task_id.as_str(),
+            transition_error(error)
+        ),
+        TickIssue::RunFileUnreadable { task_id, error } => format!(
+            "{}: runディレクトリのファイルを読めません({})",
+            task_id.as_str(),
+            run_file_error(error)
+        ),
+        TickIssue::InconsistentRunFiles { task_id, message } => {
+            format!("{}: {message}", task_id.as_str())
+        }
+        TickIssue::MarkerWriteFailed { task_id, message } => format!(
+            "{}: 無効化マーカーを書けません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::PrepareAttemptFailed { task_id, message } => format!(
+            "{}: attempt の runディレクトリを用意できません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::SpawnFailed { task_id, message } => {
+            format!("{}: ラッパーを起動できません({message})", task_id.as_str())
+        }
+        TickIssue::SaveFailed { task_id, error } => format!(
+            "{}: タスクファイルを保存できません({})",
+            task_id.as_str(),
+            save_error(error)
+        ),
+    }
+}
+
+/// 遷移の前提の破れ。修復は人間に委ねるため、破れた前提そのものを示す。
+fn transition_error(error: &TransitionError) -> String {
+    match error {
+        TransitionError::InvalidState { expected, actual } => {
+            format!("実行状態が {} ではなく {}", expected, actual.as_str())
+        }
+        TransitionError::WorkspaceAlreadySet => "ワークスペースが確定済み".to_owned(),
+        TransitionError::WorkspaceNotSet => "ワークスペースが未確定".to_owned(),
+        TransitionError::NotAgentRunStatus { status } => format!(
+            "ステータス `{}` はエージェント実行ではない",
+            status.as_str()
+        ),
+        TransitionError::InvariantViolated { message } => message.clone(),
+    }
+}
+
+/// run ファイルの読み取りの失敗。
+fn run_file_error(error: &RunFileError) -> String {
+    match error {
+        RunFileError::Corrupt { path, message } => {
+            format!("{} を解釈できない: {message}", path.display())
+        }
+        RunFileError::Io { message } => message.clone(),
+    }
+}
+
+/// タスクファイルの保存の失敗。
+fn save_error(error: &SaveError) -> String {
+    match error {
+        SaveError::NotFound => "現役のタスクとして存在しない".to_owned(),
+        SaveError::Io { message } => message.clone(),
+    }
+}
+
+/// タスクIDの並ぶ項目行。空なら行ごと出さない。
+fn push_ids(out: &mut String, label: &str, ids: &[TaskId]) {
+    if ids.is_empty() {
+        return;
+    }
+    let ids = ids
+        .iter()
+        .map(TaskId::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    push_field(out, label, &ids);
+}
+
+/// attempt の並ぶ項目行。空なら行ごと出さない。
+fn push_attempts(out: &mut String, label: &str, attempts: &[(String, AttemptNumber)]) {
+    if attempts.is_empty() {
+        return;
+    }
+    let attempts = attempts
+        .iter()
+        .map(|(dir, number)| format!("{dir}/attempt-{}", number.get()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    push_field(out, label, &attempts);
 }
 
 /// `wrapper` の失敗。
@@ -316,7 +476,7 @@ fn registration_error(error: &RegistrationError) -> Vec<String> {
         RegistrationError::InvalidAgentDefinition { agent, error } => vec![format!(
             "エージェント `{}` の定義が不正です: {}",
             agent.as_str(),
-            agent_def_error(error)
+            error.describe()
         )],
         RegistrationError::MissingSkillInput { status, agent } => vec![format!(
             "ステータス `{}` は skill を使いますが、エージェント `{}` に skill_input がありません。",
@@ -341,29 +501,6 @@ fn agent_names(defined: &[AgentName]) -> String {
         .map(AgentName::as_str)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// エージェント定義の内容検証の失敗。
-fn agent_def_error(error: &AgentDefError) -> String {
-    match error {
-        AgentDefError::InvalidCmd(error) => format!("cmd の{}", template_error(error)),
-        AgentDefError::InvalidSkillInput(error) => {
-            format!("skill_input の{}", template_error(error))
-        }
-        AgentDefError::MissingSkillInput => "skill_input がありません".to_owned(),
-    }
-}
-
-/// テンプレートの不備。
-fn template_error(error: &TemplateError) -> String {
-    match error {
-        TemplateError::UnknownPlaceholder { token, name } => {
-            format!("`{token}` は使えないプレースホルダ `{name}` を参照しています")
-        }
-        TemplateError::MalformedBrace { token } => {
-            format!("`{token}` の波括弧が閉じていないか空です")
-        }
-    }
 }
 
 /// テキスト上の位置。
@@ -405,6 +542,10 @@ mod tests {
 
     fn register(error: RegisterTaskError) -> String {
         add_error(&AddError::Register(error))
+    }
+
+    fn task(id: &str) -> TaskId {
+        TaskId::parse(id.to_owned()).expect("受理される")
     }
 
     #[test]
@@ -678,6 +819,73 @@ mod tests {
                 CommandError::Empty.describe()
             )
         );
+    }
+
+    #[test]
+    fn 処理対象がなければその旨だけを表示する() {
+        assert_eq!(
+            tick_summary(&TickSummary::default()),
+            "処理対象のタスクはありませんでした。"
+        );
+    }
+
+    #[test]
+    fn サマリーは値の入っている項目だけを並べる() {
+        let summary = TickSummary {
+            launched: vec![task("20260812t101112-abcd1234")],
+            frozen: vec![task("20260812t101112-efgh5678")],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             起動: 20260812t101112-abcd1234\n  \
+             凍結: 20260812t101112-efgh5678"
+        );
+    }
+
+    #[test]
+    fn スキップしたタスクは件数と原因つきで並ぶ() {
+        let summary = TickSummary {
+            errors: vec![
+                TickIssue::CorruptTaskFile {
+                    path: PathBuf::from("/home/u/.pulsen/state/tasks/broken.json"),
+                    message: "JSON として読めない".to_owned(),
+                },
+                TickIssue::SpawnFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    message: "自身のバイナリを起動できない".to_owned(),
+                },
+            ],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             スキップ(2件):\n    \
+             - /home/u/.pulsen/state/tasks/broken.json: タスクファイルを読めません\
+             (JSON として読めない)\n    \
+             - 20260812t101112-abcd1234: ラッパーを起動できません(自身のバイナリを起動できない)"
+        );
+    }
+
+    #[test]
+    fn 走査自体の失敗は状態を変更していないことを添えて案内される() {
+        assert_eq!(
+            tick_error(&TickCommandError::Tick(TickError::Scan {
+                message: "タスクの置き場を読めない".to_owned(),
+            })),
+            "エラー: タスクを走査できません。\n  \
+             原因: タスクの置き場を読めない\n  \
+             状態は変更していません。"
+        );
+    }
+
+    #[test]
+    fn ロック競合のスキップは失敗として案内しない() {
+        assert!(!tick_skipped().starts_with("エラー"));
     }
 
     #[test]
