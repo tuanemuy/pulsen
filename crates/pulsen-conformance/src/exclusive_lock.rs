@@ -40,35 +40,23 @@ pub fn tc_port_exclusive_lock_001_誰も保持していなければ取得でき�
     CaseOutcome::Ran
 }
 
-pub fn tc_port_exclusive_lock_002_別プロセスの保持中は取得できない(
-    harness: &impl ExclusiveLockHarness,
-) -> CaseOutcome {
-    let holder = require!(harness.hold_from_other_process());
-
-    let acquired = harness.lock().try_acquire();
-
-    assert!(
-        matches!(acquired, Ok(None)),
-        "競合はエラーではなく取得できなかったこととして返る"
-    );
-    assert!(harness.release_holder(holder).is_some(), "保持を解放できる");
-    CaseOutcome::Ran
-}
-
-/// 取得の試行を別スレッドに置き、期限の監視をこのスレッドに残す。
+/// 保持中の取得を別スレッドで試み、期限の監視をこのスレッドに残す。
 ///
-/// 同じスレッドで経過時間を測ると、解放を待つ実装では `try_acquire` が返るまで判定に
-/// 到達せず、ケースが名指しする失敗モードでハングする。期限を超えたら先に保持を解放して
-/// 試行を返らせ、待ったことを失敗として報告する。`Lock: Sync` はこの1ケースだけの要求で、
-/// ハーネス全体には課さない(ADR-060)。
-pub fn tc_port_exclusive_lock_003_保持中の取得は待たずに返る<Harness>(
+/// 同じスレッドで試みると、解放を待つ実装では `try_acquire` が返るまで判定に到達せず、
+/// スイート全体がハングする。期限を超えたら先に保持を解放して試行を返らせ、待ったことを
+/// 呼び出し側へ返す。`Lock: Sync` はこの経路を通るケースだけの要求で、ハーネス全体には
+/// 課さない(ADR-060)。
+///
+/// 戻り値の `Option<Holder>` は、期限内に返って保持が続いている場合だけ `Some`。
+fn attempt_while_held<Harness>(
     harness: &Harness,
-) -> CaseOutcome
+    holder: Harness::Holder,
+) -> (Attempt, bool, Option<Harness::Holder>)
 where
     Harness: ExclusiveLockHarness,
     Harness::Lock: Sync,
 {
-    let mut holder = Some(require!(harness.hold_from_other_process()));
+    let mut holder = Some(holder);
     let lock = harness.lock();
     let returned = AtomicBool::new(false);
 
@@ -98,6 +86,44 @@ where
             waited,
         )
     });
+
+    (attempt, waited, holder)
+}
+
+pub fn tc_port_exclusive_lock_002_別プロセスの保持中は取得できない<Harness>(
+    harness: &Harness,
+) -> CaseOutcome
+where
+    Harness: ExclusiveLockHarness,
+    Harness::Lock: Sync,
+{
+    let holder = require!(harness.hold_from_other_process());
+
+    let (attempt, waited, holder) = attempt_while_held(harness, holder);
+
+    assert!(!waited, "競合した取得が期限内に返る");
+    match attempt {
+        Attempt::Contended => {}
+        Attempt::Acquired => panic!("保持中のロックが取得できた"),
+        Attempt::Failed(message) => {
+            panic!("競合はエラーではなく取得できなかったこととして返る: {message}")
+        }
+    }
+    let holder = holder.expect("期限内に返ったので保持は続いている");
+    assert!(harness.release_holder(holder).is_some(), "保持を解放できる");
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_exclusive_lock_003_保持中の取得は待たずに返る<Harness>(
+    harness: &Harness,
+) -> CaseOutcome
+where
+    Harness: ExclusiveLockHarness,
+    Harness::Lock: Sync,
+{
+    let holder = require!(harness.hold_from_other_process());
+
+    let (attempt, waited, holder) = attempt_while_held(harness, holder);
 
     assert!(!waited, "保持の解放を待たずに返る");
     match attempt {

@@ -9,9 +9,14 @@
 **Blocker 0 / Warning 2**。製品コード（ドメイン・アダプター・アプリケーション・CLI）に残る欠陥はゼロで、AC-1〜AC-20 は全件合格。指摘2件はいずれも**適合スイートを後続スライスの別実装に当てたときにだけ効く層**の問題である。
 
 - W-001: 適合ケース TC-port-exclusive-lock-002 に期限が無く、「解放を待つ」実装に当てるとテストバイナリ全体がハングする（実測300秒で返らず）。ADR-060 が TC-003 で解いた失敗モードの取りこぼし。
-- W-002: 出荷ドキュメント `HOOKS.md` の表が5周目の修正に追いついていない。**作業ツリー（未コミット）には既にこの修正が入っている**ため、コミットすれば解消する。
+- W-002: 出荷ドキュメント `HOOKS.md` の表が5周目の修正に追いついていない。**レビュー実施中のコミット `4ed6866` で解消済み**（下記「レビュー中のリポジトリ状態の変化」）。
 
-なお、レビュー中に**別セッションが同一リポジトリで並行作業しており**、`crates/pulsen-conformance/HOOKS.md` / `.thread/1/progress.md` / `.thread/1/review/triage.md` の3件が未コミットの変更として作業ツリーに出ている。本レビューの判定は HEAD `70e0c66` に対するもの。
+### レビュー中のリポジトリ状態の変化
+
+本レビューは HEAD `70e0c66` に対して行ったが、実施中に並行作業のコミット `4ed6866`（`fix: レビュー6周目の指摘とフィクスチャのハングを修正`）が入った。差分を確認した結果は次のとおり。
+
+- **W-002 は `4ed6866` で解消**。`HOOKS.md` の「環境で走らなくなりうる行」に ExclusiveLock の4行と ExclusiveLock 節への導線が入り、`.thread/1/progress.md` にも同じ記録が足された。
+- **W-001 は `4ed6866` でも未解消**。同コミットが直したのは `crates/pulsen/tests/common/lock.rs` の**合図待ち**（`read_line` に 10 秒の期限）で、これは W-001 の提案の「付随して」の側である。核心である `crates/pulsen-conformance/src/exclusive_lock.rs:43-56` の TC-002 は**一字も変わっておらず**、呼び出しスレッドで `harness.lock().try_acquire()` を呼び `release_holder` をその後ろに置く形のまま。合図待ちの期限は、保持プロセスの起動が**成功した後**に `try_acquire` が解放を待って返らない経路には効かない（デッドロックは合図の受信後に始まる）。**W-001 は依然として有効**。
 
 ## Blockers
 
@@ -26,12 +31,12 @@
   - 影響の範囲: 現行の `FileExclusiveLock` は `try_lock` を使っており適合しているため、本 PR のテストは緑のまま。効くのは AC-8 が約束する「後続スライスの別実装（in-memory・別プラットフォーム）に同じスイートを当てる」場面で、そこでは診断の無いタイムアウトになる。2周目 R2-W-026（TC-003 のハング）・3周目 R3-W-002（TC-042/044 のハング）と同じ失敗モードの、最後の1箇所。
   - 提案: TC-003 の `thread::scope` + 期限監視を共通ヘルパー（例 `fn attempt_within(lock: &impl ExclusiveLock, limit: Duration) -> Option<Attempt>`）に括り出し、TC-002 も経由させる。`Harness::Lock: Sync` の要求が TC-002 にも広がるが、`FileExclusiveLockHarness` は既に TC-003 のために同じ境界を満たしているのでハーネス側の負担は増えない（ADR-060 の「この1ケースだけの要求」を2ケースへ広げる形になるため、ADR-060 の記述も併せて更新する）。付随して `crates/pulsen/tests/common/lock.rs:36` の `read_line` も期限を持たないので、同じ経路として見ておくとよい。
 
-- **[W-002]** `HOOKS.md` の「環境で走らなくなりうる行」の表が、5周目に確定した `TC-port-exclusive-lock-002 / 003 / 004 / 005` を載せていない（**作業ツリーでは修正済み・未コミット**）
+- **[W-002]** `HOOKS.md` の「環境で走らなくなりうる行」の表が、5周目に確定した `TC-port-exclusive-lock-002 / 003 / 004 / 005` を載せていない（**レビュー中のコミット `4ed6866` で解消済み**）
   - 場所: `/Users/hikaru/github.com/tuanemuy/pulsen/crates/pulsen-conformance/HOOKS.md:24-38`（節「環境で走らなくなりうる行」）／対比: `/Users/hikaru/github.com/tuanemuy/pulsen/crates/pulsen/tests/conformance_lock.rs:96-118`
   - 理由: この節は「**何が前提を壊すかは行ごとに違う**。…区分 B にも、フックの前提が環境で成立しない行がある。**宣言を組むときはこの表で読む**」と自ら宣言し、区分 B の行としては `TC-port-worktree-manager-003` の1件だけを挙げている。ところが5周目の R5-W-001 で確定したとおり、`TC-port-exclusive-lock-002 / 003 / 004 / 005` も同じ性質の行である — `ExclusiveLockHarness::hold_from_other_process` / `try_acquire_from_other_process` は `common::lock::holder_program()`（`target/debug/examples/lock_holder` の存在）に依存し、**単一テストターゲットを指定した実行では example がビルドされないため `None` を返す**。実際 `conformance_lock.rs:96-118` はこの4件を `holder_program().is_none()` のときだけ許容集合に入れる形で宣言しており、コードは正しい。しかし `HOOKS.md` の当該表は更新されておらず、**表の指示どおりに宣言を組むと4件の許容が漏れ、R5-W-001 が実測した「単体実行で 4 failed」が再発する**。`HOOKS.md` は ADR-055 / AC-8 が「後続スライスが `allowed_skips` を組むときに読む正本」と位置づけた出荷物であり、3周目の R3-W-003 がこの表を新設した趣旨（区分 C の一般化では足りないので行ごとに書く）に照らしても、実装だけが先行して正本が置き去りになっている。
     - 裏取り: `sed -n '24,38p' crates/pulsen-conformance/HOOKS.md` で表の全9行（対象13 ID）を列挙し、`exclusive-lock-002/003/004/005` が1件も無いことを確認。`HOOKS.md:182-192` の ExclusiveLock 節では当該4件はいずれも区分 B・組み立て手段 `hold_from_other_process` として載っているのみで、環境依存の注記は無い。`grep -n holder_program crates/pulsen/tests/` で `conformance_lock.rs:115` と `common/mod.rs:46` の2箇所が同じ述語を使っていることを確認。
   - 提案: 「環境で走らなくなりうる行」の表に1行足す。例: `| TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 別プロセスにロックを保持させる実行ファイルが無い（単一テストターゲット指定の実行では example がビルドされない） | ハーネスが hold_from_other_process / try_acquire_from_other_process を提供するか |`。あわせて `HOOKS.md:182-192` の ExclusiveLock 節の TC-002〜005 の行から当該表へ導けるようにする（`.thread/1/progress.md` の「環境によってスキップされるケース」の表も CLI 側 `TC-task-register-task-017` しか載せていないので、同じ1行を足すと記録が揃う）。コードの変更は不要。
-  - 状況: **本レビューの実施中に、作業ツリーへまさにこの内容の修正が入った**（`git diff -- crates/pulsen-conformance/HOOKS.md` に上記の1行 + ExclusiveLock 節への導線1文、`.thread/1/progress.md` にも1行）。HEAD `70e0c66` には未反映なので指摘としては残すが、コミットすれば解消する。
+  - 状況: **本レビューの実施中にコミット `4ed6866` で解消済み**（上記の1行 + ExclusiveLock 節への導線1文、`.thread/1/progress.md` にも1行）。レビュー対象の HEAD `70e0c66` には未反映だったため指摘として記録する。
 
 ## 検証の記録
 
