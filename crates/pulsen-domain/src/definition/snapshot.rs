@@ -78,6 +78,8 @@ impl WorkflowSnapshot {
 
 #[cfg(test)]
 mod tests {
+    use super::super::name::Prompt;
+    use super::super::template::AgentInput;
     use super::*;
 
     fn status(name: &str) -> StatusName {
@@ -111,11 +113,47 @@ mod tests {
         );
         assert_eq!(snapshot.default_agent(), None);
         assert_eq!(snapshot.default_model(), None);
-        assert_eq!(snapshot.effective_agent(&status("waiting")), None);
-        assert_eq!(snapshot.effective_model(&status("waiting")), None);
+    }
+
+    #[test]
+    fn スナップショットはエージェント実行の実効値の解決も委譲する() {
+        let name = |value: &str| AgentName::parse(value.to_owned()).expect("受理される");
+        let definition = WorkflowDefinition::new(
+            Some(name("claude")),
+            Some(ModelName::parse("sonnet".to_owned()).expect("受理される")),
+            status("queued"),
+            BTreeMap::from([(
+                status("queued"),
+                StatusDefinition::AgentRun {
+                    input: AgentInput::Prompt(
+                        Prompt::parse("実装して".to_owned()).expect("受理される"),
+                    ),
+                    agent: None,
+                    model: None,
+                    timeout: Some(TimeoutSpec::Unlimited),
+                    retries: Some(0),
+                    judge: None,
+                    next: status("queued"),
+                },
+            )]),
+        )
+        .expect("不変条件を満たす");
+        let snapshot = WorkflowSnapshot::rehydrate(definition);
+
         assert_eq!(
-            snapshot.effective_timeout(&status("waiting")),
-            WorkflowDefinition::DEFAULT_TIMEOUT
+            snapshot.effective_agent(&status("queued")),
+            Some(&name("claude"))
         );
+        assert_eq!(
+            snapshot
+                .effective_model(&status("queued"))
+                .map(ModelName::as_str),
+            Some("sonnet")
+        );
+        assert_eq!(
+            snapshot.effective_timeout(&status("queued")),
+            TimeoutSpec::Unlimited
+        );
+        assert_eq!(snapshot.effective_retry_limit(&status("queued")), 0);
     }
 }

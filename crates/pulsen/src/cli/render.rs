@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use pulsen_domain::definition::{
-    AgentDefError, AgentName, ConfigLoadError, NameError, RegistrationError, SourceLocation,
-    TemplateError, WorkflowLoadError, WorkflowParseError,
+    AgentDefError, AgentName, ConfigLoadError, RegistrationError, SourceLocation, TemplateError,
+    WorkflowLoadError, WorkflowParseError,
 };
 use pulsen_domain::execution::TargetError;
 use pulsen_domain::task::{AbsolutePathError, CreateError};
@@ -122,7 +122,10 @@ fn register_error(error: &RegisterTaskError) -> String {
         RegisterTaskError::UndecidableWorkflowName(error) => problem(
             "ワークフロー名を決められません。",
             &[
-                format!("原因: ファイル名から決めた名前が{}", name_predicate(error)),
+                format!(
+                    "原因: ファイル名から決めた名前が使えません({})",
+                    error.describe()
+                ),
                 "定義YAMLの workflow: キーで名前を明示してください。".to_owned(),
             ],
         ),
@@ -326,19 +329,6 @@ fn template_error(error: &TemplateError) -> String {
     }
 }
 
-/// 名前系の生成エラーを、文中に埋める述語形で言い換える。
-///
-/// 制約そのものの説明は `NameError::describe()` が正本で、CLI もそちらを呼ぶ。ここが
-/// 別形を持つのは「ファイル名から決めた名前が〜」のように**文の途中に埋める**用途に
-/// 限られ、`describe()` の文(「空文字列は指定できません」)をそのまま差し込むと日本語が
-/// 壊れるため。制約が増えたときに直す先は `describe()` であり、こちらはその言い換え。
-fn name_predicate(error: &NameError) -> String {
-    match error {
-        NameError::Empty => "空文字列です".to_owned(),
-        NameError::SurroundingWhitespace => "前後に空白を含みます".to_owned(),
-    }
-}
-
 /// テキスト上の位置。
 fn source_location(location: SourceLocation) -> String {
     format!("{}行{}列", location.line, location.column)
@@ -361,4 +351,256 @@ fn push_field(out: &mut String, label: &str, value: &str) {
     out.push_str(": ");
     out.push_str(value);
     out.push('\n');
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use pulsen_domain::definition::{NameError, StatusName, WorkflowName};
+    use pulsen_domain::task::{BranchName, BranchNameError, TaskId};
+
+    use super::*;
+
+    fn wire(error: WireError) -> String {
+        add_error(&AddError::Wire(error))
+    }
+
+    fn register(error: RegisterTaskError) -> String {
+        add_error(&AddError::Register(error))
+    }
+
+    #[test]
+    fn ホームを特定できない場合は指定方法が案内される() {
+        assert_eq!(
+            wire(WireError::HomeUnresolvable),
+            "エラー: グローバルホームを特定できません。\n  \
+             --home か環境変数 PULSEN_HOME でディレクトリを指定してください。"
+        );
+    }
+
+    #[test]
+    fn 使えないホームは指定された値と原因つきで案内される() {
+        assert_eq!(
+            wire(WireError::HomeUnusable {
+                given: PathBuf::from("relative/home"),
+                message: "絶対パスにならない".to_owned(),
+            }),
+            "エラー: 指定されたグローバルホームを使えません。\n  \
+             指定: relative/home\n  \
+             原因: 絶対パスにならない"
+        );
+    }
+
+    #[test]
+    fn カレントディレクトリを取得できない場合は原因が案内される() {
+        assert_eq!(
+            wire(WireError::CurrentDirUnavailable {
+                message: "権限がありません".to_owned(),
+            }),
+            "エラー: カレントディレクトリを取得できません。\n  原因: 権限がありません"
+        );
+    }
+
+    #[test]
+    fn 解決できないリポジトリパスは指定された値と原因つきで案内される() {
+        assert_eq!(
+            wire(WireError::RepoPathUnusable {
+                given: PathBuf::from("repo"),
+                message: "カレントディレクトリを読めない".to_owned(),
+            }),
+            "エラー: --repo のパスを解決できません。\n  \
+             指定: repo\n  \
+             原因: カレントディレクトリを読めない"
+        );
+    }
+
+    #[test]
+    fn 未初期化のホームは解決後のパスと作成すべき設定ファイルつきで案内される() {
+        assert_eq!(
+            wire(WireError::Config {
+                config_path: PathBuf::from("/home/u/.pulsen/config.yaml"),
+                error: ConfigLoadError::NotFound {
+                    home: PathBuf::from("/home/u/.pulsen"),
+                },
+            }),
+            "エラー: グローバルホームが未初期化です。\n  \
+             グローバルホーム: /home/u/.pulsen\n  \
+             グローバル設定 /home/u/.pulsen/config.yaml を作成してください。"
+        );
+    }
+
+    #[test]
+    fn 解釈できないグローバル設定は位置つきで案内される() {
+        assert_eq!(
+            wire(WireError::Config {
+                config_path: PathBuf::from("/home/u/.pulsen/config.yaml"),
+                error: ConfigLoadError::Invalid {
+                    message: "キーが文字列ではありません".to_owned(),
+                    location: Some(SourceLocation { line: 3, column: 5 }),
+                },
+            }),
+            "エラー: グローバル設定を解釈できません。\n  \
+             ファイル: /home/u/.pulsen/config.yaml\n  \
+             原因: キーが文字列ではありません\n  \
+             位置: 3行5列"
+        );
+    }
+
+    #[test]
+    fn 読み込めないグローバル設定はファイルと原因つきで案内される() {
+        assert_eq!(
+            wire(WireError::Config {
+                config_path: PathBuf::from("/home/u/.pulsen/config.yaml"),
+                error: ConfigLoadError::Io {
+                    message: "権限がありません".to_owned(),
+                },
+            }),
+            "エラー: グローバル設定を読み込めません。\n  \
+             ファイル: /home/u/.pulsen/config.yaml\n  \
+             原因: 権限がありません"
+        );
+    }
+
+    #[test]
+    fn タスクidを発行できない場合は原因が案内される() {
+        assert_eq!(
+            wire(WireError::IdGenerator {
+                message: "乱数を取得できない: entropy source unavailable".to_owned(),
+            }),
+            "エラー: タスクIDを発行できません。\n  \
+             原因: 乱数を取得できない: entropy source unavailable"
+        );
+    }
+
+    #[test]
+    fn ロック機構の異常は原因つきで案内される() {
+        assert_eq!(
+            register(RegisterTaskError::LockFailed {
+                message: "ロックファイルを開けない".to_owned(),
+            }),
+            "エラー: 排他ロックを扱えません。\n  原因: ロックファイルを開けない"
+        );
+    }
+
+    #[test]
+    fn 対象の分類を確定できない場合は原因つきで案内される() {
+        assert_eq!(
+            register(RegisterTaskError::Target(TargetError::Failed {
+                message: "git を起動できない".to_owned(),
+            })),
+            "エラー: 対象の検証に失敗しました。\n  原因: git を起動できない"
+        );
+    }
+
+    #[test]
+    fn 相対パスのリポジトリ指定は与えられた値つきで案内される() {
+        assert_eq!(
+            register(RegisterTaskError::InvalidRepoPath(
+                AbsolutePathError::NotAbsolute {
+                    given: PathBuf::from("repo"),
+                }
+            )),
+            "エラー: --repo を絶対パスとして解決できません。\n  指定: repo"
+        );
+    }
+
+    #[test]
+    fn タスクidの再衝突は再実行の案内とともにタスク不作成を伝える() {
+        assert_eq!(
+            register(RegisterTaskError::Create(CreateError::Conflict)),
+            "エラー: タスクIDが再発行後も衝突しました。\n  \
+             時間をおいて再実行してください。タスクは作られていません。"
+        );
+    }
+
+    #[test]
+    fn タスクファイルを作成できない場合は原因が案内される() {
+        assert_eq!(
+            register(RegisterTaskError::Create(CreateError::Io {
+                message: "書き込めません".to_owned(),
+            })),
+            "エラー: タスクファイルを作成できません。\n  原因: 書き込めません"
+        );
+    }
+
+    #[test]
+    fn 名前の制約の説明はドメインの言葉がそのまま出る() {
+        assert_eq!(
+            register(RegisterTaskError::InvalidWorkflowRef(NameError::Empty)),
+            format!(
+                "エラー: --workflow の値が不正です。\n  原因: {}",
+                NameError::Empty.describe()
+            )
+        );
+        assert_eq!(
+            register(RegisterTaskError::UndecidableWorkflowName(
+                NameError::SurroundingWhitespace
+            )),
+            format!(
+                "エラー: ワークフロー名を決められません。\n  \
+                 原因: ファイル名から決めた名前が使えません({})\n  \
+                 定義YAMLの workflow: キーで名前を明示してください。",
+                NameError::SurroundingWhitespace.describe()
+            )
+        );
+        assert_eq!(
+            register(RegisterTaskError::InvalidBaseBranch(
+                BranchNameError::LeadingHyphen
+            )),
+            format!(
+                "エラー: --base の値がブランチ名として不正です。\n  原因: {}",
+                BranchNameError::LeadingHyphen.describe()
+            )
+        );
+    }
+
+    #[test]
+    fn 登録時検証のエラーは全件が並びタスク不作成を伝える() {
+        let text = register(RegisterTaskError::Registration(vec![
+            RegistrationError::UnknownAgent {
+                name: AgentName::parse("missing".to_owned()).expect("受理される"),
+                defined: vec![AgentName::parse("claude".to_owned()).expect("受理される")],
+            },
+            RegistrationError::MissingAgent {
+                status: StatusName::parse("queued".to_owned()).expect("受理される"),
+            },
+        ]));
+
+        assert_eq!(
+            text,
+            "エラー: ワークフロー定義の検証に失敗しました(2件)。\n  \
+             - エージェント `missing` は config.yaml に定義されていません。\n    \
+             定義済みのエージェント: claude\n  \
+             - ステータス `queued`: エージェントが指定されていません(ステータスの agent \
+             かワークフローの agent が要ります)。\n  \
+             タスクは作られていません。"
+        );
+    }
+
+    #[test]
+    fn 登録の成功はタスクidとワークフロー名と解決先を示す() {
+        assert_eq!(
+            registered(&RegisteredTask {
+                task_id: TaskId::parse("20260812t101112-abcd1234".to_owned()).expect("受理される"),
+                workflow_name: WorkflowName::parse("implement".to_owned()).expect("受理される"),
+                resolved_from: PathBuf::from("/home/u/.pulsen/workflows/implement.yaml"),
+            }),
+            "タスクを登録しました。\n  \
+             タスクID: 20260812t101112-abcd1234\n  \
+             ワークフロー: implement\n  \
+             解決先: /home/u/.pulsen/workflows/implement.yaml\n  \
+             次回の tick で実行されます。"
+        );
+    }
+
+    #[test]
+    fn ベースブランチの不在は指定されたブランチ名を示す() {
+        assert_eq!(
+            register(RegisterTaskError::BaseBranchNotFound {
+                branch: BranchName::parse("develop".to_owned()).expect("受理される"),
+            }),
+            "エラー: 指定したベースブランチがリポジトリに存在しません。\n  ブランチ: develop"
+        );
+    }
 }

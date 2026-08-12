@@ -302,17 +302,17 @@ impl TaskParts {
     fn from_dto<Snapshot>(dto: &TaskFileDto<Snapshot>) -> Result<Self, String> {
         Ok(Self {
             id: TaskId::parse(dto.task_id.clone())
-                .map_err(|error| field_error("task_id", &format!("{error:?}")))?,
+                .map_err(|error| field_error("task_id", error.describe()))?,
             workflow_name: WorkflowName::parse(dto.workflow_name.clone())
-                .map_err(|error| field_error("workflow_name", &format!("{error:?}")))?,
+                .map_err(|error| field_error("workflow_name", error.describe()))?,
             target: Target::new(
                 RepoPath::parse(dto.target.repo.clone())
-                    .map_err(|error| field_error("target.repo", &format!("{error:?}")))?,
+                    .map_err(|error| field_error("target.repo", error.describe()))?,
                 BranchName::parse(dto.target.base_branch.clone())
-                    .map_err(|error| field_error("target.base_branch", &format!("{error:?}")))?,
+                    .map_err(|error| field_error("target.base_branch", error.describe()))?,
             ),
             task_status: StatusName::parse(dto.task_status.clone())
-                .map_err(|error| field_error("task_status", &format!("{error:?}")))?,
+                .map_err(|error| field_error("task_status", error.describe()))?,
             execution: execution(&dto.execution)?,
             workspace: dto.workspace.as_ref().map(workspace).transpose()?,
             current_attempt: dto.current_attempt.as_ref().map(attempt).transpose()?,
@@ -365,8 +365,8 @@ fn to_bytes<Snapshot: Serialize>(dto: &TaskFileDto<Snapshot>) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
-fn field_error(location: &str, message: &str) -> String {
-    format!("{location}: {message}")
+fn field_error(location: &str, message: impl AsRef<str>) -> String {
+    format!("{location}: {}", message.as_ref())
 }
 
 fn execution_dto(state: &ExecutionState) -> ExecutionDto {
@@ -519,9 +519,9 @@ fn execution(dto: &ExecutionDto) -> Result<ExecutionState, String> {
 fn workspace(dto: &WorkspaceDto) -> Result<Workspace, String> {
     Ok(Workspace::new(
         WorktreePath::parse(dto.path.clone())
-            .map_err(|error| field_error("workspace.path", &format!("{error:?}")))?,
+            .map_err(|error| field_error("workspace.path", error.describe()))?,
         BranchName::parse(dto.branch.clone())
-            .map_err(|error| field_error("workspace.branch", &format!("{error:?}")))?,
+            .map_err(|error| field_error("workspace.branch", error.describe()))?,
     ))
 }
 
@@ -530,14 +530,11 @@ fn attempt(dto: &AttemptDto) -> Result<AttemptRef, String> {
         Some(process) => Some(ProcessIdent::new(
             Pid::new(process.pid),
             KillIdent::parse(process.kill_ident.clone()).map_err(|error| {
-                field_error("current_attempt.process.kill_ident", &format!("{error:?}"))
+                field_error("current_attempt.process.kill_ident", error.describe())
             })?,
             StartTimeRecord::new(
                 ProcessStartTime::parse(process.starttime.ident.clone()).map_err(|error| {
-                    field_error(
-                        "current_attempt.process.starttime.ident",
-                        &format!("{error:?}"),
-                    )
+                    field_error("current_attempt.process.starttime.ident", error.describe())
                 })?,
                 timestamp(
                     &process.starttime.wall,
@@ -550,9 +547,9 @@ fn attempt(dto: &AttemptDto) -> Result<AttemptRef, String> {
 
     Ok(AttemptRef::rehydrate(
         AttemptNumber::parse(dto.number)
-            .map_err(|error| field_error("current_attempt.number", &format!("{error:?}")))?,
+            .map_err(|error| field_error("current_attempt.number", error.describe()))?,
         RunDirPath::parse(dto.run_dir.clone())
-            .map_err(|error| field_error("current_attempt.run_dir", &format!("{error:?}")))?,
+            .map_err(|error| field_error("current_attempt.run_dir", error.describe()))?,
         process,
     ))
 }
@@ -569,11 +566,11 @@ fn failure(dto: &FailureDto) -> Result<FailureNote, String> {
         dto.message.clone(),
         timestamp(&dto.at, "last_failure.at")?,
     )
-    .map_err(|error| field_error("last_failure", &format!("{error:?}")))
+    .map_err(|error| field_error("last_failure", error.describe()))
 }
 
 fn timestamp(text: &str, location: &str) -> Result<Timestamp, String> {
-    Timestamp::parse_rfc3339(text).map_err(|error| field_error(location, &format!("{error:?}")))
+    Timestamp::parse_rfc3339(text).map_err(|error| field_error(location, error.describe()))
 }
 
 fn decode_snapshot(raw: &RawValue) -> Result<WorkflowSnapshot, String> {
@@ -583,7 +580,7 @@ fn decode_snapshot(raw: &RawValue) -> Result<WorkflowSnapshot, String> {
     for (name, status) in &dto.statuses {
         statuses.insert(
             StatusName::parse(name.clone())
-                .map_err(|error| field_error(&format!("statuses.{name}"), &format!("{error:?}")))?,
+                .map_err(|error| field_error(&format!("statuses.{name}"), error.describe()))?,
             status_definition(name, status)?,
         );
     }
@@ -593,17 +590,17 @@ fn decode_snapshot(raw: &RawValue) -> Result<WorkflowSnapshot, String> {
             .clone()
             .map(AgentName::parse)
             .transpose()
-            .map_err(|error| field_error("default_agent", &format!("{error:?}")))?,
+            .map_err(|error| field_error("default_agent", error.describe()))?,
         dto.default_model
             .clone()
             .map(ModelName::parse)
             .transpose()
-            .map_err(|error| field_error("default_model", &format!("{error:?}")))?,
+            .map_err(|error| field_error("default_model", error.describe()))?,
         StatusName::parse(dto.initial.clone())
-            .map_err(|error| field_error("initial", &format!("{error:?}")))?,
+            .map_err(|error| field_error("initial", error.describe()))?,
         statuses,
     )
-    .map_err(|error| format!("{error:?}"))?;
+    .map_err(|error| error.describe())?;
 
     Ok(WorkflowSnapshot::rehydrate(definition))
 }
@@ -624,36 +621,36 @@ fn status_definition(name: &str, dto: &StatusDto) -> Result<StatusDefinition, St
             input: match input {
                 InputDto::Prompt(prompt) => AgentInput::Prompt(
                     Prompt::parse(prompt.clone())
-                        .map_err(|error| field_error(&location("input"), &format!("{error:?}")))?,
+                        .map_err(|error| field_error(&location("input"), error.describe()))?,
                 ),
                 InputDto::Skill(skill) => AgentInput::Skill(
                     SkillName::parse(skill.clone())
-                        .map_err(|error| field_error(&location("input"), &format!("{error:?}")))?,
+                        .map_err(|error| field_error(&location("input"), error.describe()))?,
                 ),
             },
             agent: agent
                 .clone()
                 .map(AgentName::parse)
                 .transpose()
-                .map_err(|error| field_error(&location("agent"), &format!("{error:?}")))?,
+                .map_err(|error| field_error(&location("agent"), error.describe()))?,
             model: model
                 .clone()
                 .map(ModelName::parse)
                 .transpose()
-                .map_err(|error| field_error(&location("model"), &format!("{error:?}")))?,
+                .map_err(|error| field_error(&location("model"), error.describe()))?,
             timeout: timeout
                 .as_deref()
                 .map(TimeoutSpec::parse)
                 .transpose()
-                .map_err(|error| field_error(&location("timeout"), &format!("{error:?}")))?,
+                .map_err(|error| field_error(&location("timeout"), error.describe()))?,
             retries: *retries,
             judge: judge
                 .clone()
                 .map(PlainCommand::parse_tokens)
                 .transpose()
-                .map_err(|error| field_error(&location("judge"), &format!("{error:?}")))?,
+                .map_err(|error| field_error(&location("judge"), error.describe()))?,
             next: StatusName::parse(next.clone())
-                .map_err(|error| field_error(&location("next"), &format!("{error:?}")))?,
+                .map_err(|error| field_error(&location("next"), error.describe()))?,
         }),
         StatusDto::Wait => Ok(StatusDefinition::Wait),
         StatusDto::Cleanup => Ok(StatusDefinition::Cleanup),
@@ -662,7 +659,8 @@ fn status_definition(name: &str, dto: &StatusDto) -> Result<StatusDefinition, St
 
 #[cfg(test)]
 mod tests {
-    use pulsen_domain::definition::WorkflowDefinition;
+    use pulsen_domain::definition::{NameError, WorkflowDefinition};
+    use pulsen_domain::task::BranchNameError;
 
     use super::*;
 
@@ -770,7 +768,38 @@ mod tests {
         let text =
             encoded(&registered()).replace("\"workspace\":", "\"typo\": 1,\n  \"workspace\":");
 
-        assert!(decode(text.as_bytes()).is_err());
+        let message = decode(text.as_bytes()).expect_err("破損として扱われる");
+        assert!(message.contains("typo"), "{message}");
+    }
+
+    #[test]
+    fn 値の制約の破れは項目名と制約の説明つきで返る() {
+        let text = encoded(&registered())
+            .replace("\"base_branch\": \"main\"", "\"base_branch\": \"-broken\"");
+
+        let message = decode(text.as_bytes()).expect_err("破損として扱われる");
+        assert_eq!(
+            message,
+            format!(
+                "target.base_branch: {}",
+                BranchNameError::LeadingHyphen.describe()
+            )
+        );
+    }
+
+    #[test]
+    fn スナップショットの値の制約の破れは縮退として扱われる() {
+        let text = encoded(&registered()).replace("\"initial\": \"queued\"", "\"initial\": \"\"");
+
+        let degraded = match decode(text.as_bytes()) {
+            Err(message) => panic!("タスク側は読める: {message}"),
+            Ok(TaskRecord::Intact(_)) => panic!("スナップショットが読めなければ縮退になる"),
+            Ok(TaskRecord::SnapshotUnreadable(degraded)) => degraded,
+        };
+        assert_eq!(
+            degraded.snapshot_error(),
+            format!("initial: {}", NameError::Empty.describe())
+        );
     }
 
     #[test]

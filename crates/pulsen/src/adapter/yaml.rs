@@ -314,13 +314,19 @@ mod tests {
     }
 
     #[test]
-    fn 重複キーは構文エラーになる() {
-        let error = parse_document("a: 1\na: 2\n").expect_err("拒否される");
-        assert!(error.message.contains("duplicate"));
+    fn 重複キーは位置つきの構文エラーになる() {
+        assert!(
+            parse_document("a: 1\nb: 2\n").is_ok(),
+            "重複していなければ読める"
+        );
 
+        let error = parse_document("a: 1\na: 2\n").expect_err("拒否される");
+        assert!(error.location.is_some(), "{error:?}");
+
+        // ネストしたマッピングでは、重複したキーが最初に現れた位置が取れる。
         let nested =
             parse_document("agents:\n  claude:\n    cmd: a\n    cmd: b\n").expect_err("拒否される");
-        assert!(nested.message.contains("duplicate"));
+        assert_eq!(nested.location, Some(SourceLocation { line: 3, column: 5 }));
     }
 
     #[test]

@@ -40,6 +40,10 @@ impl FsWorkflowStore {
     ///
     /// 合成ルートが `std::env::current_dir()` を `base_dir` に渡すことで、spec の
     /// 「相対パスはカレントディレクトリから解決される」契約になる。
+    ///
+    /// 前提条件: `base_dir` は絶対パス(ADR-030)。絶対化に使う `std::path::absolute` は
+    /// 引数が相対なら cwd を読むため、この前提が破れると「cwd を読むのは合成ルートの
+    /// 1箇所だけ」がここで破れ、解決結果がプロセス全体の可変状態に左右される。
     pub fn new(workflows_dir: PathBuf, base_dir: PathBuf) -> Self {
         Self {
             workflows_dir,

@@ -87,19 +87,25 @@ fn validate_agent_run(
         return;
     };
     let Some(raw_agent) = config.agent(agent_name) else {
-        errors.push(RegistrationError::UnknownAgent {
-            name: agent_name.clone(),
-            defined: config.agents().keys().cloned().collect(),
-        });
+        push_once(
+            errors,
+            RegistrationError::UnknownAgent {
+                name: agent_name.clone(),
+                defined: config.agents().keys().cloned().collect(),
+            },
+        );
         return;
     };
     let agent = match raw_agent.parse() {
         Ok(agent) => agent,
         Err(error) => {
-            errors.push(RegistrationError::InvalidAgentDefinition {
-                agent: agent_name.clone(),
-                error,
-            });
+            push_once(
+                errors,
+                RegistrationError::InvalidAgentDefinition {
+                    agent: agent_name.clone(),
+                    error,
+                },
+            );
             return;
         }
     };
@@ -123,6 +129,17 @@ fn validate_agent_run(
             status: status.clone(),
             agent: agent_name.clone(),
         });
+    }
+}
+
+/// エージェント単位の誤りを1件だけ積む。
+///
+/// `UnknownAgent` / `InvalidAgentDefinition` はステータスではなくエージェントの誤りで
+/// `status` を持たないため、同じエージェントを複数のステータスが参照すると値まで同一の
+/// エラーになる。同じ案内を参照回数だけ並べても直す先は1つしかない。
+fn push_once(errors: &mut Vec<RegistrationError>, error: RegistrationError) {
+    if !errors.contains(&error) {
+        errors.push(error);
     }
 }
 
@@ -390,6 +407,88 @@ mod tests {
                     agent: agent_name("claude")
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn 同じ未定義エージェントを参照する複数のステータスは1件にまとまる() {
+        let definition = definition(
+            Some(agent_name("missing")),
+            None,
+            vec![
+                ("queued", agent_run(prompt_input(), None)),
+                ("reviewing", agent_run(prompt_input(), None)),
+                ("fixing", agent_run(prompt_input(), None)),
+            ],
+        );
+        assert_eq!(
+            RegistrationValidator::validate(
+                definition,
+                &config(vec![("claude", "claude {input}", None)])
+            ),
+            Err(vec![RegistrationError::UnknownAgent {
+                name: agent_name("missing"),
+                defined: vec![agent_name("claude")]
+            }])
+        );
+    }
+
+    #[test]
+    fn 同じ壊れたエージェント定義を参照する複数のステータスは1件にまとまる() {
+        let definition = definition(
+            Some(agent_name("broken")),
+            None,
+            vec![
+                ("queued", agent_run(prompt_input(), None)),
+                ("reviewing", agent_run(prompt_input(), None)),
+            ],
+        );
+        assert_eq!(
+            RegistrationValidator::validate(
+                definition,
+                &config(vec![("broken", "claude {unknown}", None)])
+            ),
+            Err(vec![RegistrationError::InvalidAgentDefinition {
+                agent: agent_name("broken"),
+                error: AgentDefError::InvalidCmd(TemplateError::UnknownPlaceholder {
+                    token: "{unknown}".to_owned(),
+                    name: "unknown".to_owned()
+                })
+            }])
+        );
+    }
+
+    #[test]
+    fn 別々の未定義エージェントはそれぞれ返る() {
+        let definition = definition(
+            None,
+            None,
+            vec![
+                (
+                    "queued",
+                    agent_run(prompt_input(), Some(agent_name("missing-a"))),
+                ),
+                (
+                    "reviewing",
+                    agent_run(prompt_input(), Some(agent_name("missing-b"))),
+                ),
+            ],
+        );
+        assert_eq!(
+            RegistrationValidator::validate(
+                definition,
+                &config(vec![("claude", "claude {input}", None)])
+            ),
+            Err(vec![
+                RegistrationError::UnknownAgent {
+                    name: agent_name("missing-a"),
+                    defined: vec![agent_name("claude")]
+                },
+                RegistrationError::UnknownAgent {
+                    name: agent_name("missing-b"),
+                    defined: vec![agent_name("claude")]
+                }
+            ])
         );
     }
 

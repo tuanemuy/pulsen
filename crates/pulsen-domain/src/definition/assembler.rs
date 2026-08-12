@@ -222,9 +222,6 @@ impl WorkflowAssembler {
     }
 }
 
-/// エージェント実行ステータスにのみ許されるキー。宣言順に検査する。
-const AGENT_RUN_KEYS: &[&str] = &["agent", "model", "timeout", "retries", "judge", "next"];
-
 /// ステータスが宣言する動作。1つに定まったことを型で表す。
 enum Action {
     Prompt(String),
@@ -329,19 +326,20 @@ fn assemble_run_status(
         }
     };
 
-    let present = [
-        options.agent.is_some(),
-        options.model.is_some(),
-        options.timeout.is_some(),
-        options.retries.is_some(),
-        options.judge.is_some(),
-        options.next.is_some(),
-    ];
-    for (key, is_present) in AGENT_RUN_KEYS.iter().zip(present) {
+    // エージェント実行にのみ許されるキー。案内に出す名前と「書かれているか」を組で並べる
+    // ことで、片方だけ並べ替えても別のキー名が案内される取り違えが起こらない。宣言順に検査する。
+    for (key, is_present) in [
+        ("agent", options.agent.is_some()),
+        ("model", options.model.is_some()),
+        ("timeout", options.timeout.is_some()),
+        ("retries", options.retries.is_some()),
+        ("judge", options.judge.is_some()),
+        ("next", options.next.is_some()),
+    ] {
         if is_present {
             return Err(WorkflowParseError::ForbiddenKey {
                 status: status.to_owned(),
-                key: (*key).to_owned(),
+                key: key.to_owned(),
             });
         }
     }
@@ -572,30 +570,53 @@ mod tests {
     }
 
     #[test]
-    fn 動作種別に無関係なキーは拒否される() {
+    fn 動作種別に無関係なキーは書かれたキー名で拒否される() {
+        let wait = || RawStatusDoc {
+            run: Some("wait".to_owned()),
+            ..RawStatusDoc::default()
+        };
+
         for (key, status_doc) in [
+            (
+                "agent",
+                RawStatusDoc {
+                    agent: Some("claude".to_owned()),
+                    ..wait()
+                },
+            ),
+            (
+                "model",
+                RawStatusDoc {
+                    model: Some("opus".to_owned()),
+                    ..wait()
+                },
+            ),
+            (
+                "timeout",
+                RawStatusDoc {
+                    timeout: Some("30s".to_owned()),
+                    ..wait()
+                },
+            ),
+            (
+                "retries",
+                RawStatusDoc {
+                    retries: Some(1),
+                    ..wait()
+                },
+            ),
             (
                 "judge",
                 RawStatusDoc {
-                    run: Some("wait".to_owned()),
                     judge: Some(RawCommandDoc::Text("check".to_owned())),
-                    ..RawStatusDoc::default()
+                    ..wait()
                 },
             ),
             (
                 "next",
                 RawStatusDoc {
-                    run: Some("cleanup".to_owned()),
                     next: Some("queued".to_owned()),
-                    ..RawStatusDoc::default()
-                },
-            ),
-            (
-                "agent",
-                RawStatusDoc {
-                    run: Some("wait".to_owned()),
-                    agent: Some("claude".to_owned()),
-                    ..RawStatusDoc::default()
+                    ..wait()
                 },
             ),
         ] {
@@ -604,9 +625,28 @@ mod tests {
                 Err(WorkflowParseError::ForbiddenKey {
                     status: "queued".to_owned(),
                     key: key.to_owned()
-                })
+                }),
+                "{key}"
             );
         }
+    }
+
+    #[test]
+    fn クリーンアップでも無関係なキーは拒否される() {
+        assert_eq!(
+            WorkflowAssembler::assemble(doc(vec![(
+                "done",
+                RawStatusDoc {
+                    run: Some("cleanup".to_owned()),
+                    next: Some("done".to_owned()),
+                    ..RawStatusDoc::default()
+                }
+            )])),
+            Err(WorkflowParseError::ForbiddenKey {
+                status: "done".to_owned(),
+                key: "next".to_owned()
+            })
+        );
     }
 
     #[test]
@@ -733,61 +773,123 @@ mod tests {
     }
 
     #[test]
-    fn 値の生成エラーは位置つきで拒否される() {
-        assert_eq!(
-            WorkflowAssembler::assemble(doc(vec![(
-                "queued",
-                RawStatusDoc {
+    fn 値の生成エラーは書かれた場所の論理位置つきで拒否される() {
+        const SPACED: &str = "前後に空白を含められません";
+        const EMPTY: &str = "空文字列は指定できません";
+
+        let with_status = |status_doc: RawStatusDoc| doc(vec![("queued", status_doc)]);
+
+        let cases = [
+            (
+                RawWorkflowDoc {
+                    declared_name: Some(" implement".to_owned()),
+                    ..with_status(prompt_status("queued"))
+                },
+                "workflow",
+                SPACED,
+            ),
+            (
+                RawWorkflowDoc {
+                    default_agent: Some(" claude".to_owned()),
+                    ..with_status(prompt_status("queued"))
+                },
+                "agent",
+                SPACED,
+            ),
+            (
+                RawWorkflowDoc {
+                    default_model: Some(" opus".to_owned()),
+                    ..with_status(prompt_status("queued"))
+                },
+                "model",
+                SPACED,
+            ),
+            (
+                RawWorkflowDoc {
+                    initial: Some(" queued".to_owned()),
+                    ..with_status(prompt_status("queued"))
+                },
+                "initial",
+                SPACED,
+            ),
+            (
+                RawWorkflowDoc {
+                    initial: Some(" queued".to_owned()),
+                    statuses: vec![(" queued".to_owned(), prompt_status(" queued"))],
+                    ..RawWorkflowDoc::default()
+                },
+                "statuses. queued",
+                SPACED,
+            ),
+            (
+                with_status(RawStatusDoc {
                     prompt: Some(String::new()),
+                    ..prompt_status("queued")
+                }),
+                "statuses.queued.prompt",
+                EMPTY,
+            ),
+            (
+                with_status(RawStatusDoc {
+                    skill: Some(String::new()),
                     next: Some("queued".to_owned()),
                     ..RawStatusDoc::default()
-                }
-            )])),
-            Err(WorkflowParseError::InvalidValue {
-                location: "statuses.queued.prompt".to_owned(),
-                message: "空文字列は指定できません".to_owned()
-            })
-        );
-
-        assert_eq!(
-            WorkflowAssembler::assemble(doc(vec![(
-                "queued",
-                RawStatusDoc {
+                }),
+                "statuses.queued.skill",
+                EMPTY,
+            ),
+            (
+                with_status(RawStatusDoc {
+                    agent: Some(" claude".to_owned()),
+                    ..prompt_status("queued")
+                }),
+                "statuses.queued.agent",
+                SPACED,
+            ),
+            (
+                with_status(RawStatusDoc {
+                    model: Some(" opus".to_owned()),
+                    ..prompt_status("queued")
+                }),
+                "statuses.queued.model",
+                SPACED,
+            ),
+            (
+                with_status(RawStatusDoc {
                     timeout: Some("0s".to_owned()),
                     ..prompt_status("queued")
-                }
-            )])),
-            Err(WorkflowParseError::InvalidValue {
-                location: "statuses.queued.timeout".to_owned(),
-                message: "期間に 0 は指定できません".to_owned()
-            })
-        );
-
-        assert_eq!(
-            WorkflowAssembler::assemble(doc(vec![(
-                "queued",
-                RawStatusDoc {
+                }),
+                "statuses.queued.timeout",
+                "期間に 0 は指定できません",
+            ),
+            (
+                with_status(RawStatusDoc {
                     judge: Some(RawCommandDoc::Text(String::new())),
                     ..prompt_status("queued")
-                }
-            )])),
-            Err(WorkflowParseError::InvalidValue {
-                location: "statuses.queued.judge".to_owned(),
-                message: "コマンドが空です".to_owned()
-            })
-        );
+                }),
+                "statuses.queued.judge",
+                "コマンドが空です",
+            ),
+            (
+                with_status(RawStatusDoc {
+                    next: Some(" queued".to_owned()),
+                    ..prompt_status("queued")
+                }),
+                "statuses.queued.next",
+                SPACED,
+            ),
+        ];
 
-        assert_eq!(
-            WorkflowAssembler::assemble(RawWorkflowDoc {
-                initial: Some(" queued".to_owned()),
-                statuses: vec![(" queued".to_owned(), prompt_status(" queued"))],
-                ..RawWorkflowDoc::default()
-            }),
-            Err(WorkflowParseError::InvalidValue {
-                location: "statuses. queued".to_owned(),
-                message: "前後に空白を含められません".to_owned()
-            })
-        );
+        for (document, location, message) in cases {
+            assert_eq!(
+                WorkflowAssembler::assemble(document),
+                Err(WorkflowParseError::InvalidValue {
+                    location: location.to_owned(),
+                    message: message.to_owned()
+                }),
+                "{location}"
+            );
+        }
     }
 
     #[test]
