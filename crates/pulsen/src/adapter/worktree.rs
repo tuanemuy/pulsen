@@ -1,10 +1,13 @@
 //! git CLI へのシェルアウトによる `WorktreeManager` の実装。
 
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use pulsen_domain::execution::{TargetError, WorktreeManager};
-use pulsen_domain::task::{BranchName, RepoPath};
+use pulsen_domain::execution::{TargetError, WorktreeError, WorktreeManager};
+use pulsen_domain::task::{BranchName, RepoPath, Workspace};
+
+use crate::util::fsdir::ensure_dir;
 
 /// 起動する git から取り除く環境変数。
 ///
@@ -44,17 +47,58 @@ impl GitCliWorktreeManager {
         Self { git_program }
     }
 
-    /// `git -C <repo> <args...>` を実行する。起動自体の失敗は実行環境のエラー。
-    fn run(&self, repo: &RepoPath, args: &[&str]) -> Result<Output, TargetError> {
+    /// `git -C <repo> <args...>` を実行する。起動自体の失敗は説明の文字列にする。
+    ///
+    /// 起動失敗の写し先(`TargetError` / `WorktreeError`)は呼び出し側が決める。環境を
+    /// 落とす規則を1箇所に保つため、起動そのものはこの関数に閉じる。
+    fn output<Args, Arg>(&self, repo: &RepoPath, args: Args) -> Result<Output, String>
+    where
+        Args: IntoIterator<Item = Arg>,
+        Arg: AsRef<OsStr>,
+    {
         let mut command = Command::new(&self.git_program);
         command.arg("-C").arg(repo.as_path()).args(args);
         for name in INHERITED_GIT_ENV {
             command.env_remove(name);
         }
-        command.output().map_err(|error| TargetError::Failed {
-            message: format!(
+        command.output().map_err(|error| {
+            format!(
                 "git ({}) を起動できない: {error}",
                 self.git_program.display()
+            )
+        })
+    }
+
+    /// 検証系の `git -C <repo> <args...>`。
+    fn run(&self, repo: &RepoPath, args: &[&str]) -> Result<Output, TargetError> {
+        self.output(repo, args)
+            .map_err(|message| TargetError::Failed { message })
+    }
+
+    /// worktree 操作の `git -C <repo> <args...>`。非0終了も失敗として畳む。
+    fn run_worktree<Args, Arg>(&self, repo: &RepoPath, args: Args) -> Result<Output, WorktreeError>
+    where
+        Args: IntoIterator<Item = Arg>,
+        Arg: AsRef<OsStr>,
+    {
+        self.output(repo, args)
+            .map_err(|message| WorktreeError::Failed { message })
+    }
+
+    /// 成功を要求する worktree 操作。非0終了は git の説明を添えて失敗にする。
+    fn require_success<Args, Arg>(&self, repo: &RepoPath, args: Args) -> Result<(), WorktreeError>
+    where
+        Args: IntoIterator<Item = Arg>,
+        Arg: AsRef<OsStr>,
+    {
+        let output = self.run_worktree(repo, args)?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(WorktreeError::Failed {
+            message: format!(
+                "git worktree の操作が失敗した: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
             ),
         })
     }
@@ -101,8 +145,10 @@ impl WorktreeManager for GitCliWorktreeManager {
     }
 
     fn branch_exists(&self, repo: &RepoPath, branch: &BranchName) -> Result<bool, TargetError> {
-        let reference = format!("refs/heads/{}", branch.as_str());
-        let output = self.run(repo, &["show-ref", "--verify", "--quiet", &reference])?;
+        let output = self.run(
+            repo,
+            &["show-ref", "--verify", "--quiet", &head_ref(branch)],
+        )?;
         match output.status.code() {
             Some(0) => Ok(true),
             Some(1) => Ok(false),
@@ -114,6 +160,164 @@ impl WorktreeManager for GitCliWorktreeManager {
             }),
         }
     }
+
+    fn create(
+        &self,
+        repo: &RepoPath,
+        base: &BranchName,
+        ws: &Workspace,
+    ) -> Result<(), WorktreeError> {
+        let path = ws.path().as_path();
+        let parent = path.parent().ok_or_else(|| WorktreeError::Failed {
+            message: format!("{}: worktree の置き場を決められない", path.display()),
+        })?;
+        // ツールが管理する領域なので自動作成する。同定の鍵を作る前に済ませておく —
+        // 鍵は親の正規化に依存する。
+        ensure_dir(parent).map_err(|error| WorktreeError::Failed {
+            message: format!(
+                "{}: worktree の置き場を用意できない: {error}",
+                parent.display()
+            ),
+        })?;
+
+        let key = physical_key(path).ok_or_else(|| WorktreeError::Failed {
+            message: format!("{}: worktree のパスを正規化できない", path.display()),
+        })?;
+        let listing = self.run_worktree(repo, ["worktree", "list", "--porcelain"])?;
+        if !listing.status.success() {
+            return Err(WorktreeError::Failed {
+                message: format!(
+                    "登録済みの worktree を列挙できない: {}",
+                    String::from_utf8_lossy(&listing.stderr).trim()
+                ),
+            });
+        }
+
+        let reference = head_ref(ws.branch());
+        match registered_entry(&listing.stdout, &key) {
+            Some(entry) => {
+                if entry.branch.as_deref() != Some(reference.as_str()) {
+                    return Err(WorktreeError::Failed {
+                        message: format!(
+                            "{} には別の worktree が登録されている(自動修復しない)",
+                            path.display()
+                        ),
+                    });
+                }
+                if !entry.prunable {
+                    return Ok(());
+                }
+                // 登録は残っているが実体が消えている。鍵が自タスクのパスと一致し、その
+                // エントリが自タスクのブランチを指していることを確認した後なので、`-f` が
+                // 外す保護は「登録は残るが実体が無い」1つに閉じる。
+                self.require_success(
+                    repo,
+                    [
+                        OsStr::new("worktree"),
+                        OsStr::new("add"),
+                        OsStr::new("-f"),
+                        path.as_os_str(),
+                        OsStr::new(ws.branch().as_str()),
+                    ],
+                )
+            }
+            None => {
+                let occupied = path.try_exists().map_err(|error| WorktreeError::Failed {
+                    message: format!("{}: パスを確認できない: {error}", path.display()),
+                })?;
+                if occupied {
+                    return Err(WorktreeError::Failed {
+                        message: format!(
+                            "{} に worktree でない実体がある(自動修復しない)",
+                            path.display()
+                        ),
+                    });
+                }
+                let branch_present = self
+                    .run_worktree(repo, ["show-ref", "--verify", "--quiet", &reference])?
+                    .status
+                    .success();
+                if branch_present {
+                    // `-f` を付けない。先端を変えずに張り直し、積まれたコミットを保つ。
+                    self.require_success(
+                        repo,
+                        [
+                            OsStr::new("worktree"),
+                            OsStr::new("add"),
+                            path.as_os_str(),
+                            OsStr::new(ws.branch().as_str()),
+                        ],
+                    )
+                } else {
+                    self.require_success(
+                        repo,
+                        [
+                            OsStr::new("worktree"),
+                            OsStr::new("add"),
+                            OsStr::new("-b"),
+                            OsStr::new(ws.branch().as_str()),
+                            path.as_os_str(),
+                            OsStr::new(base.as_str()),
+                        ],
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// ブランチの完全な参照名。
+fn head_ref(branch: &BranchName) -> String {
+    format!("refs/heads/{}", branch.as_str())
+}
+
+/// `git worktree list --porcelain` の1エントリのうち、同定に使う属性。
+#[derive(Debug, Default)]
+struct WorktreeEntry {
+    branch: Option<String>,
+    prunable: bool,
+}
+
+/// 同定の鍵。
+///
+/// パス自体を正規化しないのは、実体が消えている場合に失敗して比較そのものが成立しない
+/// ため(親は `create` が作るので必ず存在する)。
+fn physical_key(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let name = path.file_name()?;
+    Some(std::fs::canonicalize(parent).ok()?.join(name))
+}
+
+/// 鍵に一致する登録を探す。
+///
+/// git の出力側も同じ `physical_key` に通してから突き合わせる(正規化を両側に対称に
+/// 適用する。生のパスの文字列比較は、シンボリックリンクを含むホームや Windows の
+/// 拡張長パスで恒常的に外れる)。鍵に変換できないエントリは自タスクのものではないので
+/// 不一致として扱う。
+///
+/// git が引用する必要のある文字(改行・引用符・制御文字)をパスに含む worktree は、
+/// 引用された表記のまま鍵に変換されるため一致しない。
+fn registered_entry(stdout: &[u8], key: &Path) -> Option<WorktreeEntry> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut entries: Vec<(PathBuf, WorktreeEntry)> = Vec::new();
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            entries.push((PathBuf::from(value), WorktreeEntry::default()));
+            continue;
+        }
+        let Some((_, entry)) = entries.last_mut() else {
+            continue;
+        };
+        if let Some(value) = line.strip_prefix("branch ") {
+            entry.branch = Some(value.to_owned());
+        } else if line == "prunable" || line.starts_with("prunable ") {
+            entry.prunable = true;
+        }
+    }
+    entries
+        .into_iter()
+        .find(|(path, _)| physical_key(path).as_deref() == Some(key))
+        .map(|(_, entry)| entry)
 }
 
 /// `symbolic-ref` の出力をブランチ名にする。

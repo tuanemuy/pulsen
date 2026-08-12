@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use super::command::RawCommand;
+use super::command::{CommandError, RawCommand};
 use super::name::{InputText, ModelName, Prompt, SkillName};
 
 /// テンプレート中の `{name}`。
@@ -111,6 +111,18 @@ pub struct CommandLine {
 }
 
 impl CommandLine {
+    /// プロセス境界(ラッパーの起動引数)からの再構築。
+    ///
+    /// 検証済みのトークン列がそのまま往復することだけを保証する経路であり、展開の代わりに
+    /// 使うものではない。0トークンは直列化の破れとして拒否する — 先頭がプログラムである
+    /// という不変条件が保てない。
+    pub fn rehydrate(tokens: Vec<String>) -> Result<Self, CommandError> {
+        if tokens.is_empty() {
+            return Err(CommandError::Empty);
+        }
+        Ok(Self { tokens })
+    }
+
     /// トークン列を借用する。
     pub fn tokens(&self) -> &[String] {
         &self.tokens
@@ -435,6 +447,36 @@ mod tests {
                 name: "input\\".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn 展開したコマンドはトークン列として往復する() {
+        let expanded = template("claude --dir={workspace} {input} --model")
+            .expect("受理される")
+            .expand(&PlaceholderValues {
+                input: Some(input("a b && echo *")),
+                model: None,
+                workspace: Some(PathBuf::from("/tmp/wt")),
+            })
+            .expect("展開できる");
+
+        let restored =
+            CommandLine::rehydrate(expanded.tokens().to_vec()).expect("再構築を受理する");
+
+        assert_eq!(restored, expanded);
+    }
+
+    #[test]
+    fn 空文字列トークンも再構築で保たれる() {
+        let restored = CommandLine::rehydrate(vec!["prog".to_owned(), String::new()])
+            .expect("再構築を受理する");
+
+        assert_eq!(restored.tokens(), ["prog", ""]);
+    }
+
+    #[test]
+    fn ゼロトークンの再構築は拒否される() {
+        assert_eq!(CommandLine::rehydrate(Vec::new()), Err(CommandError::Empty));
     }
 
     #[test]

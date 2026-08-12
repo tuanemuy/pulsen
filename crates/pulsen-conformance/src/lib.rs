@@ -14,14 +14,15 @@
 //! スイート側に持ち込まないことで、ケースが特定のアダプター専用にならない。
 //!
 //! この性質が成り立つのは TaskRepository / Clock / TaskIdGenerator / ExclusiveLock /
-//! WorktreeManager の5ポート。ConfigStore / WorkflowStore の入力系フックは **YAML
+//! WorktreeManager / RunStore / ProcessController の7ポート。ConfigStore / WorkflowStore の
+//! 入力系フックは **YAML
 //! ソースを受け取り**、この2ポートのスイートは YAML 表現に結合している — 「YAML 構文
 //! エラー」「重複キー」を前提とする行は、表現そのものを渡す口が無ければ組み立てられない
 //! (ADR-053)。
 //!
 //! 対象は共有参照でしか渡らないため、「構築済みの対象を壊す」フックは置けない。壊れた
-//! 状況が要るケースは、別ハンドルを返すフック(`concurrent_repo` / `failing_manager` /
-//! `unusable_lock` / `separate_home` / `another_generator`)で表す。
+//! 状況が要るケースは、別ハンドルを返すフック(`concurrent_repo` / `concurrent_store` /
+//! `failing_manager` / `unusable_lock` / `separate_home` / `another_generator`)で表す。
 //!
 //! # スキップ
 //!
@@ -85,17 +86,23 @@ pub mod clock;
 pub mod config_store;
 pub mod doubles;
 pub mod exclusive_lock;
+pub mod process_controller;
+pub mod run_store;
 pub mod task_id_generator;
 pub mod task_repository;
 pub mod workflow_store;
 pub mod worktree_manager;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-use pulsen_domain::definition::{ConfigStore, WorkflowStore};
-use pulsen_domain::execution::{ExclusiveLock, WorktreeManager};
+use pulsen_domain::definition::{CommandLine, ConfigStore, WorkflowStore};
+use pulsen_domain::execution::{
+    ExclusiveLock, ProcessController, RunStore, WorktreeManager, WrapperLaunchSpec,
+};
 use pulsen_domain::task::{
-    BranchName, Clock, RepoPath, TaskId, TaskIdGenerator, TaskRepository, Timestamp,
+    AttemptNumber, BranchName, Clock, RepoPath, RunDirPath, TaskId, TaskIdGenerator,
+    TaskRepository, Timestamp, Workspace, WorktreePath,
 };
 
 /// タスクファイルの置き場。
@@ -105,6 +112,20 @@ pub enum Area {
     Active,
     /// アーカイブ済み(`state/archive/`)。
     Archived,
+}
+
+/// run ディレクトリに置かれるファイルの種別。
+///
+/// 破損・読み取り不能の前提を作るフックが、どのファイルを対象にするかだけを受け取る。
+/// 置き場そのもの(パス)は契約の語彙(`RunDirPath` の導出関数)で決まる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunFileKind {
+    /// pid ファイル。
+    Pid,
+    /// starttime ファイル。
+    StartTime,
+    /// exit ファイル。
+    Exit,
 }
 
 /// フックが掛けた制限を元に戻すハンドル。
@@ -584,6 +605,184 @@ pub trait ExclusiveLockHarness {
     }
 }
 
+/// テスト用エージェントに求める振る舞い。
+///
+/// 適合ケースは「exit code を制御できる」「引数どおりに出力する」といった**意味**だけを
+/// 渡し、それを満たすコマンドの組み立てはハーネスに委ねる。プラットフォーム固有の
+/// コマンド名やシェルをケースに持ち込まないための口(ADR-010)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentBehavior {
+    /// 指定の exit code で終了する。
+    Exit(i32),
+    /// 標準出力・標準エラーへそれぞれ既知の文字列を書いて成功する。
+    Print {
+        /// 標準出力へ書く内容。
+        stdout: String,
+        /// 標準エラーへ書く内容。
+        stderr: String,
+    },
+    /// 作業ディレクトリが指定の worktree なら成功する。
+    CheckCwd(WorktreePath),
+    /// 受け取った引数を1行ずつ標準出力へ書いて成功する。
+    EchoArgs(Vec<String>),
+    /// 指定の時間だけ実行を続けてから成功する。
+    Sleep(Duration),
+    /// exit code を持たない終了(シグナル死等)をする。
+    Abort,
+}
+
+/// ProcessController の適合スイートが要求する環境。
+///
+/// スイートは `own_identity` / `run_agent` の [`process_controller::identity_and_agent`] と
+/// `spawn_wrapper` の [`process_controller::spawn`] に分かれる(ADR-011)。前者はアダプター
+/// 単体で閉じ、後者はラッパーモードの実装を要するため適用の時期が違う。
+pub trait ProcessControllerHarness {
+    /// 検証対象。
+    type Controller: ProcessController;
+
+    /// 検証対象を返す。
+    fn controller(&self) -> &Self::Controller;
+
+    /// 外部から観測した現在の実時刻(TC-port-process-controller-004)。
+    fn observe_wall_clock(&self) -> Option<Timestamp> {
+        None
+    }
+
+    /// 同定情報の取得機構自体が失敗する状態の実装
+    /// (TC-port-process-controller-005)。
+    ///
+    /// 存在しない取得元を注入した2つ目のコントローラを返す形にすると、権限操作にも
+    /// root 実行の可否にも依存せず確定的に走る(ADR-004)。
+    fn failing_identity_controller(&self) -> Option<&Self::Controller> {
+        None
+    }
+
+    /// 実在する worktree(`run_agent` の cwd)。
+    fn worktree(&self) -> Option<WorktreePath> {
+        None
+    }
+
+    /// 存在しない worktree(TC-port-process-controller-026)。
+    fn missing_worktree(&self) -> Option<WorktreePath> {
+        None
+    }
+
+    /// 書き込み可能な (標準出力, 標準エラー) のログパス。
+    fn log_paths(&self) -> Option<(PathBuf, PathBuf)> {
+        None
+    }
+
+    /// 開けないログパスと、その制限を戻すハンドル(TC-port-process-controller-025)。
+    ///
+    /// 制限が実際に効いたことを確認してから `Some` を返す。効かなければ復元して `None`。
+    fn unwritable_log_path(&self) -> Option<(PathBuf, Restore)> {
+        None
+    }
+
+    /// 指定の振る舞いをするテスト用エージェントのコマンド。
+    fn agent_command(&self, _behavior: AgentBehavior) -> Option<CommandLine> {
+        None
+    }
+
+    /// 存在しないコマンド名(TC-port-process-controller-022)。
+    fn missing_command(&self) -> Option<CommandLine> {
+        None
+    }
+
+    /// 実行できない実体を指すコマンド(TC-port-process-controller-023)。
+    ///
+    /// 制限が実際に効いたことを確認してから `Some` を返す。
+    fn non_executable_command(&self) -> Option<CommandLine> {
+        None
+    }
+
+    /// 指定の振る舞いのエージェントを起動するラッパーの起動仕様
+    /// (TC-port-process-controller-001/002/003)。run ディレクトリは用意済み。
+    fn launch_spec(&self, _behavior: AgentBehavior) -> Option<WrapperLaunchSpec> {
+        None
+    }
+
+    /// run ディレクトリに starttime・pid・exit が揃うまで期限つきで待ち、揃ったかを返す
+    /// (TC-port-process-controller-001/002)。
+    fn wait_for_run_files(&self, _spec: &WrapperLaunchSpec) -> Option<bool> {
+        None
+    }
+
+    /// 別プロセスから `spawn_wrapper` を呼び、そのプロセスの終了まで待つ
+    /// (TC-port-process-controller-002)。
+    ///
+    /// デタッチ性は「呼び出し側プロセスの終了後もラッパーが完走する」ことなので、
+    /// 同一プロセス内では表現できない。
+    fn spawn_from_other_process(&self, _spec: &WrapperLaunchSpec) -> Option<()> {
+        None
+    }
+
+    /// ラッパーの起動自体が不可能な状態の実装(TC-port-process-controller-003)。
+    ///
+    /// 存在しないパスを自バイナリとして注入した2つ目のコントローラを返す(ADR-004)。
+    fn failing_controller(&self) -> Option<&Self::Controller> {
+        None
+    }
+
+    /// run ディレクトリに何も書かれていないか(TC-port-process-controller-003)。
+    fn run_dir_is_empty(&self, _spec: &WrapperLaunchSpec) -> Option<bool> {
+        None
+    }
+}
+
+/// RunStore の適合スイートが要求する環境。
+pub trait RunStoreHarness {
+    /// 検証対象。
+    type Store: RunStore;
+
+    /// 検証対象を返す。
+    fn store(&self) -> &Self::Store;
+
+    /// `prepare_attempt(id, number)` が返すべき run ディレクトリ
+    /// (TC-port-run-store-001)。パスの決定は `RunDirPath::derive` に従う。
+    fn expected_run_dir(&self, _id: &TaskId, _number: AttemptNumber) -> Option<RunDirPath> {
+        None
+    }
+
+    /// attempt ディレクトリ自体が存在するか(TC-port-run-store-001)。
+    ///
+    /// read 系の `Ok(None)` では「空のディレクトリ」と「ディレクトリごと不在」を区別
+    /// できないため、観測を環境に問う。ケースは `prepare_attempt` の**前後で観測が反転
+    /// すること**まで主張する — 定数を返す実装はどちらかの側で落ちる。
+    fn attempt_dir_present(&self, _run_dir: &RunDirPath) -> Option<bool> {
+        None
+    }
+
+    /// 指定種別のファイルの位置に解釈不能な内容を直接置く
+    /// (TC-port-run-store-006/011/015)。
+    fn put_unreadable_content(&self, _run_dir: &RunDirPath, _kind: RunFileKind) -> Option<()> {
+        None
+    }
+
+    /// 指定種別のファイルは存在するが読み取り自体が失敗する状態にする
+    /// (TC-port-run-store-007)。
+    ///
+    /// 制限が実際に効いたことを確認してから `Some` を返す。効かなければ復元して `None`。
+    fn make_unreadable(&self, _run_dir: &RunDirPath, _kind: RunFileKind) -> Option<Restore> {
+        None
+    }
+
+    /// attempt への書き込みが途中で失敗する状態にする(TC-port-run-store-017)。
+    /// 読み取りは残す — 失敗後に従前の値が読めることが行の主張だから。
+    ///
+    /// 制限が実際に効いたことを確認してから `Some` を返す。効かなければ復元して `None`。
+    fn make_attempt_unwritable(&self, _run_dir: &RunDirPath) -> Option<Restore> {
+        None
+    }
+
+    /// 並行して読み書きできる対象(TC-port-run-store-016)。
+    ///
+    /// 別スレッドから読み続ける前提を持つケースだけがこのハンドルを使う。
+    fn concurrent_store(&self) -> Option<&(dyn RunStore + Sync)> {
+        None
+    }
+}
+
 /// WorktreeManager の適合スイートが要求する環境(対象の検証を行う3メソッド分)。
 pub trait WorktreeManagerHarness {
     /// 検証対象。
@@ -634,6 +833,65 @@ pub trait WorktreeManagerHarness {
     /// 3メソッドとも `Err(TargetError::Failed)` を返す契約。対象を壊すのではなく別の
     /// ハンドルを返すため、本番アダプターはイミュータブルなままでよい。
     fn failing_manager(&self) -> Option<&Self::Manager> {
+        None
+    }
+
+    /// パスもブランチも未使用のワークスペース(TC-port-worktree-manager-010/016)。
+    ///
+    /// `ws.path` の親(worktree_root)は存在する。正規化の分岐を必ず通すため、置き場は
+    /// シンボリックリンクを経由するパスとして組む(ADR-013)。
+    fn unused_workspace(&self) -> Option<Workspace> {
+        None
+    }
+
+    /// worktree_root 自体がまだ存在しないワークスペース
+    /// (TC-port-worktree-manager-011)。
+    fn workspace_under_missing_root(&self) -> Option<Workspace> {
+        None
+    }
+
+    /// 登録が無く、コミットの積まれた `ws.branch` だけが存在するワークスペースと、
+    /// そのコミットが worktree に置くマーカーの内容(TC-port-worktree-manager-013)。
+    fn workspace_with_orphan_branch(&self) -> Option<(Workspace, String)> {
+        None
+    }
+
+    /// 自タスクのパスとブランチの登録は残るが実体が消えた(`prunable`)ワークスペースと、
+    /// 消える前にコミットしたマーカーの内容(ADR-013 由来の追加ケース)。
+    fn workspace_with_prunable_registration(&self) -> Option<(Workspace, String)> {
+        None
+    }
+
+    /// `ws.path` に worktree でない通常のディレクトリがあるワークスペースと、そこに
+    /// 置かれている内容(TC-port-worktree-manager-014)。
+    fn workspace_over_plain_dir(&self) -> Option<(Workspace, String)> {
+        None
+    }
+
+    /// `ws.path` に `ws.branch` 以外のブランチの worktree があるワークスペースと、その
+    /// worktree に置かれている内容(TC-port-worktree-manager-015)。
+    fn workspace_over_other_branch(&self) -> Option<(Workspace, String)> {
+        None
+    }
+
+    /// worktree の中にマーカーを置く(TC-port-worktree-manager-012)。
+    fn put_worktree_marker(&self, _ws: &Workspace, _text: &str) -> Option<()> {
+        None
+    }
+
+    /// `ws.path` にあるマーカーの内容。**不在は空文字列**として返す — 「観測できない」
+    /// (`None`)と区別しないと、消えたことがスキップとして通ってしまう。
+    fn worktree_marker(&self, _ws: &Workspace) -> Option<String> {
+        None
+    }
+
+    /// `ws.path` が実体として存在するか(TC-port-worktree-manager-011/016)。
+    fn worktree_present(&self, _ws: &Workspace) -> Option<bool> {
+        None
+    }
+
+    /// ブランチ先端の同定子(TC-port-worktree-manager-010/013 と追加ケース)。
+    fn branch_tip(&self, _branch: &BranchName) -> Option<String> {
         None
     }
 }
