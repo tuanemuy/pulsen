@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use pulsen::adapter::worktree::INHERITED_GIT_ENV;
 
@@ -79,4 +80,15 @@ pub fn detach_head(dir: &Path) -> Option<()> {
 /// 使う前に確かめる(ADR-033)。
 pub fn is_outside_repository(dir: &Path) -> bool {
     !matches!(run(dir, &["rev-parse", "--show-toplevel"]), Some(()))
+}
+
+/// 一時ディレクトリの置き場が git リポジトリの外にあるか(1度だけ調べて使い回す)。
+///
+/// 「git リポジトリでないパス」を前提にするケースは、TMPDIR 自体がリポジトリ配下にある
+/// 環境では走れない。スキップの宣言をこの述語で決めると、宣言が実際に前提を作れるか
+/// どうかに対応する。
+pub fn tmpdir_outside_repository() -> bool {
+    static OUTSIDE: OnceLock<bool> = OnceLock::new();
+
+    *OUTSIDE.get_or_init(|| tempfile::tempdir().is_ok_and(|dir| is_outside_repository(dir.path())))
 }

@@ -557,6 +557,26 @@ fn リポジトリの検証が返した分類はそのまま返り登録は行�
 }
 
 #[test]
+fn リポジトリも定義も不正なら対象の検証の結果が返る() {
+    // 対象の検証が登録時検証より先に走る(AC-14 の処理順)。両方が失敗する状況でしか
+    // 順序は観測できない。
+    let doubles = Doubles {
+        config: config_with_agents(vec![("claude", "claude --model {model} {input}")]),
+        worktrees: ScriptedWorktreeManager::new()
+            .with_validate_repo([Err(TargetError::NotARepository)]),
+        ids: ScriptedTaskIdGenerator::new([]),
+        tasks: ScriptedTaskRepository::new([]),
+        ..Doubles::new()
+    };
+
+    assert_eq!(
+        doubles.register(input("implement", Some("main"))),
+        Err(RegisterTaskError::Target(TargetError::NotARepository))
+    );
+    assert_eq!(doubles.created(), vec![]);
+}
+
+#[test]
 fn headのブランチを解決できない分類はそのまま返り登録は行われない() {
     // HEAD 由来の分類を返すのは `head_branch`(ポート契約)。ベース省略時にだけ通る経路。
     for classification in [TargetError::DetachedHead, TargetError::EmptyRepository] {

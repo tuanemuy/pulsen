@@ -7,8 +7,9 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 
-use pulsen_conformance::Restore;
+use pulsen_conformance::{Restore, SkipBudget};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -20,6 +21,46 @@ pub const HOME_ENV: &str = "PULSEN_HOME";
 
 /// ユーザーのホームディレクトリを指す環境変数(プラットフォームで名前が違う)。
 const USER_HOME_ENV: [&str; 2] = ["HOME", "USERPROFILE"];
+
+/// グローバルホームの直下にある状態の置き場。書き込み系が必要に応じて自動作成する。
+const STATE_DIR: &str = "state";
+
+/// 権限制限が効かない環境(root 実行・非 POSIX 等)でのみスキップされるケース。
+const PERMISSION_CASES: [&str; 2] = ["tc_task_register_task_016", "tc_task_register_task_021"];
+
+/// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
+const LOCK_HOLDER_CASES: [&str; 1] = ["tc_task_register_task_017"];
+
+/// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
+const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_task_register_task_036"];
+
+/// この環境でスキップを許容するケース。
+static SKIPS: LazyLock<SkipBudget> = LazyLock::new(|| SkipBudget::new(allowed_skips()));
+
+/// 前提を作れるかどうかを実際に調べて、許容するケースを決める。
+fn allowed_skips() -> Vec<&'static str> {
+    let mut allowed = Vec::new();
+    if !pulsen_conformance::permission_restrictions_effective() {
+        allowed.extend(PERMISSION_CASES);
+    }
+    if lock::holder_program().is_none() {
+        allowed.extend(LOCK_HOLDER_CASES);
+    }
+    if !git::tmpdir_outside_repository() {
+        allowed.extend(OUTSIDE_REPOSITORY_CASES);
+    }
+    allowed
+}
+
+/// フィクスチャが前提を用意できなかったことを記録する。
+///
+/// libtest は成功したテストの標準出力を握り潰すため、`println!` して `return` する形では
+/// スキップと成功を区別できない。適合スイートと同じ宣言(`SkipBudget`)を受け入れテストにも
+/// 使い、宣言していないケースのスキップはそのケース自身の失敗として現れるようにする
+/// (ADR-055)。
+pub fn skipped(case: &str, fixture: &'static str) {
+    SKIPS.record(case, fixture);
+}
 
 /// `claude` エージェントだけを定義したグローバル設定。
 pub const CONFIG: &str = "\
@@ -109,7 +150,7 @@ impl Home {
 
     /// 状態のルート。
     pub fn state_dir(&self) -> PathBuf {
-        self.path().join("state")
+        self.path().join(STATE_DIR)
     }
 
     /// 現役タスクのディレクトリ。
@@ -168,7 +209,7 @@ impl Home {
         paths
     }
 
-    /// グローバル設定とワークフロー定義の現在の内容と、置き場のファイル一覧を控える。
+    /// グローバル設定とワークフロー定義の現在の内容と、置き場のエントリ一覧を控える。
     pub fn untouched(&self) -> Untouched {
         Untouched::of(self.resources())
             .with_listings([self.workflows_dir(), self.path().to_path_buf()])
@@ -178,7 +219,7 @@ impl Home {
 /// 実行の前後で内容が変わらないことを確かめる対象。
 ///
 /// 「読めないリソースには書き込まない」(PAGE-common-006 規則2)の観測可能な帰結を、
-/// 利用者が用意したファイルのバイト列と、置き場のファイル一覧で確かめる。一覧を見ない
+/// 利用者が用意したファイルのバイト列と、置き場のエントリ一覧で確かめる。一覧を見ない
 /// と、既存ファイルを書き換えない代わりに新しいファイルを増やす実装を見逃す。
 pub struct Untouched {
     entries: Vec<(PathBuf, Option<Vec<u8>>)>,
@@ -201,19 +242,28 @@ impl Untouched {
         }
     }
 
-    /// ディレクトリ直下のファイル一覧も控える。
+    /// ホームの外に置いたリソースも控える。
+    pub fn with_entries(mut self, paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        self.entries.extend(paths.into_iter().map(|path| {
+            let content = fs::read(&path).ok();
+            (path, content)
+        }));
+        self
+    }
+
+    /// ディレクトリ直下のエントリ一覧も控える。
     pub fn with_listings(mut self, dirs: impl IntoIterator<Item = PathBuf>) -> Self {
         self.listings = dirs
             .into_iter()
             .map(|dir| {
-                let files = listed_files(&dir);
-                (dir, files)
+                let entries = listed_entries(&dir);
+                (dir, entries)
             })
             .collect();
         self
     }
 
-    /// 控えた時点から内容もファイルの顔ぶれも変わっていないことを確かめる。
+    /// 控えた時点から内容もエントリの顔ぶれも変わっていないことを確かめる。
     pub fn assert_unchanged(&self) {
         for (path, expected) in &self.entries {
             assert_eq!(
@@ -225,26 +275,27 @@ impl Untouched {
         }
         for (dir, expected) in &self.listings {
             assert_eq!(
-                &listed_files(dir),
+                &listed_entries(dir),
                 expected,
-                "{} のファイルの顔ぶれが変わっている",
+                "{} のエントリの顔ぶれが変わっている",
                 dir.display()
             );
         }
     }
 }
 
-/// ディレクトリ直下のファイル一覧(パスの昇順)。
+/// ディレクトリ直下のエントリ一覧(パスの昇順)。
 ///
-/// ディレクトリは数えない — `state/` は書き込み系が必要に応じて自動作成する管理領域
-/// (pages ※3)であり、利用者が用意したリソースの不変とは別の話になる。
-fn listed_files(dir: &Path) -> Vec<PathBuf> {
+/// ディレクトリも数える — ファイルだけを見ると、新しいディレクトリを作ってその中に書く
+/// 書き込みを見逃す。除くのは `state/` だけで、これは書き込み系が必要に応じて自動作成する
+/// 管理領域(pages ※3)であり、利用者が用意したリソースの不変とは別の話になる。
+fn listed_entries(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut paths: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_file())
+        .filter(|path| path.file_name() != Some(OsStr::new(STATE_DIR)))
         .collect();
     paths.sort();
     paths
@@ -333,7 +384,8 @@ impl Add {
 
     /// 既定のホーム `~/.pulsen/` の基点になるユーザーのホームディレクトリを与える。
     ///
-    /// 既定へ落ちる経路を、実ユーザーの `~/.pulsen/` に触れずに観測するために置く。
+    /// 既定へ落ちる経路の観測に使う。指定しなくても実ユーザーのホームには落ちない
+    /// (`run` が毎回一時ディレクトリを向ける)が、そこを覗くにはパスが要る。
     pub fn user_home(mut self, path: &Path) -> Self {
         self.user_home = Some(path.as_os_str().to_owned());
         self
@@ -354,8 +406,7 @@ impl Add {
     /// 実バイナリを起動して結果を集める。
     pub fn run(self) -> Run {
         let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
-        // 実行環境の PULSEN_HOME に結果を左右させない。
-        command.env_remove(HOME_ENV);
+        let sandbox = detached_home(&mut command);
         if let Some(home) = self.home_env {
             command.env(HOME_ENV, home);
         }
@@ -381,6 +432,7 @@ impl Add {
         }
 
         let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
         Run {
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -395,16 +447,31 @@ impl Add {
 /// グローバルホームの指定は取らない。
 pub fn run_cli(arguments: &[&str]) -> Run {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
-    // 実行環境の PULSEN_HOME に結果を左右させない。
-    command.env_remove(HOME_ENV);
+    let sandbox = detached_home(&mut command);
     command.args(arguments);
 
     let output = command.output().expect("pulsen を起動できる");
+    drop(sandbox);
     Run {
         code: output.status.code(),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
+}
+
+/// 起動する `pulsen` のホーム解決を、実行環境から切り離す。
+///
+/// `PULSEN_HOME` を落とすだけでは、ホームを指定し忘れたテストが既定の `~/.pulsen/` に
+/// 落ちて開発者の実ホームに登録してしまう。ユーザーのホームも毎回作る一時ディレクトリへ
+/// 向け、3段の優先順位(フラグ・環境変数・既定)のどこを踏んでも一時ディレクトリの外に
+/// 出ないようにする(ADR-062)。戻り値は起動が終わるまで保持する。
+fn detached_home(command: &mut Command) -> TempDir {
+    let sandbox = tempfile::tempdir().expect("一時ホームを作れる");
+    command.env_remove(HOME_ENV);
+    for variable in USER_HOME_ENV {
+        command.env(variable, sandbox.path());
+    }
+    sandbox
 }
 
 /// 実行の結果。

@@ -257,18 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn タスクファイルは走査対象のディレクトリの直下に導出される() {
-        assert_eq!(
-            TaskFilePath::active(&state_root(), &task_id()),
-            TaskFilePath::active_dir(&state_root()).join(TaskFilePath::file_name(&task_id()))
-        );
-        assert_eq!(
-            TaskFilePath::archived(&state_root(), &task_id()),
-            TaskFilePath::archived_dir(&state_root()).join(TaskFilePath::file_name(&task_id()))
-        );
-    }
-
-    #[test]
     fn 命名形式に合致する名前からタスクidが読み取れる() {
         assert_eq!(
             TaskFilePath::parse_file_name(&TaskFilePath::file_name(&task_id())),

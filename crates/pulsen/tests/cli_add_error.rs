@@ -13,7 +13,7 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::{CONFIG, Home, Repo, Untouched, WORKFLOW, add, scratch};
+use common::{CONFIG, Home, Repo, WORKFLOW, add, scratch};
 
 /// `{model}` を参照するエージェント定義。
 const MODEL_CONFIG: &str = "\
@@ -105,7 +105,7 @@ fn tc_task_register_task_016_設定が読めなければ実行環境のエラー
     let untouched = home.untouched();
 
     let Some(restore) = common::deny_read(&home.config_path()) else {
-        println!("スキップ: config.yaml を読めない状態にできない(root 実行・非 POSIX 等)");
+        common::skipped("tc_task_register_task_016", "deny_read");
         return;
     };
 
@@ -127,7 +127,7 @@ fn tc_task_register_task_017_ロック競合は別の操作が実行中として
     let untouched = home.untouched();
 
     let Some(holder) = common::lock::hold(&home.lock_path()) else {
-        println!("スキップ: 別プロセスにロックを保持させられない");
+        common::skipped("tc_task_register_task_017", "lock::hold");
         return;
     };
 
@@ -179,7 +179,7 @@ fn tc_task_register_task_021_定義が読めなければ拒否される() {
     let untouched = home.untouched();
 
     let Some(restore) = common::deny_read(&definition) else {
-        println!("スキップ: ワークフロー定義を読めない状態にできない(root 実行・非 POSIX 等)");
+        common::skipped("tc_task_register_task_021", "deny_read");
         return;
     };
 
@@ -387,7 +387,7 @@ fn tc_task_register_task_034_ファイル名から表示名を決められなけ
     let definition = dir.path().join(" .yaml");
     fs::write(&definition, WORKFLOW).expect("定義を書ける");
     let repo = Repo::with_commit();
-    let untouched = Untouched::of(home.resources().into_iter().chain([definition.clone()]));
+    let untouched = home.untouched().with_entries([definition.clone()]);
 
     let run = add(&definition, repo.path()).home(home.path()).run();
 
@@ -406,11 +406,11 @@ fn tc_task_register_task_035_リポジトリのパスが存在しなければ拒
 
 #[test]
 fn tc_task_register_task_036_gitリポジトリでないパスは拒否される() {
-    let dir = scratch();
-    if !common::git::is_outside_repository(dir.path()) {
-        println!("スキップ: 一時ディレクトリ自体が git リポジトリ配下にある");
+    if !common::git::tmpdir_outside_repository() {
+        common::skipped("tc_task_register_task_036", "git::is_outside_repository");
         return;
     }
+    let dir = scratch();
 
     reject_target(dir.path(), None, &["git リポジトリではありません"]);
 }

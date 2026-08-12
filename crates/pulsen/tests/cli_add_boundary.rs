@@ -427,4 +427,5 @@ fn 空の環境変数は未設定として既定のホームに落ちる() {
             .to_string()
             .as_str(),
     ]);
+    assert!(!default_home.exists(), "既定のホームには何も作られない");
 }

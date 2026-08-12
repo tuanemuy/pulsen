@@ -135,9 +135,12 @@ mod tests {
 
     use super::*;
 
+    fn now() -> Timestamp {
+        Timestamp::parse_rfc3339("2026-08-11T09:15:30Z").expect("受理される")
+    }
+
     fn generator() -> DefaultTaskIdGenerator<FixedClock> {
-        let now = Timestamp::parse_rfc3339("2026-08-11T09:15:30Z").expect("受理される");
-        DefaultTaskIdGenerator::new(FixedClock::new(now)).expect("構築できる")
+        DefaultTaskIdGenerator::new(FixedClock::new(now())).expect("構築できる")
     }
 
     #[test]
@@ -166,12 +169,18 @@ mod tests {
     }
 
     #[test]
-    fn 発行されるidはタスクidの制約を満たす() {
-        let generator = generator();
+    fn 組み立て規則はどのランダム成分でもタスクidの制約を満たす文字列を作る() {
+        // `generate` は制約を満たさない文字列を構築時のIDに読み替えるため、組み立て規則が
+        // 制約を破っても発行されたIDからは分からない。組み立てそのものを検証する。
+        let clock = FixedClock::new(now());
+        let state = Cell::new(0x0123_4567_89ab_cdef);
 
-        for _ in 0..100 {
-            let id = generator.generate();
-            assert_eq!(TaskId::parse(id.as_str().to_owned()), Ok(id));
+        for _ in 0..1_000 {
+            let composed = compose(&clock, &state);
+            assert!(
+                TaskId::parse(composed.clone()).is_ok(),
+                "組み立てた {composed} はタスクIDとして受理される"
+            );
         }
     }
 }
