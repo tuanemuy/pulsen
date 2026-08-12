@@ -15,7 +15,7 @@
 
 | # | 基準（検証可能な形で） | 由来 | 対応ステップ |
 |---|---|---|---|
-| AC-1 | `cargo build` / `cargo test` / `cargo clippy -- -D warnings` / `cargo fmt --check` が通る。ドメインクレートは外部クレートに依存しない（`Cargo.toml` の `[dependencies]` が空であることで機械的に保証される）。OS 依存分岐が隔離されている（`#[cfg(unix)]` / `#[cfg(windows)]` の出現箇所が `crates/pulsen/src/{adapter,util}/` 配下に限られ、`crates/pulsen-domain/` には1つも現れないことを grep で確認できる） | CLAUDE.md 技術方針・アーキテクチャ、Issue「OS 依存の処理はアダプター層に隔離する」 | 1, 全ステップ |
+| AC-1 | `cargo build` / `cargo test` / `cargo clippy -- -D warnings` / `cargo fmt --check` が通る。ドメインクレートは外部クレートに依存しない（`Cargo.toml` の `[dependencies]` が空であることで機械的に保証される）。OS 依存分岐が隔離されている（`crates/*/src/` を対象に `#[cfg(unix)]` / `#[cfg(windows)]` を grep すると、`crates/pulsen-domain/` に1件も現れず、`crates/pulsen/src/` 側のヒットは `util/atomic.rs` だけであることを確認できる。`crates/pulsen-conformance/src/` と `crates/pulsen/tests/` のヒットは適合ハーネスに権限操作フックを供給するテスト側の分岐で、本番の実行経路には乗らない。確認手順は testing.md） | CLAUDE.md 技術方針・アーキテクチャ、Issue「OS 依存の処理はアダプター層に隔離する」 | 1, 全ステップ |
 | AC-2 | definition ドメインの値オブジェクト・テンプレートが spec どおりに実装され、ユニットテストで網羅される（`parse` 経由でのみ生成、`NameError` / `DurationError` / `CommandError` / `TemplateError` / `ExpansionError` / `AgentDefError` の全分岐） | チェックリスト DOM-definition-001〜023, 030, 031 | 2 |
 | AC-3 | 実効値の解決規則（`effective_agent` / `effective_model` / `effective_timeout` / `effective_retry_limit` の優先順位: ステータス上書き > ワークフローデフォルト > 既定）と `WorkflowRef::display_name` の4規則が spec どおりであり、区切り文字集合を明示したユニットテストで `/` と `\` の両方が検証される | DOM-definition-032〜044、TC-task-register-task-003/004/005/034/045 | 3 |
 | AC-4 | `WorkflowAssembler::assemble` が `WorkflowParseError` の10種（`ForbiddenKey` / `MissingInitial` / `InitialNotFound` / `EmptyStatuses` / `NoAction` / `MultipleActions` / `UnknownRunValue` / `MissingNext` / `NextNotFound` / `InvalidValue`）を spec どおりに返し、循環・自己参照・到達不能ステータスは受理する（ADR-010） | DOM-definition-045、TC-port-workflow-store-013/014 | 4 |
@@ -48,6 +48,16 @@
 - CI ワークフロー・リリース設定・パッケージング。
 
 なお、機械可読出力（JSON 等）と config.yaml / ワークフローYAML の生成コマンドは**提供しない**が、PAGE-common-007 / PAGE-common-011 は「提供しないことを確認する行」としてチェックリストに載っており、消化対象である（steps.md ステップ17）。除外リストではない。
+
+## チェックリスト行にチェックを付ける基準
+
+Issue の完了条件は「実装をレビューで確認できた行にのみチェックを付ける。見送る行はチェックせず理由をコメントに残す」。判定を行単位で機械的に取れるよう、基準を次の2つに固定する。
+
+**チェックを付ける**: 台帳行の「実装されるべき振る舞いの要点」に対応する実装とテストが存在し、そのテストが実際に走って通っていること。全コマンドを前提に書かれた台帳行（PAGE-common-002 / 003 / 005 / 006 / 010、UC-flow-007）は、**本スライスに存在するコマンド（`add`）の列がすべて満たされ、規則そのもの（ホーム解決・ロック取得・exit code・縮退4規則・タスクファイルの生涯）が実装として確定していれば付ける**。後続スライスがコマンドを足したときの適用は、そのコマンドの台帳行（`PAGE-tick-006` など。Issue #2〜#6 に配分済み）が受け持つ。この6行は Issue #1 にしか現れないため、見送るとどのスライスでも検証されない孤児になる。
+
+**チェックを付けない**: 環境が前提を作れずケースが走らなかった行。適合スイートは走らなかったケースを `SKIP` として報告し、宣言した許容集合の外なら失敗させるので、「走っていないのに緑」と区別がつく。該当は `TC-port-clock-005`（時刻を過去に設定できない）の1件で、理由は Issue のコメントに残す。
+
+記帳はレビュー指摘の修正がすべて入った後に行い、確認した実行環境（OS・root か否か・TMPDIR の位置）をコメントに明記する。走ったかどうかが出力から確認できる状態で数えるため。
 
 ## リスクと注意点
 

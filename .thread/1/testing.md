@@ -42,10 +42,12 @@ cargo fmt --check
 AC-1 の「OS 依存分岐がアダプター層に隔離されている」ことの機械的確認:
 
 ```sh
-grep -rn 'cfg(unix)\|cfg(windows)' crates/
+grep -rn 'cfg(unix)\|cfg(windows)' crates/*/src/
 ```
 
-`crates/pulsen/src/adapter/` と `crates/pulsen/src/util/` 配下だけがヒットし、`crates/pulsen-domain/` が1件もヒットしないこと。
+`crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs`（ディレクトリエントリの fsync）だけであること。`crates/pulsen-conformance/src/lib.rs` のヒットは適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない。
+
+`crates/` 全体を対象にすると `crates/pulsen/tests/` 配下もヒットするが、これらは適合スイートに権限操作フックを供給するテスト側の分岐で、アダプター層の隔離とは別の話。
 
 ### 検証用のフィクスチャ準備
 
@@ -175,9 +177,9 @@ grep -rn 'cfg(unix)\|cfg(windows)' crates/
 - **手順:**
   1. `PULSEN_HOME=/no/such/home pulsen add --workflow implement --repo "$REPO" --home "$PULSEN_HOME"; echo $?`
   2. `PULSEN_HOME=/no/such/home pulsen add --workflow implement --repo "$REPO"; echo $?`
-  3. `env -u PULSEN_HOME pulsen add --workflow implement --repo "$REPO"; echo $?`
-- **期待結果:** 手順1 はフラグのホームが優先され、登録が成功して exit code 0。手順2 は環境変数のホームが使われ、未初期化エラーに `/no/such/home` が含まれて非0。手順3 は既定の `~/.pulsen/`（`$HOME/.pulsen`）が解決され、そこに config.yaml が無ければ未初期化エラーにそのパスが表示されて非0。
-- **確認ポイント:** 手順3 で **実運用のホームに書き込みが起きていないこと**（`ls "$HOME/.pulsen" 2>/dev/null` が空、または元からあるなら内容が増えていないこと）。手順2 のメッセージで「意図しないホームを見ている」ことが読み取れること。
+  3. `FAKEHOME=$(mktemp -d); env -u PULSEN_HOME HOME="$FAKEHOME" pulsen add --workflow implement --repo "$REPO"; echo $?`
+- **期待結果:** 手順1 はフラグのホームが優先され、登録が成功して exit code 0。手順2 は環境変数のホームが使われ、未初期化エラーに `/no/such/home` が含まれて非0。手順3 は既定の `~/.pulsen/`（= `$FAKEHOME/.pulsen`）が解決され、そこに config.yaml が無いので未初期化エラーにそのパスが表示されて非0。
+- **確認ポイント:** 手順3 の案内に出るパスが `$FAKEHOME/.pulsen` であること（既定ホームの解決が `HOME` を見ていることの証拠になる）。手順2 のメッセージで「意図しないホームを見ている」ことが読み取れること。手順3 が `HOME` を一時ディレクトリに差し替えるのは、確認したいのが「既定へ落ちる経路が使うホームの解決結果」であって実運用の `~/.pulsen/` そのものではないため。
 
 ### 3. 空の config.yaml が全デフォルトで受理される
 

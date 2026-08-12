@@ -54,7 +54,7 @@ crates/
 
 **definition ドメイン**（DOM-definition-001〜056 全件）
 
-- 名前系 newtype 7種（`AgentName` / `ModelName` / `SkillName` / `Prompt` / `StatusName` / `WorkflowName` / `InputText`）は `parse(String) -> Result<Self, NameError>` のみで生成する。`Prompt` は非空のみ、`InputText` は制約なし。
+- 名前系 newtype 7種のうち、制約を持つ6種（`AgentName` / `ModelName` / `SkillName` / `Prompt` / `StatusName` / `WorkflowName`）は `parse(String) -> Result<Self, NameError>` のみで生成する（`Prompt` は非空のみ）。制約を持たない `InputText` は総関数 `new(String) -> Self` で生成する — `Err` になる経路のない `Result` を呼び出し側に畳ませないため。フィールドは全型とも非公開で、生成経路が1つである点は変わらない。
 - `DurationSpec`（秒に正規化。`1m == 60s`）/ `TimeoutSpec = Limited | Unlimited`。
 - `RawCommand` / `PlainCommand`: 文字列は単純空白分割（クォート解釈なし）、配列は要素そのまま（空文字列トークンは配列形式でのみ許容）、0トークンは `CommandError::Empty`。
 - `CommandTemplate`（`tokens: Vec<Vec<Segment>>`、`Segment = Literal | Hole(Placeholder)`）と `SkillInputTemplate`。`parse` は `allowed` に無い名前を `UnknownPlaceholder`、閉じない `{`・空 `{}` を `MalformedBrace` にする。エスケープ機構は設けない。
@@ -454,3 +454,5 @@ crates/
 | TC-port-task-repository-001〜044 | 9, 12 |
 | TC-port-clock-001〜005, TC-port-task-id-generator-001〜005 | 9, 13 |
 | TC-port-exclusive-lock-001〜007, TC-port-worktree-manager-001〜009 | 9, 14 |
+
+PASS 条件が全コマンドを前提にしている6行（PAGE-common-002 / 003 / 005 / 006 / 010、UC-flow-007）は、本スライスに存在するコマンド（`add`）の列で消化する。規則そのもの（ホーム解決・ロック取得・exit code・縮退4規則・タスクファイルの生涯）が実装として確定していることを消化の条件とし、後続スライスがコマンドを足したときの適用は、そのコマンドの台帳行（`PAGE-tick-006` など。Issue #2〜#6 に配分済み）が受け持つ。判定基準は plan.md「チェックリスト行にチェックを付ける基準」を参照。
