@@ -41,6 +41,33 @@ impl RetryCounters {
     pub fn spawn_fail_count(&self) -> u32 {
         self.spawn_fail_count
     }
+
+    /// 実行失敗を1つ数える。
+    ///
+    /// 飽和させて無謬に保つ — `u32` の上限に達するには 40 億回の連続失敗が要り、到達
+    /// しない領域のためにエラー分岐を遷移関数へ広げない(`AttemptNumber::next` と同じ扱い)。
+    pub(super) fn increment_attempt(self) -> Self {
+        Self {
+            attempt_count: self.attempt_count.saturating_add(1),
+            ..self
+        }
+    }
+
+    /// spawn 失敗を1つ数える。飽和の理由は [`Self::increment_attempt`] と同じ。
+    pub(super) fn increment_spawn_fail(self) -> Self {
+        Self {
+            spawn_fail_count: self.spawn_fail_count.saturating_add(1),
+            ..self
+        }
+    }
+
+    /// spawn 失敗の連続を打ち切る。
+    pub(super) fn reset_spawn_fail(self) -> Self {
+        Self {
+            spawn_fail_count: 0,
+            ..self
+        }
+    }
 }
 
 #[cfg(test)]

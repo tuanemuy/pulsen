@@ -10,6 +10,7 @@ mod degraded;
 mod failure;
 mod id;
 mod path;
+mod planner;
 mod port;
 mod process;
 mod state;
@@ -18,6 +19,7 @@ mod state;
 #[allow(clippy::module_inception)]
 mod task;
 mod time;
+mod transition;
 
 pub use attempt::{AttemptNumber, AttemptNumberError, AttemptRef};
 pub use branch::{BranchName, BranchNameError, Target, Workspace};
@@ -28,6 +30,7 @@ pub use id::{TaskId, TaskIdError};
 pub use path::{
     AbsolutePathError, RepoPath, RunDirPath, StateRoot, TaskFilePath, WorktreePath, WorktreeRoot,
 };
+pub use planner::WorkspacePlanner;
 pub use port::{
     ArchiveError, Clock, CreateError, ReadError, SaveError, TaskEntry, TaskIdGenerator, TaskLookup,
     TaskRecord, TaskRepository,
@@ -38,3 +41,4 @@ pub use process::{
 pub use state::{ExecutionState, ExecutionStateKind, StateKindError, StopReason};
 pub use task::{RehydrateError, Task, TaskFields};
 pub use time::{Timestamp, TimestampError};
+pub use transition::TransitionError;

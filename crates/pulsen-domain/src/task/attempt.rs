@@ -79,6 +79,26 @@ impl AttemptRef {
         }
     }
 
+    /// 起動記録での採番。
+    ///
+    /// 番号と run ディレクトリを1つの生成口で同時に受け取り、生成をタスクドメインの
+    /// 内側に閉じることで、両者の食い違いを構成で排除する。
+    pub(super) fn launching(number: AttemptNumber, run_dir: RunDirPath) -> Self {
+        Self {
+            number,
+            run_dir,
+            process: None,
+        }
+    }
+
+    /// 起動確認で同定情報を取り込む。番号と run ディレクトリは保持する。
+    pub(super) fn with_process(self, process: ProcessIdent) -> Self {
+        Self {
+            process: Some(process),
+            ..self
+        }
+    }
+
     /// attempt 番号。
     pub fn number(&self) -> AttemptNumber {
         self.number
