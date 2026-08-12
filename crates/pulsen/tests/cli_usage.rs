@@ -50,11 +50,33 @@ fn helpの表示は0で終わり標準出力に出る() {
 }
 
 #[test]
-fn 提供するサブコマンドはタスク登録だけである() {
+fn 利用者向けに提供するサブコマンドはタスク登録だけである() {
     let run = run_cli(&["--help"]);
     run.assert_succeeded();
 
     assert_eq!(subcommands(&run.stdout), vec!["add", BUILTIN_SUBCOMMAND]);
+}
+
+#[test]
+fn 内部のラッパーはヘルプに現れないが実行はできる() {
+    let help = run_cli(&["--help"]);
+    help.assert_succeeded();
+    assert!(
+        !subcommands(&help.stdout)
+            .iter()
+            .any(|name| name == "wrapper"),
+        "一覧に表示しない: {}",
+        help.stdout
+    );
+
+    let run = run_cli(&["wrapper", "--help"]);
+
+    run.assert_succeeded();
+    assert!(
+        run.stdout.contains("--run-dir") && run.stdout.contains("--workspace"),
+        "隠れているだけで到達できる: {}",
+        run.stdout
+    );
 }
 
 #[test]

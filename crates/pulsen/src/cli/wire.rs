@@ -8,11 +8,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use pulsen_domain::definition::{ConfigLoadError, ConfigStore, GlobalConfig};
-use pulsen_domain::task::AbsolutePathError;
+use pulsen_domain::task::{AbsolutePathError, RunDirPath};
 
 use crate::adapter::clock::SystemClock;
 use crate::adapter::config_store::FsConfigStore;
 use crate::adapter::lock::FileExclusiveLock;
+use crate::adapter::process::{IdentitySource, SystemProcessController};
+use crate::adapter::run_store::FsRunStore;
 use crate::adapter::task_id::{DefaultTaskIdGenerator, IdGeneratorInitError};
 use crate::adapter::task_repository::FsTaskRepository;
 use crate::adapter::workflow_store::FsWorkflowStore;
@@ -61,6 +63,16 @@ pub enum WireError {
     IdGenerator {
         /// 原因の説明。
         message: String,
+    },
+    /// 自身の実行ファイルのパスを取得できない。
+    SelfExeUnavailable {
+        /// 原因の説明。
+        message: String,
+    },
+    /// run ディレクトリから状態のルートを復元できない。
+    RunDirUnusable {
+        /// 与えられた run ディレクトリ。
+        given: PathBuf,
     },
 }
 
@@ -151,6 +163,61 @@ pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
         lock: FileExclusiveLock::new(home.lock_path()),
         config,
     })
+}
+
+/// ラッパーモードだけが使うアダプター。
+///
+/// ホームも config も読まない — ラッパーが必要とする情報はすべて起動引数で受け取る
+/// (ADR-006)。`Runtime` とは別の型にすることで、ラッパーの経路にホーム解決や設定の
+/// 読み込みが後から紛れ込まないようにする。
+pub struct WrapperRuntime {
+    runs: FsRunStore,
+    processes: SystemProcessController,
+}
+
+impl WrapperRuntime {
+    /// run ディレクトリの読み書き。
+    pub fn runs(&self) -> &FsRunStore {
+        &self.runs
+    }
+
+    /// プロセスの起動と観測。
+    pub fn processes(&self) -> &SystemProcessController {
+        &self.processes
+    }
+}
+
+/// run ディレクトリだけからラッパー用のアダプターを組む。
+///
+/// `--home` は `global = true` なので `wrapper` にも付くが、ラッパーはこれを使わない。
+/// tick が spawn したラッパーは `--home` を受け取らないため、ホームを解決すると既定の
+/// `~/.pulsen` へ落ちる。値が使われないことに依存した配線は次の変更で壊れる。
+pub fn compose_wrapper(run_dir: &RunDirPath) -> Result<WrapperRuntime, WireError> {
+    let state_root = run_dir
+        .state_root()
+        .ok_or_else(|| WireError::RunDirUnusable {
+            given: run_dir.as_path().to_path_buf(),
+        })?;
+
+    Ok(WrapperRuntime {
+        runs: FsRunStore::new(state_root),
+        processes: process_controller()?,
+    })
+}
+
+/// 自バイナリのパスと同定情報の取得元を解決してプロセス操作を組む。
+///
+/// `compose` には載せない — `ProcessController` を要するのはプロセスを起動する経路
+/// だけであり、`current_exe()` の失敗で `add` が落ちるのは筋が通らない(ADR-004)。
+pub fn process_controller() -> Result<SystemProcessController, WireError> {
+    let self_exe = env::current_exe().map_err(|error| WireError::SelfExeUnavailable {
+        message: error.to_string(),
+    })?;
+    Ok(SystemProcessController::new(
+        self_exe,
+        IdentitySource::platform_default(),
+        SystemClock::new(),
+    ))
 }
 
 /// タスクID発行の初期化に失敗した原因。

@@ -7,19 +7,32 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use pulsen::adapter::clock::SystemClock;
 use pulsen::adapter::process::{IdentitySource, SystemProcessController};
 use pulsen_conformance::{AgentBehavior, ProcessControllerHarness, Restore};
 use pulsen_domain::definition::CommandLine;
-use pulsen_domain::task::{Clock, Timestamp, WorktreePath};
+use pulsen_domain::execution::WrapperLaunchSpec;
+use pulsen_domain::task::{
+    AttemptNumber, Clock, RunDirPath, StateRoot, TaskId, Timestamp, WorktreePath,
+};
 use tempfile::TempDir;
+
+/// run ファイルの出現を待つ期限。負荷の高い環境でも spawn から書き込みまでが収まる余裕を取る。
+const RUN_FILE_DEADLINE: Duration = Duration::from_secs(30);
+/// 出現を確かめる間隔。
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// run ディレクトリの導出に使うタスクID(形式を満たす固定値)。
+const TASK_ID: &str = "20260811t091530-k3f9qa1b";
 
 /// 一時ディレクトリに worktree とログの置き場を用意するハーネス。
 struct SystemProcessControllerHarness {
     root: TempDir,
     controller: SystemProcessController,
     failing_identity: SystemProcessController,
+    failing_self_exe: SystemProcessController,
 }
 
 impl SystemProcessControllerHarness {
@@ -34,6 +47,12 @@ impl SystemProcessControllerHarness {
             IdentitySource::new(root.path().join("no-such-identity-source")),
             SystemClock::new(),
         );
+        // 同型に、存在しないパスを自バイナリとして注入したコントローラで起動不能を作る。
+        let failing_self_exe = SystemProcessController::new(
+            root.path().join("no-such-pulsen"),
+            IdentitySource::platform_default(),
+            SystemClock::new(),
+        );
         Self {
             root,
             controller: SystemProcessController::new(
@@ -42,31 +61,66 @@ impl SystemProcessControllerHarness {
                 SystemClock::new(),
             ),
             failing_identity,
+            failing_self_exe,
         }
+    }
+
+    /// デタッチ性を検証するフィクスチャの実行ファイル。
+    fn spawn_probe_program(&self) -> Option<PathBuf> {
+        example_program("spawn_probe")
+    }
+
+    /// `<state_root>/runs/<task-id>/attempt-1` を作って返す。
+    ///
+    /// ラッパーは run ディレクトリから状態のルートを復元するため、パスは
+    /// `RunDirPath::derive` の像でなければならない(ADR-015)。
+    fn prepared_run_dir(&self) -> Option<RunDirPath> {
+        let state_root = StateRoot::parse(self.dir("state")).ok()?;
+        let run_dir = RunDirPath::derive(
+            &state_root,
+            &TaskId::parse(TASK_ID.to_owned()).ok()?,
+            AttemptNumber::parse(1).ok()?,
+        );
+        fs::create_dir_all(run_dir.as_path()).ok()?;
+        Some(run_dir)
     }
 
     fn dir(&self, name: &str) -> PathBuf {
         self.root.path().join(name)
     }
 
-    /// テスト用エージェントの実行ファイル。
-    ///
-    /// パッケージ全体を対象にした `cargo test` は example もビルドするため、バイナリと
-    /// 同じ出力ディレクトリの `examples/` に置かれる。
-    fn probe_program(&self) -> Option<PathBuf> {
-        let binary = Path::new(env!("CARGO_BIN_EXE_pulsen"));
-        let program = binary
-            .parent()?
-            .join("examples")
-            .join(format!("agent_probe{}", env::consts::EXE_SUFFIX));
-        program.is_file().then_some(program)
-    }
-
     /// テスト用エージェントを起動するコマンドを組む。
     fn probe_command(&self, tokens: Vec<String>) -> Option<CommandLine> {
-        let mut all = vec![self.probe_program()?.to_str()?.to_owned()];
+        let mut all = vec![example_program("agent_probe")?.to_str()?.to_owned()];
         all.extend(tokens);
         CommandLine::rehydrate(all).ok()
+    }
+}
+
+/// 出力ディレクトリの `examples/` にある実行ファイル。
+///
+/// パッケージ全体を対象にした `cargo test` は example もビルドするため、バイナリと
+/// 同じ出力ディレクトリの `examples/` に置かれる。
+fn example_program(name: &str) -> Option<PathBuf> {
+    let binary = Path::new(env!("CARGO_BIN_EXE_pulsen"));
+    let program = binary
+        .parent()?
+        .join("examples")
+        .join(format!("{name}{}", env::consts::EXE_SUFFIX));
+    program.is_file().then_some(program)
+}
+
+/// 条件が満たされるまで期限つきで待つ。
+fn wait_until(condition: impl Fn() -> bool) -> bool {
+    let deadline = Instant::now() + RUN_FILE_DEADLINE;
+    loop {
+        if condition() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
@@ -141,6 +195,49 @@ impl ProcessControllerHarness for SystemProcessControllerHarness {
         fs::write(&path, b"#!/bin/sh\nexit 0\n").ok()?;
         deny_execute(&path)?;
         CommandLine::rehydrate(vec![path.to_str()?.to_owned()]).ok()
+    }
+
+    fn launch_spec(&self, behavior: AgentBehavior) -> Option<WrapperLaunchSpec> {
+        Some(WrapperLaunchSpec::new(
+            self.prepared_run_dir()?,
+            self.agent_command(behavior)?,
+            self.worktree()?,
+        ))
+    }
+
+    fn wait_for_run_files(&self, spec: &WrapperLaunchSpec) -> Option<bool> {
+        let run_dir = spec.run_dir().clone();
+        Some(wait_until(|| {
+            [
+                run_dir.starttime_file(),
+                run_dir.pid_file(),
+                run_dir.exit_file(),
+            ]
+            .iter()
+            .all(|path| path.is_file())
+        }))
+    }
+
+    fn spawn_from_other_process(&self, spec: &WrapperLaunchSpec) -> Option<()> {
+        let status = std::process::Command::new(self.spawn_probe_program()?)
+            .arg(env!("CARGO_BIN_EXE_pulsen"))
+            .arg(spec.run_dir().as_path())
+            .arg(spec.workspace().as_path())
+            .args(spec.agent_cmd().tokens())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status()
+            .ok()?;
+        status.success().then_some(())
+    }
+
+    fn failing_controller(&self) -> Option<&Self::Controller> {
+        Some(&self.failing_self_exe)
+    }
+
+    fn run_dir_is_empty(&self, spec: &WrapperLaunchSpec) -> Option<bool> {
+        let mut entries = fs::read_dir(spec.run_dir().as_path()).ok()?;
+        Some(entries.next().is_none())
     }
 }
 
@@ -230,4 +327,12 @@ fn allowed_skips() -> Vec<&'static str> {
 pulsen_conformance::process_controller_identity_conformance!(
     SystemProcessControllerHarness::new(),
     allowed_skips()
+);
+
+// `spawn` スイートはどのケースもスキップを許容しない。起動不能(TC-003)は自バイナリの
+// 注入で確定的に走り、デタッチ性(TC-002)は `examples/spawn_probe` を要するが、examples の
+// 不在は許容しない — 作り忘れを緑にしないため(ADR-010 / ADR-011)。
+pulsen_conformance::process_controller_spawn_conformance!(
+    SystemProcessControllerHarness::new(),
+    Vec::new()
 );

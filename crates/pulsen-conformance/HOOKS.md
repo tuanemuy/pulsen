@@ -39,6 +39,7 @@
 | TC-port-process-controller-025 | C | 書き込めないログの置き場を作れない（同上） | `permission_restrictions_effective` |
 | TC-port-process-controller-024 | B | exit code を持たない終了（シグナル死）を作れない（非 POSIX） | `agent_probe abort` がシグナル死になるプラットフォームか |
 | TC-port-process-controller-001 / 002 / 003 / 017〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため |
+| TC-port-process-controller-002 | B | 上記に加えて、デタッチ性のフィクスチャ（`examples/spawn_probe`）がビルドされていない | ハーネスが `spawn_from_other_process` を提供するか。同じく**スキップ許容集合には入れない** |
 | TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか |
 | TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか |
 | TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか |

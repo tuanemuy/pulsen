@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::LazyLock;
 
+use pulsen::adapter::process;
 use pulsen_conformance::{Restore, SkipBudget};
 use serde_json::Value;
 use tempfile::TempDir;
@@ -439,6 +440,88 @@ impl Add {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         }
     }
+}
+
+/// `pulsen wrapper` の1回の実行。
+pub struct Wrapper {
+    home_env: Option<OsString>,
+    run_dir: OsString,
+    workspace: OsString,
+    agent_cmd: Vec<OsString>,
+}
+
+/// ラッパーモードの起動を組み立てる。
+///
+/// argv は `SystemProcessController::spawn_wrapper` が使うのと同じ定数から組む。
+/// サブコマンド名とフラグ名の定義箇所はアダプターと CLI のパーサに分かれるため、
+/// 実バイナリを通した往復でしか受理を主張できない。
+pub fn wrapper(run_dir: impl AsRef<OsStr>, workspace: impl AsRef<OsStr>) -> Wrapper {
+    Wrapper {
+        home_env: None,
+        run_dir: run_dir.as_ref().to_owned(),
+        workspace: workspace.as_ref().to_owned(),
+        agent_cmd: Vec::new(),
+    }
+}
+
+impl Wrapper {
+    /// 環境変数 `PULSEN_HOME` を与える。
+    ///
+    /// ラッパーはホームも config も読まないので、ここで壊れたホームを指しても動作は
+    /// 変わらない。読まないことの観測に使う。
+    pub fn home_env(mut self, path: &Path) -> Self {
+        self.home_env = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// エージェントのコマンドのトークン列を与える。
+    pub fn agent_cmd(mut self, tokens: impl IntoIterator<Item = OsString>) -> Self {
+        self.agent_cmd = tokens.into_iter().collect();
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        let sandbox = detached_home(&mut command);
+        if let Some(home) = self.home_env {
+            command.env(HOME_ENV, home);
+        }
+        command
+            .arg(process::WRAPPER_SUBCOMMAND)
+            .arg(process::RUN_DIR_FLAG)
+            .arg(self.run_dir)
+            .arg(process::WORKSPACE_FLAG)
+            .arg(self.workspace)
+            .arg(process::COMMAND_SEPARATOR)
+            .args(self.agent_cmd);
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+}
+
+/// テスト用エージェントの実行ファイル。
+///
+/// パッケージ全体を対象にした `cargo test` は example もビルドするため、バイナリと同じ
+/// 出力ディレクトリの `examples/` に置かれる。
+pub fn agent_probe() -> Option<PathBuf> {
+    example_program("agent_probe")
+}
+
+/// 出力ディレクトリの `examples/` にある実行ファイル。
+pub fn example_program(name: &str) -> Option<PathBuf> {
+    let binary = Path::new(env!("CARGO_BIN_EXE_pulsen"));
+    let program = binary
+        .parent()?
+        .join("examples")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    program.is_file().then_some(program)
 }
 
 /// 任意の引数で実バイナリを1回起動する。

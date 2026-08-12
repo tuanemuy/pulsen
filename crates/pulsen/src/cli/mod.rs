@@ -8,6 +8,7 @@ pub mod args;
 pub mod exit;
 pub mod render;
 pub mod wire;
+pub mod wrapper;
 
 use std::process::ExitCode;
 
@@ -32,6 +33,14 @@ pub fn run() -> ExitCode {
             }
             Err(error) => {
                 eprintln!("{}", render::add_error(&error));
+                exit::FAILURE
+            }
+        },
+        // 結果は run ディレクトリのファイルとして現れる。標準出力には何も出さない。
+        Command::Wrapper(args) => match wrapper::execute(args) {
+            Ok(_) => exit::SUCCESS,
+            Err(error) => {
+                eprintln!("{}", render::wrapper_error(&error));
                 exit::FAILURE
             }
         },

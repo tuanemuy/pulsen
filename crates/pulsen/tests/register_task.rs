@@ -149,7 +149,7 @@ impl Doubles {
                 .with_branch_exists([Ok(true)]),
             ids: ScriptedTaskIdGenerator::new([task_id("20260811t091530-k3f9qa1b")]),
             clock: FixedClock::new(now()),
-            tasks: ScriptedTaskRepository::new([Ok(())]),
+            tasks: ScriptedTaskRepository::new().with_create([Ok(())]),
             lock: ScriptedExclusiveLock::new([LockOutcome::Acquired]),
         }
     }
@@ -355,7 +355,7 @@ fn tc_task_register_task_012_id衝突は再発行して1回だけ再試行され
             task_id("20260811t091530-k3f9qa1b"),
             task_id("20260811t091530-p7x2m4c5"),
         ]),
-        tasks: ScriptedTaskRepository::new([Err(CreateError::Conflict), Ok(())]),
+        tasks: ScriptedTaskRepository::new().with_create([Err(CreateError::Conflict), Ok(())]),
         ..Doubles::new()
     };
 
@@ -381,10 +381,8 @@ fn tc_task_register_task_047_再発行後も衝突したら実行環境のエラ
             task_id("20260811t091530-k3f9qa1b"),
             task_id("20260811t091530-p7x2m4c5"),
         ]),
-        tasks: ScriptedTaskRepository::new([
-            Err(CreateError::Conflict),
-            Err(CreateError::Conflict),
-        ]),
+        tasks: ScriptedTaskRepository::new()
+            .with_create([Err(CreateError::Conflict), Err(CreateError::Conflict)]),
         ..Doubles::new()
     };
 
@@ -398,7 +396,7 @@ fn tc_task_register_task_047_再発行後も衝突したら実行環境のエラ
 #[test]
 fn tc_task_register_task_048_タスクファイルの作成が入出力エラーなら実行環境のエラーになる() {
     let doubles = Doubles {
-        tasks: ScriptedTaskRepository::new([Err(CreateError::Io {
+        tasks: ScriptedTaskRepository::new().with_create([Err(CreateError::Io {
             message: "書き込めない".to_owned(),
         })]),
         ..Doubles::new()
@@ -419,7 +417,7 @@ fn ロックを取得できなければ何も観測せずに終わる() {
         workflows: ScriptedWorkflowStore::new([]),
         worktrees: ScriptedWorktreeManager::new(),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         lock: ScriptedExclusiveLock::new([LockOutcome::Busy]),
         ..Doubles::new()
     };
@@ -438,7 +436,7 @@ fn tc_task_register_task_018_ロック機構自体の異常は実行環境のエ
         workflows: ScriptedWorkflowStore::new([]),
         worktrees: ScriptedWorktreeManager::new(),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         lock: ScriptedExclusiveLock::new([LockOutcome::Failed {
             message: "ロックファイルを扱えない".to_owned(),
         }]),
@@ -460,7 +458,7 @@ fn ワークフロー指定が空文字列なら入力境界で拒否される()
         workflows: ScriptedWorkflowStore::new([]),
         worktrees: ScriptedWorktreeManager::new(),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
@@ -480,7 +478,7 @@ fn ワークフロー定義が見つからなければ解決を試みたパス�
         })]),
         worktrees: ScriptedWorktreeManager::new(),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
@@ -503,7 +501,7 @@ fn 表示名を決められないパス指定は拒否される() {
         ))]),
         worktrees: ScriptedWorktreeManager::new(),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
@@ -520,7 +518,7 @@ fn 表示名を決められないパス指定は拒否される() {
 fn ベースブランチが不正な形なら入力境界で拒否される() {
     let doubles = Doubles {
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
@@ -538,7 +536,7 @@ fn リポジトリの検証が返した分類はそのまま返り登録は行�
             worktrees: ScriptedWorktreeManager::new()
                 .with_validate_repo([Err(classification.clone())]),
             ids: ScriptedTaskIdGenerator::new([]),
-            tasks: ScriptedTaskRepository::new([]),
+            tasks: ScriptedTaskRepository::new(),
             ..Doubles::new()
         };
 
@@ -565,7 +563,7 @@ fn リポジトリも定義も不正なら対象の検証の結果が返る() {
         worktrees: ScriptedWorktreeManager::new()
             .with_validate_repo([Err(TargetError::NotARepository)]),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
@@ -585,7 +583,7 @@ fn headのブランチを解決できない分類はそのまま返り登録は�
                 .with_validate_repo([Ok(())])
                 .with_head_branch([Err(classification.clone())]),
             ids: ScriptedTaskIdGenerator::new([]),
-            tasks: ScriptedTaskRepository::new([]),
+            tasks: ScriptedTaskRepository::new(),
             ..Doubles::new()
         };
 
@@ -657,7 +655,7 @@ fn tc_task_register_task_040_git操作自体の失敗は実行環境のエラー
         let doubles = Doubles {
             worktrees,
             ids: ScriptedTaskIdGenerator::new([]),
-            tasks: ScriptedTaskRepository::new([]),
+            tasks: ScriptedTaskRepository::new(),
             ..Doubles::new()
         };
 
@@ -677,7 +675,7 @@ fn 存在しないベースブランチは拒否される() {
             .with_validate_repo([Ok(())])
             .with_branch_exists([Ok(false)]),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
@@ -732,7 +730,7 @@ fn 登録時検証のエラーは全件まとめて返り登録は行われな�
             PathBuf::from("/home/u/.pulsen/workflows/implement.yaml"),
         ))]),
         ids: ScriptedTaskIdGenerator::new([]),
-        tasks: ScriptedTaskRepository::new([]),
+        tasks: ScriptedTaskRepository::new(),
         ..Doubles::new()
     };
 
