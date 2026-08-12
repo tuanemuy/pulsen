@@ -417,3 +417,28 @@
 | 他の適合スイートの単体実行（`conformance_worktree` / `conformance_time_id` / `conformance_config_store` / `conformance_workflow_store` / `conformance_task_repository`） | すべて `0 failed`。SKIP は `tc_port_clock_005`（`rewind`）の1件のみで、同種の適用漏れは無い |
 | example を退避した `cargo test --test cli_add_error` | `31 passed`。`tc_task_register_task_017` が SKIP 行つきで通り、適合スイート側と同じ扱いになっている |
 | `grep -c '^## 検討した代替案' .adr/*.md` の全件走査 | 見出しを持つ ADR がすべて `##` レベルで一致し、`## 決定` より後ろにある |
+
+## ラウンド6
+
+Blocker 0 / Warning 1。実装に残る欠陥はゼロで、指摘は出荷ドキュメントの表が5周目の修正に追いついていない1件のみ。
+
+### 判定
+
+| ID | Key（照合キー） | 判定 | 理由 | 再指摘回数 |
+|----|----------------|------|------|-----------|
+| R6-W-001 | HOOKS.md「環境で走らなくなりうる行」の表 | fix | 5周目 R5-W-001 で `conformance_lock.rs` を probe 判定に直したが、後続スライスが `allowed_skips` を組むときに読む正本（HOOKS.md）の表に TC-port-exclusive-lock-002/003/004/005 が載っていない。表どおりに宣言を組むと R5-W-001 が実測した「単体実行で 4 failed」が再発する | 1（5周目 R5-W-001） |
+
+### 反映
+
+- `crates/pulsen-conformance/HOOKS.md`: 「環境で走らなくなりうる行」の表に TC-port-exclusive-lock-002/003/004/005 の行を追加し、ExclusiveLock 節から当該表への導線を1行足した
+- `.thread/1/progress.md`: 「環境によってスキップされるケース」の表に同じ4件を追加
+
+コードの変更なし。
+
+### 追加（メインが検証中に観測）
+
+| ID | Key（照合キー） | 判定 | 理由 | 再指摘回数 |
+|----|----------------|------|------|-----------|
+| R6-W-002 | tests/common/lock.rs spawn_holder の合図待ち | fix | 保持プロセスの合図を `read_line` で無期限に待つため、合図も終了も返さないプロセスに当たるとフィクスチャがハングする。メインが 62 秒のハングを実測（並行実行との競合が引き金だが、待ち方そのものが原因）。ADR-060 / 063 が「並行の待ちは期限を持ち、ハングではなく失敗させる」と定めた原則の適用漏れ | 0 |
+
+反映: `spawn_holder` の合図待ちを 10 秒の期限つきにし、期限超過なら保持プロセスを終了して `None`（前提を作れない環境）を返す形にした。合図を返さない保持プロセスを注入して、120 秒待たずに 10 秒で打ち切り、`SkipBudget` が宣言外のスキップとして**失敗**させることを実測で確認した。

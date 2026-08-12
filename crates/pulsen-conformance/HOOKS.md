@@ -36,6 +36,7 @@
 | TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか |
 | TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか |
 | TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか |
+| TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 別プロセスにロックを保持させる実行ファイルが無い（単一テストターゲットを指定した実行では example がビルドされない） | ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか |
 
 ## 適用範囲
 
@@ -180,6 +181,8 @@ ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` /
 | TC-port-task-id-generator-005 | なし | A | `generate` + `WorktreePath` / `BranchName::parse` / `TaskFilePath::active` の導出（基点は `std::env::temp_dir()`。ファイルは作らない） |
 
 ## ExclusiveLock（7行 / A 1・B 5・C 1）
+
+TC-002〜005 は別プロセスに保持させる実行ファイルを要するため、環境で走らなくなりうる（「環境で走らなくなりうる行」を参照）。
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|

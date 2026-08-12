@@ -23,6 +23,7 @@
 | TC-task-register-task-021（ワークフロー定義が読めない） | 同上 |
 | TC-task-register-task-036（git リポジトリでないパス） | 一時ディレクトリ自体が git リポジトリ配下にある |
 | TC-task-register-task-017（ロック競合） | `examples/lock_holder` を起動できない |
+| TC-port-exclusive-lock-002 / 003 / 004 / 005 | 同上（単一テストターゲットを指定した実行では example がビルドされない） |
 | TC-port-clock-005（時刻の巻き戻し） | ステップ13から継続。システム時計を過去に設定できないため常にスキップ |
 
 スキップは適合スイート・受け入れテストとも `SkipBudget` で許容ケース名を宣言し、集合外のスキップは失敗になる。上表の CLI 4件はこの環境（macOS・非 root・TMPDIR はリポジトリ外）では実走するため、許容集合は空である。
