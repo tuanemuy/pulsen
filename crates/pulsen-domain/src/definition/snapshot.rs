@@ -10,7 +10,7 @@ use super::workflow::{StatusDefinition, WorkflowDefinition};
 ///
 /// 生成経路は「登録時検証の通過」と「永続化からの再構築」の2つだけ。構造検証は
 /// `WorkflowDefinition` の生成時に済んでおり、グローバル設定との再突き合わせは行わない
-/// (登録後の config.yaml 編集は読み込みを失敗させず、実行時に表面化させる。requirements §7.1)。
+/// (登録後の config.yaml 編集は読み込みを失敗させず、実行時に表面化させる)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkflowSnapshot(WorkflowDefinition);
 

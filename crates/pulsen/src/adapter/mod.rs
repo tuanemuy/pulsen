@@ -1,4 +1,4 @@
-//! ポートの実装。ファイルシステム・git・プロセスなど環境依存の詳細はここに閉じ込める。
+//! ポートの実装。
 
 pub mod clock;
 pub mod config_store;

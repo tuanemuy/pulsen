@@ -169,9 +169,7 @@ impl WorkflowDefinition {
     ///
     /// エージェント実行以外のステータスには適用対象がないため `None` を返す。
     /// **引数のステータス名がこの定義に属することは呼び出し側の責務**で、属さない名前は
-    /// 適用対象を持たないステータスと同じ扱い(`None`)になる。この責務は実在する2経路の
-    /// どちらでも満たされる — 定義内を走査する呼び出し(登録時検証)は `statuses()` の
-    /// キーをそのまま渡し、タスク経由の呼び出しはタスク側の不変条件が保証する。
+    /// 適用対象を持たないステータスと同じ扱い(`None`)になる。
     pub fn effective_agent(&self, status: &StatusName) -> Option<&AgentName> {
         match self.statuses.get(status) {
             Some(StatusDefinition::AgentRun { agent, .. }) => {

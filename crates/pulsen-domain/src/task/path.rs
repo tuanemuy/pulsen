@@ -149,7 +149,6 @@ impl TaskFilePath {
 mod tests {
     use super::*;
 
-    /// プラットフォームで絶対になるパスを組み立てる。
     fn absolute(segments: &[&str]) -> PathBuf {
         let mut path = if std::path::MAIN_SEPARATOR == '\\' {
             PathBuf::from("C:\\")

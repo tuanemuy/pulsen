@@ -36,10 +36,8 @@ pub struct FsConfigStore {
 }
 
 impl FsConfigStore {
-    /// 読み込む config.yaml のパスと、未初期化の案内に使う解決後のホームパスを受け取る。
-    ///
-    /// ホームのレイアウト導出はアプリケーション層の責務(ADR-031)であり、アダプターは
-    /// 導出済みのパスを受け取るだけにする。
+    /// 読み込む config.yaml のパスと、未初期化の案内に使う解決後のホームパスを受け取る
+    /// (レイアウトの導出はアプリケーション層。ADR-031)。
     pub fn new(config_path: PathBuf, home: PathBuf) -> Self {
         Self { config_path, home }
     }

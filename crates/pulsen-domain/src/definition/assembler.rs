@@ -326,8 +326,7 @@ fn assemble_run_status(
         }
     };
 
-    // エージェント実行にのみ許されるキー。案内に出す名前と「書かれているか」を組で並べる
-    // ことで、片方だけ並べ替えても別のキー名が案内される取り違えが起こらない。宣言順に検査する。
+    // エージェント実行にのみ許されるキー。宣言順に検査する。
     for (key, is_present) in [
         ("agent", options.agent.is_some()),
         ("model", options.model.is_some()),

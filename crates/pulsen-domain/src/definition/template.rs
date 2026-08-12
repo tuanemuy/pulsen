@@ -93,7 +93,7 @@ pub enum AgentInput {
 }
 
 /// 展開に与える値。`skill` は持たない — `{skill}` は `SkillInputTemplate` 専用で
-/// コマンドテンプレートには現れない(requirements §3.1)。
+/// コマンドテンプレートには現れない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlaceholderValues {
     /// `{input}` の値。

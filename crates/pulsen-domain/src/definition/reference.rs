@@ -54,7 +54,7 @@ impl WorkflowRef {
     /// タスクに記録するワークフロー名を決める。
     ///
     /// 名前指定では YAML の `workflow:` キーを使わない — キーが表示名になるのは
-    /// ファイルパス指定のときだけ(requirements §7)。
+    /// ファイルパス指定のときだけ。
     pub fn display_name(&self, declared: Option<&WorkflowName>) -> Result<WorkflowName, NameError> {
         match self {
             Self::Name(name) => Ok(name.clone()),

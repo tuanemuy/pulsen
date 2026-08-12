@@ -1,8 +1,7 @@
 //! ファイルのアトミックな置換と移動。
 //!
 //! 読み手はロックなしで常に一貫した内容を見る、という永続化ポートの契約
-//! (spec/domains/task.md `TaskRepository`)を支える唯一の実装。個別のアダプターで
-//! 再実装しない(CLAUDE.md 技術方針)。
+//! (spec/domains/task.md `TaskRepository`)を支える唯一の実装。
 
 use std::io::{self, Write};
 use std::path::Path;
