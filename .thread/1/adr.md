@@ -1154,3 +1154,29 @@ TC-port-task-repository-042 / 044 は、読み手のスレッドを `AtomicBool`
 - 良い点: 「並行観測のケースは、対象が `Err` を返してもハングではなく失敗する」が停止の実装そのもので保証される。期限監視を足さずに済む
 - 良い点: 読み手側がアサーションで落ちる経路は書き手のループが有限（`SAVE_ROUND_LIMIT` と `yield_until_observations_exceed` の期限）なので、両方向でハングしない
 - トレードオフ: 停止のタイミングがクロージャの末尾に暗黙化する。ガードの doc に理由を残さないと、フラグを倒す文が無いことが読み取れない
+
+---
+
+## ADR-064: 内容へ到達できないエントリは検索でも破損として扱い、作成では使用済みとみなす
+
+### Status
+Accepted（`.adr/064-unreachable-entry-is-corrupt-in-find-and-create.md` に昇格）
+
+### Context
+
+タスクファイルの読み取りで `fs::read` が `NotFound` を返す状況は2つある。「その領域にもうエントリが無い」（`archive` による移動を含む）と、「エントリは残っているのに内容へ到達できない」（実体を失ったシンボリックリンク、手動修復の中途など）である。
+
+走査は `symlink_metadata` で両者を分けて後者を `TaskEntry::Corrupt` として報告する一方、`lookup` は `fs::read` の `NotFound` だけを見て `TaskLookup::NotFound` に写していた。同じ1つのファイルを `ls` は「読めない」と報告し、`show` / `abort` / `retry` は「存在しない」と答える。`create` の存在確認も `try_exists`（リンクを辿る）だったため、同じエントリを未使用の ID とみなして上書きしうる。
+
+spec/domains/task.md は `TaskLookup::Corrupt` を「ファイル全体が読めない」と定義し、spec/testcases/ports/task-repository.md の `list_active` 行は「`find` と同じ区分で列挙される」と定める。
+
+### Decision
+
+「エントリの有無」を消失と到達不能を分ける唯一の述語とし、`find` と走査の双方が同じ判定を通る。到達できないエントリは `find` では `TaskLookup::Corrupt`、走査では `TaskEntry::Corrupt`。`create` の存在確認はリンクを辿らず、エントリが残っていれば `Conflict` を返す。領域にエントリが無い場合だけ「無い」と答え、`archive` の中間状態を失敗として観測させない。
+
+### Consequences
+
+- 良い点: `find` / 走査 / `create` が同じ述語を共有し、後続スライスの `ls` / `show` / `abort` / `retry` が同じ ID について食い違う答えを返さない
+- 良い点: 修復材料の上書きが起きない。読めないファイルも「その ID は使われている」ことの証拠として扱われる
+- トレードオフ: 到達できないエントリが残る限り、その ID での `create` は `Conflict` を返し続ける（ID は再発行できるため実害は無い）
+- 適合スイートのフックは内容の文字列を受け取る形で到達できないエントリを作れないため、この状況はアダプター側のユニットテスト（unix 限定）が固定し、適合スイートは TC-port-task-repository-029 で一般の契約（`find` と走査は同じ区分）を見る

@@ -339,3 +339,43 @@
 | R3-W-003 | `HOOKS.md` の「区分 C = 権限制限」の一般化をやめ、「環境で走らなくなりうる行」の節を新設して12行（+ 区分 B の worktree-manager-003）ごとに「前提を作れない環境」と「判定」を表にした。:192 の worktree-manager-009 に `repo_with_commit` / `head_branch_name` を追記 |
 | R3-W-004 | `.thread/1/adr.md:5` に「ADR-056〜059 は欠番（採番したまま使わなかった番号で、決定が失われたわけではない）」を明記。`.adr/` だけを見る読み手のために、採番規則の正本 `.adr/035-file-slice-adrs-from-019.md` の決定にも同じ事実を1行足した |
 | R3-W-005 | `WorkflowStructureError` に `describe_initial_not_found(&str)` / `describe_next_not_found(&str, &str)` を置き、`describe()` と `render.rs` の両方がそれを呼ぶ形にした（`WorkflowParseError` は spec どおりステータス名を `String` で持つため、文字列で受け取る口を公開する理由を why として残した）。文言の定義箇所が1つになった |
+
+## ラウンド4
+
+最終レビュー1本の3件（B 0 / W 3）。統合した組は無く、そのまま **3件**（B 0 / W 3）。判定は **fix 3 / wont-fix 0 / defer 0**。1周目の wont-fix 3件（W-004 / W-012 / W-017）はレビューが冒頭で明示的に対象外と宣言しており、**wont-fix の継承は0件**。Key が一致する既出指摘は R4-W-001 の1件で、過去の判定が `fix` なので判定を継承して再指摘回数を +1 した。
+
+### 判定
+
+| ID | Key（照合キー） | 判定 | 理由 | 再指摘回数 |
+|----|----------------|------|------|-----------|
+| R4-W-001 | adapter/task_repository.rs lookup と list の NotFound の写し先 | fix | 実コードで確認: `list`（:113-135）は `fs::read` の `NotFound` を `symlink_metadata` で切り分けて `TaskEntry::Corrupt` を報告するのに、`lookup`（:59-63）は同じ状況を `Ok(None)` に写すため `find` は `NotFound` を返す。spec/domains/task.md:287 は `Corrupt` を「ファイル全体が読めない」と定義し、spec/testcases/ports/task-repository.md:59 は `list_active` が「`find` と同じ区分で列挙される」と定めるので、**`list` 側が正**。`create` の存在確認（`try_exists`）も同じエントリを未使用の ID と見て上書きしうる。呼び出し元は本スライスに無いが、契約は後続スライスの `ls` / `show` / `abort` / `retry` が継承する。2周目 R2-W-012 の修正が `list` だけに届いて生じた非対称 | 1（2周目 R2-W-012） |
+| R4-W-002 | tests/cli_add_normal.rs TC-010 の主張と検証の乖離 | fix | :204 と :215 の間に `pulsen` の起動が1回も無く、`state/tasks/*.json` を書くものが走らないことを確認。:210-213 の YAML 書き換えはタスクファイルに触れないため、:215 は同じ内容を読み直しているだけでどの実装でも真になる。レビュアーの変異実測（`replace` を no-op にしても緑）とも一致。テスト名が主張する ADR-015 の独立性は無検証で、CLAUDE.md「テストは振る舞いを表す」に反する | 0 |
+| R4-W-003 | tests/cli_add_normal.rs TC-009 の Value::Null 比較 | fix | `serde_json::Value` の `Index<&str>` はキー不在で `Value::Null` を返すため、`task["workspace"] == Value::Null` は「`null` として書かれている」を主張できない。:183 の `task["task_status"] == task["snapshot"]["initial"]` は**両方が不在でも真**になり、AC-17 の「スナップショットが埋め込まれている」を落とせない。タスクファイルは人間が直接閲覧・修復する対象（requirements §9）なのでキーの不在は利用者に見える退化 | 0 |
+
+### wont-fix / defer
+
+なし。3件すべて fix。
+
+- レビューは冒頭で1周目の wont-fix 3件を対象外と宣言しており、実際に W-004 / W-012 / W-017 は1件も再指摘されていない。
+- 誤りと判定できる指摘は無かった。3件とも該当コードと spec の該当行を読み、`lookup` と `list` の分岐の非対称、TC-010 の2つの読み取りの間に起動が無いこと、キー不在でも通る比較を裏付けた。
+- スコープ外に出すものは無い。3件とも本 PR 内で完結する。
+
+### 反映内容（ラウンド4）
+
+| ID | 反映 |
+|----|------|
+| R4-W-001 | 「エントリの有無」を消失と到達不能を分ける唯一の述語（`unreachable_entry`）として `crates/pulsen/src/adapter/task_repository.rs` に1つ置き、`lookup` と `list` の双方がそれを通る形にした。到達できないエントリは `find` が `TaskLookup::Corrupt`、走査が `TaskEntry::Corrupt`。`exists` はリンクを辿らない判定に変え、`create` の doc が掲げる「破損したファイルも ID が使われている証拠」を全ケースで成立させた。`crates/pulsen-domain/src/task/port.rs` の契約 doc を `find` を含む形（「消失と到達不能」）に書き直した。判断は ADR-064 として起票（`.adr/064-unreachable-entry-is-corrupt-in-find-and-create.md`）。適合スイートは TC-port-task-repository-029 が「`find` と走査は同じ区分」を既に見ており、フックの集合では到達できないエントリを作れないため件数（44件）は変えず、この状況はアダプターのユニットテスト（unix 限定・検索 / 走査 / 作成の3本）で固定した |
+| R4-W-002 | TC-010 を「書き換えの後にもう1件登録する」形に変え、(a) 書き換えが元の定義を実際に変えること、(b) 新しいタスクに編集後のプロンプトが入ること、(c) 既存タスクのスナップショットが登録時点のままであることの3点を見るようにした。ADR-015 の主張が実際に落ちる形になり、`replace` が no-op になれば失敗する |
+| R4-W-003 | TC-009 の `task_status` と `snapshot.initial` をリテラル（`"queued"`）に対して固定し、`workspace` / `current_attempt` / `last_failure` は `Value::get` でキーの存在を見てから `null` と比べる形にした。キーが消えれば失敗する |
+
+### 反映の検証（意図的な変異での実測）
+
+| 変異 | 期待 | 実測 |
+|---|---|---|
+| `unreachable_entry` の到達不能枝を `Ok(None)` にする（R2-W-012 以前の `lookup` と同じ扱いに戻す） | 検索・走査の両方が落ちる | `内容へ到達できないエントリは検索でも走査と同じ区分で返る` と `…走査から落とさず破損として報告される` の2件が FAILED |
+| TC-010 の `replace` の検索文字列を存在しない文字列にする（レビュアーの変異と同じ） | TC-010 が落ちる | FAILED（`書き換えは元の定義を実際に変える`） |
+| `create` が同じ内容を現役ディレクトリの全ファイルへ書く（登録が既存タスクに影響する実装） | TC-010 が落ちる | FAILED（登録済みのタスクが残っていない） |
+| `TaskFileDto` の `workspace` / `current_attempt` / `last_failure` に `skip_serializing_if = "Option::is_none"` を付ける | TC-009 が落ちる | FAILED（`workspace は null で書かれる`） |
+| `task_status` と `snapshot` の JSON キー名を変える（両方が不在になる） | TC-009 が落ちる | 修正後は FAILED。同じ変異の下で修正前の比較（`task["task_status"] == task["snapshot"]["initial"]`）に戻すと **ok で通る**ことも実測し、キー不在を検出できるようになったことを確認した |
+
+いずれの変異も検証後に復元し、`git diff` に残っていないことを確認した。

@@ -43,6 +43,14 @@ fn assert_repo_is(task: &Value, expected: &Path) {
     );
 }
 
+/// タスクIDで1件を取り出す。
+fn task_with_id<'a>(tasks: &'a [Value], id: &Value) -> &'a Value {
+    tasks
+        .iter()
+        .find(|task| &task["task_id"] == id)
+        .unwrap_or_else(|| panic!("タスク {id} が残っている"))
+}
+
 #[test]
 fn tc_task_register_task_001_名前指定の登録でタスクidが表示され0で終了する() {
     let home = Home::new();
@@ -180,14 +188,21 @@ fn tc_task_register_task_009_登録直後のタスクは初期ステータスの
         .assert_succeeded();
 
     let task = home.only_task();
-    assert_eq!(task["task_status"], task["snapshot"]["initial"]);
+    assert_eq!(task["snapshot"]["initial"], "queued");
+    assert_eq!(task["task_status"], "queued");
     assert_eq!(task["execution"]["state"], "pending");
     assert_eq!(task["counters"]["attempt_count"], 0);
     assert_eq!(task["counters"]["judge_attempt_count"], 0);
     assert_eq!(task["counters"]["spawn_fail_count"], 0);
-    assert_eq!(task["workspace"], Value::Null);
-    assert_eq!(task["current_attempt"], Value::Null);
-    assert_eq!(task["last_failure"], Value::Null);
+    // 未設定は「キーが `null` で書かれている」ことまで見る。タスクファイルは人間が直接
+    // 閲覧・修復する対象(requirements §9)であり、キーの消失は利用者に見える退化になる。
+    for key in ["workspace", "current_attempt", "last_failure"] {
+        assert_eq!(
+            task.get(key),
+            Some(&Value::Null),
+            "{key} は null で書かれる"
+        );
+    }
 }
 
 #[test]
@@ -201,18 +216,38 @@ fn tc_task_register_task_010_埋め込まれたスナップショットは元yam
         .run()
         .assert_succeeded();
 
-    let embedded = home.only_task()["snapshot"].clone();
+    let registered = home.only_task();
+    let embedded = registered["snapshot"].clone();
     assert_eq!(
         embedded["statuses"]["queued"]["input"]["prompt"],
         "実装して"
     );
 
-    home.write_workflow(
-        "implement",
-        &WORKFLOW.replace("prompt: 実装して", "prompt: 別の指示"),
-    );
+    let edited = WORKFLOW.replace("prompt: 実装して", "prompt: 別の指示");
+    assert_ne!(edited, WORKFLOW, "書き換えは元の定義を実際に変える");
+    home.write_workflow("implement", &edited);
 
-    assert_eq!(home.only_task()["snapshot"], embedded);
+    // 編集後にもう1件登録する。新しいタスクに編集が反映され、既存のタスクは登録時点の
+    // 内容のままであることを同時に見て初めて「スナップショットは登録時に固定される」が
+    // 検証される。
+    add("implement", repo.path())
+        .home(home.path())
+        .run()
+        .assert_succeeded();
+
+    let tasks = home.tasks();
+    assert_eq!(tasks.len(), 2, "2件登録されている");
+    let previous = task_with_id(&tasks, &registered["task_id"]);
+    let latest = tasks
+        .iter()
+        .find(|task| task["task_id"] != registered["task_id"])
+        .expect("後から登録したタスクがある");
+
+    assert_eq!(previous["snapshot"], embedded, "既存タスクは影響を受けない");
+    assert_eq!(
+        latest["snapshot"]["statuses"]["queued"]["input"]["prompt"], "別の指示",
+        "新しい登録には編集後の内容が入る"
+    );
 }
 
 #[test]
