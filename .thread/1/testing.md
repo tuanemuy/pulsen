@@ -314,7 +314,7 @@ grep -rn 'cfg(unix)\|cfg(windows)' crates/*/src/
 - **対応する受け入れ基準:** AC-13, AC-15
 - **目的:** 壊れた設定で部分的に動作せず、エラー位置と未知キーが具体的に示されることを確認する（setup.md TC-13 手順1・2・4・5、TC-14 の読み替え b）。
 - **手順:**
-  1. `printf 'agents:\nshell:\n    cmd: ["sh"]\n' > "$PULSEN_HOME/config.yaml"` でインデントを崩す
+  1. `printf 'agents:\n  shell:\n    cmd: ["sh"\n' > "$PULSEN_HOME/config.yaml"` で角括弧を閉じ忘れる（インデント崩しは別のトップレベルキーになるだけで構文としては妥当なので、構文エラーにならない）
   2. `pulsen add --workflow implement --repo "$REPO"; echo $?`
   3. `cp "$WORK/config.bak" "$PULSEN_HOME/config.yaml" && printf 'run_retension: 30d\n' >> "$PULSEN_HOME/config.yaml"`（typo キー）
   4. `pulsen add --workflow implement --repo "$REPO"; echo $?`
@@ -350,7 +350,7 @@ grep -rn 'cfg(unix)\|cfg(windows)' crates/*/src/
     printf 'agent: shell\ninitial: start\nstatuses:\n  start:\n    run: clenaup\n' > "$WORK/e-bad-run.yaml"                                  # UnknownRunValue
     printf 'agent: shell\ninitial: start\nstatuses:\n  start:\n    prompt: "hi"\n    next: waiting\n  waiting:\n    run: wait\n    judge: ["sh", "-c", "true"]\n' > "$WORK/e-forbidden.yaml"  # ForbiddenKey
     printf 'agent: shell\ninitial: start\nstatuses:\n  start:\n    prmopt: "hi"\n    next: start\n' > "$WORK/e-unknown-key.yaml"             # UnknownKey
-    printf 'agent: shell\ninitial: start\nstatuses:\nstart:\n    prompt: "hi"\n' > "$WORK/e-syntax.yaml"                                     # YamlSyntax
+    printf 'agent: shell\ninitial: start\nstatuses:\n  start:\n    prompt: "hi\n' > "$WORK/e-syntax.yaml"                                    # YamlSyntax(引用符の閉じ忘れ)
     printf 'agent: shell\ninitial: start\nstatuses:\n  start:\n    prompt: "hi"\n    next: waiting\n  start:\n    run: wait\n  waiting:\n    run: wait\n' > "$WORK/e-dup.yaml"  # YamlSyntax(重複キー)
     printf 'agent: shell\ninitial: start\nstatuses:\n  start:\n    prompt: "hi"\n    timeout: 0s\n    next: start\n' > "$WORK/e-timeout0.yaml"  # InvalidValue
 

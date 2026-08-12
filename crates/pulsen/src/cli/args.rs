@@ -36,9 +36,9 @@ pub struct AddArgs {
     pub repo: PathBuf,
 
     /// ベースブランチ(省略時はリポジトリの HEAD が指すブランチ)
-    ///
-    /// `-` で始まる値も値として受け取る — 「先頭が `-` のブランチ名」はドメインが
-    /// 拒否する対象であり、引数の使い方の誤りではない(spec 境界値)。
+    // doc コメントは clap がヘルプ本文にするため、実装の理由はここに置く。
+    // `-` で始まる値も値として受け取る — 「先頭が `-` のブランチ名」はドメインが
+    // 拒否する対象であり、引数の使い方の誤りではない(spec 境界値)。
     #[arg(long, value_name = "BRANCH", allow_hyphen_values = true)]
     pub base: Option<String>,
 }
