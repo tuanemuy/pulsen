@@ -26,6 +26,28 @@ pub enum BranchNameError {
     LockSuffix,
 }
 
+impl BranchNameError {
+    /// 制約の説明。
+    ///
+    /// `--base` の案内と、破損したタスクファイルの理由の両方に載る。層ごとに書くと
+    /// 同じ誤りの案内が食い違うため、定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Empty => "空文字列は指定できません".to_owned(),
+            // 制御文字や空白も位置つきで見えるように、文字は Debug 表現で示す。
+            Self::ContainsWhitespaceOrControl { char, position } => format!(
+                "{}文字目に空白または制御文字({char:?})を含む名前は使えません",
+                position + 1
+            ),
+            Self::LeadingHyphen => "`-` で始まる名前は使えません".to_owned(),
+            Self::ContainsDotDot => "`..` を含む名前は使えません".to_owned(),
+            Self::LeadingSlash => "`/` で始まる名前は使えません".to_owned(),
+            Self::TrailingSlash => "`/` で終わる名前は使えません".to_owned(),
+            Self::LockSuffix => "`.lock` で終わる名前は使えません".to_owned(),
+        }
+    }
+}
+
 /// git 参照名として有効な実用サブセットのブランチ名。
 ///
 /// git が許す全体ではなく、ツールが安全に扱える範囲に狭める。git 側で有効でも

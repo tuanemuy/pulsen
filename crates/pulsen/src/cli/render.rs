@@ -10,7 +10,7 @@ use pulsen_domain::definition::{
     TemplateError, WorkflowLoadError, WorkflowParseError,
 };
 use pulsen_domain::execution::TargetError;
-use pulsen_domain::task::{AbsolutePathError, BranchNameError, CreateError};
+use pulsen_domain::task::{AbsolutePathError, CreateError};
 
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
 
@@ -116,13 +116,13 @@ fn register_error(error: &RegisterTaskError) -> String {
         }
         RegisterTaskError::InvalidWorkflowRef(error) => problem(
             "--workflow の値が不正です。",
-            &[format!("原因: {}", name_error(error))],
+            &[format!("原因: {}", error.describe())],
         ),
         RegisterTaskError::WorkflowLoad(error) => workflow_load_error(error),
         RegisterTaskError::UndecidableWorkflowName(error) => problem(
             "ワークフロー名を決められません。",
             &[
-                format!("原因: ファイル名から決めた名前が{}", name_error(error)),
+                format!("原因: ファイル名から決めた名前が{}", name_predicate(error)),
                 "定義YAMLの workflow: キーで名前を明示してください。".to_owned(),
             ],
         ),
@@ -132,7 +132,7 @@ fn register_error(error: &RegisterTaskError) -> String {
         ),
         RegisterTaskError::InvalidBaseBranch(error) => problem(
             "--base の値がブランチ名として不正です。",
-            &[format!("原因: {}", branch_name_error(error))],
+            &[format!("原因: {}", error.describe())],
         ),
         RegisterTaskError::Target(error) => target_error(error),
         RegisterTaskError::BaseBranchNotFound { branch } => problem(
@@ -326,27 +326,16 @@ fn template_error(error: &TemplateError) -> String {
     }
 }
 
-/// 名前系の生成エラー。
-fn name_error(error: &NameError) -> String {
+/// 名前系の生成エラーを、文中に埋める述語形で言い換える。
+///
+/// 制約そのものの説明は `NameError::describe()` が正本で、CLI もそちらを呼ぶ。ここが
+/// 別形を持つのは「ファイル名から決めた名前が〜」のように**文の途中に埋める**用途に
+/// 限られ、`describe()` の文(「空文字列は指定できません」)をそのまま差し込むと日本語が
+/// 壊れるため。制約が増えたときに直す先は `describe()` であり、こちらはその言い換え。
+fn name_predicate(error: &NameError) -> String {
     match error {
         NameError::Empty => "空文字列です".to_owned(),
         NameError::SurroundingWhitespace => "前後に空白を含みます".to_owned(),
-    }
-}
-
-/// ブランチ名の生成エラー。
-fn branch_name_error(error: &BranchNameError) -> String {
-    match error {
-        BranchNameError::Empty => "空文字列です".to_owned(),
-        BranchNameError::ContainsWhitespaceOrControl { char, position } => format!(
-            "{}文字目に空白または制御文字({char:?})を含みます",
-            position + 1
-        ),
-        BranchNameError::LeadingHyphen => "`-` で始まっています".to_owned(),
-        BranchNameError::ContainsDotDot => "`..` を含みます".to_owned(),
-        BranchNameError::LeadingSlash => "`/` で始まっています".to_owned(),
-        BranchNameError::TrailingSlash => "`/` で終わっています".to_owned(),
-        BranchNameError::LockSuffix => "`.lock` で終わっています".to_owned(),
     }
 }
 

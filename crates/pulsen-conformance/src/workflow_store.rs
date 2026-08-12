@@ -13,8 +13,8 @@
 use std::path::PathBuf;
 
 use pulsen_domain::definition::{
-    AgentInput, AgentName, LoadedWorkflow, ModelName, PlainCommand, SkillName, StatusDefinition,
-    StatusName, TimeoutSpec, WorkflowDefinition, WorkflowLoadError, WorkflowName,
+    AgentInput, AgentName, LoadedWorkflow, ModelName, PlainCommand, Prompt, SkillName,
+    StatusDefinition, StatusName, TimeoutSpec, WorkflowDefinition, WorkflowLoadError, WorkflowName,
     WorkflowParseError, WorkflowRef, WorkflowStore,
 };
 
@@ -129,6 +129,15 @@ statuses:
     );
     assert_eq!(definition.initial(), &status("queued"));
     assert_eq!(definition.statuses().len(), 3);
+    match expect_status(definition, "queued") {
+        StatusDefinition::AgentRun { input, next, .. } => {
+            assert_eq!(input, &AgentInput::Prompt(prompt("実装して")));
+            assert_eq!(next, &status("waiting"));
+        }
+        StatusDefinition::Wait | StatusDefinition::Cleanup => {
+            panic!("prompt を持つステータスはエージェント実行として読み込まれる")
+        }
+    }
     assert_eq!(
         definition.status(&status("waiting")),
         Some(&StatusDefinition::Wait)
@@ -795,6 +804,10 @@ fn status(value: &str) -> StatusName {
     StatusName::parse(value.to_owned()).expect("ステータス名として受理される")
 }
 
+fn prompt(value: &str) -> Prompt {
+    Prompt::parse(value.to_owned()).expect("プロンプトとして受理される")
+}
+
 fn expect_status<'definition>(
     definition: &'definition WorkflowDefinition,
     name: &str,
@@ -847,7 +860,8 @@ fn expect_parse_error(result: Result<LoadedWorkflow, WorkflowLoadError>) -> Work
 /// WorkflowStore の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! workflow_store_conformance {
     ($setup:expr, $allowed_skips:expr) => {

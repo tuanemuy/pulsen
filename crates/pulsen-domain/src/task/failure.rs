@@ -24,6 +24,18 @@ pub enum FailureNoteError {
     EmptyMessage,
 }
 
+impl FailureNoteError {
+    /// 制約の説明。
+    ///
+    /// タスクファイルの復号に失敗した理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::EmptyMessage => "説明に空文字列は指定できません",
+        }
+    }
+}
+
 /// 直近のツール操作・判定の失敗の記録。
 ///
 /// 新しい失敗の発生時にのみ上書きし、成功時にクリアしない(「直近の」失敗要因)。

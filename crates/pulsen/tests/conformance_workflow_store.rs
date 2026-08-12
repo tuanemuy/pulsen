@@ -83,13 +83,19 @@ impl WorkflowStoreHarness for FsWorkflowStoreHarness {
     }
 }
 
-/// この環境で許容するスキップ件数。
+/// 権限制限が効かない環境でのみスキップされるケース(HOOKS.md の区分 C)。
 ///
-/// 権限操作を持たないプラットフォームでは「読み取れない定義ファイル」を作れず、
-/// TC-port-workflow-store-030 が走らない。
-#[cfg(unix)]
-const ALLOWED_SKIPS: usize = 0;
-#[cfg(not(unix))]
-const ALLOWED_SKIPS: usize = 1;
+/// 「読み取れない定義ファイル」を作れない環境 — 権限操作を持たないプラットフォーム・
+/// root 実行・権限を持たないファイルシステム — では TC-port-workflow-store-030 が走らない。
+const PERMISSION_CASES: [&str; 1] = ["tc_port_workflow_store_030"];
 
-pulsen_conformance::workflow_store_conformance!(FsWorkflowStoreHarness::new(), ALLOWED_SKIPS);
+/// この環境でスキップを許容するケース。
+fn allowed_skips() -> Vec<&'static str> {
+    if pulsen_conformance::permission_restrictions_effective() {
+        Vec::new()
+    } else {
+        PERMISSION_CASES.to_vec()
+    }
+}
+
+pulsen_conformance::workflow_store_conformance!(FsWorkflowStoreHarness::new(), allowed_skips());

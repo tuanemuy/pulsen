@@ -31,6 +31,28 @@ pub enum TimestampError {
     },
 }
 
+impl TimestampError {
+    /// 制約の説明。
+    ///
+    /// タスクファイルの復号に失敗した理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::InvalidFormat { given } => {
+                format!("`YYYY-MM-DDTHH:MM:SSZ` の形式ではありません(実際は `{given}`)")
+            }
+            Self::InvalidDateTime { given } => {
+                format!("暦上存在しない日時です(`{given}`)")
+            }
+            Self::OutOfRange { unix_secs } => format!(
+                "扱える範囲({}〜{} 秒)の外です(実際は {unix_secs} 秒)",
+                Timestamp::MIN_UNIX_SECS,
+                Timestamp::MAX_UNIX_SECS
+            ),
+        }
+    }
+}
+
 /// UTC・秒精度の時刻。
 ///
 /// 生成経路は `from_unix_secs`(`Clock` 実装からの唯一の口)と `parse_rfc3339` の2つだけ。

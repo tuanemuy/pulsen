@@ -78,7 +78,8 @@ pub fn tc_port_clock_005_巻き戻した時刻はそのまま返る(
 /// Clock の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! clock_conformance {
     ($setup:expr, $allowed_skips:expr) => {

@@ -31,12 +31,15 @@
 //! `cargo test -- --nocapture` で確認できる。
 //!
 //! 標準出力は libtest が握り潰すため、報告だけではスキップと成功を区別できない。
-//! スイートの適用側は[許容するスキップ件数][SkipBudget]を宣言し、超えたスキップは
-//! ケースの失敗として現れる。「N件 PASS」の意味が環境で変わったことが出力に出る。
+//! スイートの適用側は[スキップを許容するケースの集合][SkipBudget]を宣言し、集合の外の
+//! スキップはそのケースの失敗として現れる。「N件 PASS」の意味が環境で変わったことが
+//! 出力に出る。
 //!
 //! 権限操作を伴うフック(`make_unreadable` / `make_unwritable`)は、**制限が実際に効いた
 //! ことを確認してから `Some` を返す**規則にする。`chmod 000` は root では効かないため、
 //! 確認せずに `Some` を返すと `Err(Io)` を期待するケースがスキップに落ちずに失敗する。
+//! 許容する集合も同じ述語([`permission_restrictions_effective`])で決めることで、宣言が
+//! プラットフォームではなく**環境の能力**に対応する(ADR-055)。
 //!
 //! # スイートの適用
 //!
@@ -66,7 +69,7 @@
 //! }
 //!
 //! // crates/pulsen/tests/conformance_config_store.rs
-//! pulsen_conformance::config_store_conformance!(FsConfigStoreHarness::new(), 0);
+//! pulsen_conformance::config_store_conformance!(FsConfigStoreHarness::new(), Vec::new());
 //! ```
 //!
 //! # 対応表
@@ -166,43 +169,105 @@ impl CaseOutcome {
     }
 }
 
-/// スイート1適用あたりで許容するスキップ件数。
+/// スイート1適用あたりでスキップを許容するケースの集合。
 ///
 /// libtest は成功したテストの標準出力を握り潰すため、スキップの報告だけでは
-/// 「何件が実際に走ったか」が環境によって静かに変わる。適用側が件数を宣言し、
-/// それを超えたスキップをケースの失敗にすることで、差が出力に現れる。
+/// 「何件が実際に走ったか」が環境によって静かに変わる。適用側が「この環境ではどのケースが
+/// スキップされうるか」を宣言し、集合の外のスキップをそのケースの失敗にすることで、
+/// 差が出力に現れる。
+///
+/// 件数ではなく集合で宣言するのは、想定した行が走った代わりに別の行がフックを得られず
+/// スキップしても、合計が合えば緑のまま通ってしまうため。集合は実行時に組んでよく、
+/// 環境の能力([`permission_restrictions_effective`])から導くと、宣言が
+/// プラットフォームではなく実際に前提を作れるかどうかに対応する(ADR-055)。
 pub struct SkipBudget {
-    allowed: usize,
-    used: std::sync::atomic::AtomicUsize,
+    allowed: Vec<&'static str>,
 }
 
 impl SkipBudget {
-    /// 許容件数を宣言する。
-    pub const fn new(allowed: usize) -> Self {
-        Self {
-            allowed,
-            used: std::sync::atomic::AtomicUsize::new(0),
-        }
+    /// スキップを許容するケースを宣言する。
+    ///
+    /// 要素はケース名の接頭辞となる TC ID(`tc_port_config_store_023`)。ケース関数は
+    /// `<TC ID>_<仕様の言葉>` で名付けるため、説明部分を言い換えても宣言は腐らない。
+    pub fn new(allowed: Vec<&'static str>) -> Self {
+        Self { allowed }
     }
 
-    /// スキップを1件記録する。宣言を超えたらそのケースを失敗させる。
+    /// スキップを1件記録する。宣言していないケースのスキップはそのケースを失敗させる。
     ///
-    /// ケースは並列に走るため、超過を検知するのは「何件目か」が宣言を超えたケースに
-    /// なる(どのケースがスキップされたかは報告行に出る)。
+    /// 集合内のスキップも `SKIP` 行として必ず出力する — 走らなかった行は
+    /// `cargo test -- --nocapture` で理由まで辿れる。
     pub fn record(&self, case: &str, hook: &'static str) {
-        let used = self.used.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-
         println!(
             "SKIP {case}: ハーネスが {hook} を提供しないため、この環境では前提条件を用意できない"
         );
         assert!(
-            used <= self.allowed,
-            "スキップが {used} 件になり、このスイートで宣言した許容件数 {} を超えた\
-             (直近は {case} / {hook})。この環境で前提条件を用意できるようにするか、\
+            self.allows(case),
+            "{case} がスキップされた({hook} が提供されない)。このスイートがスキップを\
+             許容するのは {:?} だけ。この環境で前提条件を用意できるようにするか、\
              宣言を実態に合わせる",
             self.allowed
         );
     }
+
+    /// 宣言した TC ID のいずれかがケース名の先頭に一致するか。
+    fn allows(&self, case: &str) -> bool {
+        self.allowed.iter().any(|id| {
+            case.strip_prefix(id)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'))
+        })
+    }
+}
+
+/// この環境で「読み取れないファイル」を作れるか(1度だけ調べて使い回す)。
+///
+/// 権限操作のフックは「制限が実際に効いたことを確認してから `Some` を返す」規則
+/// (ADR-027)なので、root 実行や権限を持たないファイルシステムでは必ず `None` を返し、
+/// 権限を前提とするケースはスキップされる。[`SkipBudget`] の宣言をこの述語で決めると、
+/// 「環境が前提を作れないからスキップした」と「フックの実装漏れでスキップした」を
+/// 取り違えずに済む。
+#[must_use]
+pub fn permission_restrictions_effective() -> bool {
+    static EFFECTIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+    *EFFECTIVE.get_or_init(probe_permission_restrictions)
+}
+
+/// 一時ファイルを `chmod 000` して読めるかを試す。フックが掛ける制限と同じ手順で
+/// 判定するため、判定と実際のスキップが食い違わない。
+#[cfg(unix)]
+fn probe_permission_restrictions() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let path = std::env::temp_dir().join(format!(
+        "pulsen-conformance-probe-{}-{nanos}",
+        std::process::id()
+    ));
+    if std::fs::write(&path, b"probe").is_err() {
+        return false;
+    }
+
+    let denied = match std::fs::metadata(&path) {
+        Ok(metadata) => {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o000);
+            std::fs::set_permissions(&path, permissions).is_ok() && std::fs::read(&path).is_err()
+        }
+        Err(_) => false,
+    };
+    let _ = std::fs::remove_file(&path);
+    denied
+}
+
+/// 権限で読み取りを止める仕組みを持たないプラットフォームでは、権限操作のフックも
+/// 一律 `None` を返す。
+#[cfg(not(unix))]
+fn probe_permission_restrictions() -> bool {
+    false
 }
 
 /// フックの値を取り出し、提供されていなければケースをスキップして戻る。
@@ -226,13 +291,17 @@ macro_rules! require {
 ///
 /// `$module` にはケース関数を持つモジュールの別名を渡す(ポートごとのマクロが
 /// `use` で用意する)。セットアップ式はケースごとに評価され、ハーネスは共有されない。
-/// `$budget` はスキップ集計の置き場で、1つのテストファイルに複数のスイートを適用
+/// `$budget` はスキップ宣言の置き場で、1つのテストファイルに複数のスイートを適用
 /// できるようポートごとに別の名前を渡す。
+///
+/// `$allowed_skips` は最初のケースが走るときに1度だけ評価される。環境を調べて集合を
+/// 決める式を書けるよう、定数ではなく遅延初期化にする。
 #[macro_export]
 macro_rules! conformance_cases {
     ($module:ident, $setup:expr, $budget:ident = $allowed_skips:expr, [ $($case:ident),* $(,)? ]) => {
-        /// このスイートで許容するスキップ件数。
-        static $budget: $crate::SkipBudget = $crate::SkipBudget::new($allowed_skips);
+        /// このスイートでスキップを許容するケース。
+        static $budget: ::std::sync::LazyLock<$crate::SkipBudget> =
+            ::std::sync::LazyLock::new(|| $crate::SkipBudget::new($allowed_skips));
 
         $(
             #[test]
@@ -680,25 +749,31 @@ mod tests {
     conformance_cases!(
         cases,
         not_sync_harness(),
-        __PULSEN_CONFORMANCE_FRAMEWORK_SKIPS = 0,
+        __PULSEN_CONFORMANCE_FRAMEWORK_SKIPS = Vec::new(),
         [走査するケース]
     );
 
     #[test]
-    fn 宣言した件数までのスキップは報告だけで済む() {
-        let budget = SkipBudget::new(2);
+    fn 宣言した集合に含まれるケースのスキップは報告だけで済む() {
+        let budget = SkipBudget::new(vec!["tc_port_clock_005"]);
 
-        CaseOutcome::skipped("first_hook").report("最初のケース", &budget);
-        CaseOutcome::skipped("second_hook").report("次のケース", &budget);
+        CaseOutcome::skipped("rewind").report("tc_port_clock_005_時刻の巻き戻し", &budget);
     }
 
     #[test]
-    #[should_panic(expected = "許容件数")]
-    fn 宣言を超えたスキップはケースの失敗になる() {
-        let budget = SkipBudget::new(1);
+    #[should_panic(expected = "tc_port_clock_004_時刻の前進")]
+    fn 宣言していないケースのスキップはそのケースの失敗になる() {
+        let budget = SkipBudget::new(vec!["tc_port_clock_005"]);
 
-        CaseOutcome::skipped("first_hook").report("最初のケース", &budget);
-        CaseOutcome::skipped("second_hook").report("次のケース", &budget);
+        CaseOutcome::skipped("advance").report("tc_port_clock_004_時刻の前進", &budget);
+    }
+
+    #[test]
+    #[should_panic(expected = "tc_port_clock_0051_")]
+    fn 宣言した番号は別の番号のケースには一致しない() {
+        let budget = SkipBudget::new(vec!["tc_port_clock_005"]);
+
+        CaseOutcome::skipped("rewind").report("tc_port_clock_0051_別のケース", &budget);
     }
 
     #[test]

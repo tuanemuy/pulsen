@@ -9,6 +9,18 @@ pub enum ProcessValueError {
     Empty,
 }
 
+impl ProcessValueError {
+    /// 制約の説明。
+    ///
+    /// タスクファイルの復号に失敗した理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Empty => "空文字列は指定できません",
+        }
+    }
+}
+
 /// プロセスID。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pid(u32);

@@ -11,7 +11,11 @@ use pulsen_domain::task::{BranchName, RepoPath};
 /// 呼び出し元の環境に残っていると `-C` で指した対象の解決結果を上書きしてしまう
 /// (`GIT_CEILING_DIRECTORIES` は上位探索を打ち切り、正当なリポジトリを
 /// `NotARepository` に落とす)。ADR-024 の判断基準はこの目的であって変数名の列挙ではない。
-const INHERITED_GIT_ENV: &[&str] = &[
+///
+/// 公開しているのは、テストのフィクスチャが「このディレクトリはリポジトリでない」といった
+/// 前提を判定するとき、アダプターと同じ環境で git を起動する必要があるため。集合が2箇所に
+/// 分かれると、前提の判定とアダプターの観測が食い違う環境が生まれる。
+pub const INHERITED_GIT_ENV: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",
@@ -65,7 +69,10 @@ impl WorktreeManager for GitCliWorktreeManager {
             Ok(false) => return Err(TargetError::NotFound),
             Err(error) => {
                 return Err(TargetError::Failed {
-                    message: format!("リポジトリのパスを確認できない: {error}"),
+                    message: format!(
+                        "{}: リポジトリのパスを確認できない: {error}",
+                        repo.as_path().display()
+                    ),
                 });
             }
         }

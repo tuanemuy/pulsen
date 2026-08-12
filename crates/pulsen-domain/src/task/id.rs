@@ -18,6 +18,25 @@ pub enum TaskIdError {
     InvalidLeadingChar,
 }
 
+impl TaskIdError {
+    /// 制約の説明。
+    ///
+    /// タスクファイルの復号に失敗した理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Empty => "空文字列は指定できません".to_owned(),
+            Self::TooLong => format!("{}文字を超えられません", TaskId::MAX_LENGTH),
+            // 制御文字や空白も位置つきで見えるように、文字は Debug 表現で示す。
+            Self::InvalidChar { char, position } => format!(
+                "{}文字目に使えない文字({char:?})があります。使えるのは英小文字・数字・`-` です",
+                position + 1
+            ),
+            Self::InvalidLeadingChar => "先頭は英小文字か数字である必要があります".to_owned(),
+        }
+    }
+}
+
 /// タスクID。
 ///
 /// 文字集合を `[a-z0-9-]`(先頭は英数字)に閉じることで、ファイル名の主部としても

@@ -110,10 +110,30 @@ impl FsTaskRepository {
         for path in paths {
             let bytes = match fs::read(&path) {
                 Ok(bytes) => bytes,
-                // 走査中にアーカイブされたエントリは、この領域にもう無いだけで失敗ではない。
-                // 読み取りはロックなしで常に一貫した内容を返す契約なので、`archive` の
-                // 中間状態を走査全体の失敗として観測させない。
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                // `fs::read` の NotFound は「走査中にアーカイブされて消えた」と
+                // 「エントリは残っているが内容へ到達できない(宙ぶらりんのリンク等)」の
+                // どちらでも起きる。エントリ自体の有無で両者を分ける。
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    match path.symlink_metadata() {
+                        // この領域にもう無いだけで失敗ではない。読み取りはロックなしで常に
+                        // 一貫した内容を返す契約なので、`archive` の中間状態を走査全体の
+                        // 失敗として観測させない。
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                        Err(error) => {
+                            return Err(ReadError::Io {
+                                message: message(&path, &error),
+                            });
+                        }
+                        // 残っているのに読めないエントリを黙って落とすと、修復の入口が消える。
+                        Ok(_) => {
+                            entries.push(TaskEntry::Corrupt {
+                                path,
+                                message: format!("読み取れません: {error}"),
+                            });
+                            continue;
+                        }
+                    }
+                }
                 Err(error) => {
                     return Err(ReadError::Io {
                         message: message(&path, &error),
@@ -226,12 +246,48 @@ impl TaskRepository for FsTaskRepository {
         }
 
         let to = self.path(Area::Archived, id);
+        // 移動の失敗は移動元にも移動先にも起因しうる。片方だけを載せると、無関係な
+        // パスを指した案内になる。
         rename_atomic(&from, &to).map_err(|error| ArchiveError::Io {
-            message: message(&to, &error),
+            message: format!("{} -> {}: {error}", from.display(), to.display()),
         })
     }
 }
 
 fn message(path: &Path, error: &io::Error) -> String {
     format!("{}: {error}", path.display())
+}
+
+/// 走査が「消えたエントリ」と「読めないエントリ」を取り違えないことの確認。
+///
+/// unix 限定なのは、宙ぶらりんのリンク(列挙できるが内容へ到達できないエントリ)を
+/// 決定的に作れるのが symlink だけであるため。判定そのものは OS に依存しない。
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    fn task_id() -> TaskId {
+        TaskId::parse("20240101t000000-abcdef01".to_owned()).expect("受理される")
+    }
+
+    #[test]
+    fn 内容へ到達できないエントリは走査から落とさず破損として報告される() {
+        let temp = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let state_root = StateRoot::parse(temp.path().to_path_buf()).expect("絶対パス");
+        let dir = TaskFilePath::active_dir(&state_root);
+        fs::create_dir_all(&dir).expect("作成できる");
+        let path = dir.join(TaskFilePath::file_name(&task_id()));
+        symlink(dir.join("missing.json"), &path).expect("リンクを張れる");
+
+        let entries = FsTaskRepository::new(state_root)
+            .list_active()
+            .expect("走査は失敗しない");
+
+        match entries.as_slice() {
+            [TaskEntry::Corrupt { path: reported, .. }] => assert_eq!(reported, &path),
+            other => panic!("破損として1件報告される: {other:?}"),
+        }
+    }
 }

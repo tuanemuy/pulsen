@@ -10,6 +10,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use pulsen_domain::definition::{
     AgentInput, AgentName, Prompt, StatusDefinition, StatusName, WorkflowDefinition, WorkflowName,
@@ -702,7 +703,7 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
 
     let writing = AtomicBool::new(true);
     let observations = AtomicUsize::new(0);
-    thread::scope(|scope| {
+    let overlapped = thread::scope(|scope| {
         scope.spawn(|| {
             while writing.load(Ordering::Relaxed) {
                 match repo.find(small.id()) {
@@ -725,17 +726,28 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
             }
         });
 
-        for _ in 0..30 {
+        // 読み手が回り始めてから書き始める。書き終えてから待つと「一度は観測した」しか
+        // 言えず、観測が保存と重なったことにならない。
+        let before = yield_until_observations_exceed(&observations, 0);
+        let mut rounds = 0;
+        while rounds < SAVE_ROUNDS
+            || (observations.load(Ordering::Relaxed) - before < CONCURRENT_OBSERVATIONS
+                && rounds < SAVE_ROUND_LIMIT)
+        {
             repo.save(&large).expect("保存できる");
             repo.save(&small).expect("保存できる");
+            rounds += 1;
         }
-        yield_until_observed(&observations);
+
+        // 保存を止める前に数える。止めた後の観測は書き込みと重なっていない。
+        let overlapped = observations.load(Ordering::Relaxed) - before;
         writing.store(false, Ordering::Relaxed);
+        overlapped
     });
 
     assert!(
-        observations.load(Ordering::Relaxed) > 0,
-        "読み手が一度も観測していない"
+        overlapped >= CONCURRENT_OBSERVATIONS,
+        "保存の反復と重なった観測が {overlapped} 回しかない"
     );
     CaseOutcome::Ran
 }
@@ -781,21 +793,33 @@ pub fn tc_port_task_repository_043_失敗した保存は部分的な結果を残
     CaseOutcome::Ran
 }
 
-/// 読み手が最初の観測を終えるまで実行を譲る(TC-042 / TC-044)。
+/// 観測回数が `floor` を超えるまで実行を譲り、その時点の観測回数を返す(TC-042 / TC-044)。
 ///
-/// 観測が0回のまま書き手が走り切ると「中間状態を観測しなかった」が空虚に成立する。
-/// 読み手がアサーションで落ちたときに待ち続けないよう、譲る回数に上限を置く。
-fn yield_until_observed(observations: &AtomicUsize) {
-    for _ in 0..YIELD_LIMIT {
-        if observations.load(Ordering::Relaxed) > 0 {
-            return;
+/// 観測が起きないまま書き手が走り切ると「中間状態を観測しなかった」が空虚に成立する。
+/// 読み手がアサーションで落ちたときに待ち続けないよう期限を置く — 期限切れは戻り値が
+/// `floor` のままになることで呼び出し側のアサーションに現れる。
+fn yield_until_observations_exceed(observations: &AtomicUsize, floor: usize) -> usize {
+    let deadline = Instant::now() + OBSERVATION_WAIT;
+    loop {
+        let observed = observations.load(Ordering::Relaxed);
+        if observed > floor || Instant::now() >= deadline {
+            return observed;
         }
         thread::yield_now();
     }
 }
 
-/// `yield_until_observed` が譲る回数の上限。
-const YIELD_LIMIT: usize = 10_000;
+/// 読み手の観測を待つ期限。
+const OBSERVATION_WAIT: Duration = Duration::from_secs(5);
+
+/// 書き込みと重なった観測に求める回数。
+const CONCURRENT_OBSERVATIONS: usize = 5;
+
+/// TC-042 が最低限回す保存の周回数。
+const SAVE_ROUNDS: usize = 30;
+
+/// TC-042 が重なりを待って回す保存の上限。
+const SAVE_ROUND_LIMIT: usize = 1_000;
 
 pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み手に観測されない(
     harness: &impl TaskRepositoryHarness,
@@ -806,7 +830,7 @@ pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み
 
     let moving = AtomicBool::new(true);
     let observations = AtomicUsize::new(0);
-    thread::scope(|scope| {
+    let overlapped = thread::scope(|scope| {
         scope.spawn(|| {
             while moving.load(Ordering::Relaxed) {
                 match repo.find(task.id()) {
@@ -816,32 +840,40 @@ pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み
                     }
                     other => panic!("常にどちらか一方の完全な内容が観測される: {other:?}"),
                 }
-                for entry in repo.list_active().expect("走査できる") {
+                // 2つの領域は1回の呼び出しでは見られないため、移動の向き(現役 →
+                // アーカイブ)と逆順に読む。移動が2回の読み取りの間に入っても「どちらにも
+                // 無い」にしかならず、「双方に在る」は移動が原子的でないときにだけ現れる。
+                // 「どちらにも無い」は上の `find`(現役 → アーカイブの順)が捉える。
+                let archived = repo.list_archived().expect("走査できる");
+                let active = repo.list_active().expect("走査できる");
+                for entry in archived.iter().chain(active.iter()) {
                     assert_eq!(
                         entry,
-                        TaskEntry::Record(TaskRecord::Intact(task.clone())),
+                        &TaskEntry::Record(TaskRecord::Intact(task.clone())),
                         "移動の途中経過を観測した"
                     );
                 }
-                for entry in repo.list_archived().expect("走査できる") {
-                    assert_eq!(
-                        entry,
-                        TaskEntry::Record(TaskRecord::Intact(task.clone())),
-                        "移動の途中経過を観測した"
-                    );
-                }
+                assert!(
+                    archived.len() + active.len() <= 1,
+                    "移動の途中で現役とアーカイブの双方に在る状態を観測した"
+                );
                 observations.fetch_add(1, Ordering::Relaxed);
             }
         });
 
+        // 移動は1回きりの操作なので、読み手が回り始めたことを確かめてから動かす。
+        // 動かしてから待つと、観測はすべて移動の後になりうる。
+        let before = yield_until_observations_exceed(&observations, 0);
         repo.archive(task.id()).expect("アーカイブできる");
-        yield_until_observed(&observations);
+        let after = yield_until_observations_exceed(&observations, before);
+
         moving.store(false, Ordering::Relaxed);
+        after - before
     });
 
     assert!(
-        observations.load(Ordering::Relaxed) > 0,
-        "読み手が一度も観測していない"
+        overlapped > 0,
+        "アーカイブ移動を挟んだ観測が一度も起きていない"
     );
     assert_eq!(
         repo.find(task.id()).expect("検索できる"),
@@ -1166,7 +1198,8 @@ fn absolute(segments: &[&str]) -> std::path::PathBuf {
 /// TaskRepository の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! task_repository_conformance {
     ($setup:expr, $allowed_skips:expr) => {

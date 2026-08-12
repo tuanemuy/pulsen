@@ -182,7 +182,7 @@ pub fn tc_port_config_store_009_cmdの未知プレースホルダはloadで検�
 pub fn tc_port_config_store_010_cmdの波括弧不正はloadで検証されない(
     harness: &impl ConfigStoreHarness,
 ) -> CaseOutcome {
-    for cmd in ["claude {input", "claude {}"] {
+    for (cmd, malformed) in [("claude {input", "{input"), ("claude {}", "{}")] {
         require!(harness.put_config(&format!(
             "agents:
   broken:
@@ -191,7 +191,10 @@ pub fn tc_port_config_store_010_cmdの波括弧不正はloadで検証されな�
         )));
 
         let config = expect_ok(harness.store().load());
-        assert!(expect_agent(&config, "broken").parse().is_err());
+        let agent = expect_agent(&config, "broken");
+
+        assert_eq!(agent.cmd().tokens(), ["claude", malformed]);
+        assert!(agent.parse().is_err(), "波括弧は参照時に検証される");
     }
     CaseOutcome::Ran
 }
@@ -466,7 +469,8 @@ fn assert_all_defaults(config: &GlobalConfig) {
 /// ConfigStore の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! config_store_conformance {
     ($setup:expr, $allowed_skips:expr) => {

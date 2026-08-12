@@ -10,6 +10,18 @@ pub enum AttemptNumberError {
     Zero,
 }
 
+impl AttemptNumberError {
+    /// 制約の説明。
+    ///
+    /// タスクファイルの復号に失敗した理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::Zero => "1 以上である必要があります",
+        }
+    }
+}
+
 /// attempt 番号。1 以上の単調増加値。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AttemptNumber(u32);

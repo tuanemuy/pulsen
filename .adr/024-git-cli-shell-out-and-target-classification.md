@@ -30,10 +30,13 @@ git CLI へシェルアウトする(`git -C <repo> ...`)。`git` を実行時の
 
 `validate_repo(repo)`
 
-1. パスが存在しない → `NotFound`
-2. `git -C <repo> rev-parse --show-toplevel` の**起動自体に失敗** → `Failed`
-3. 起動できて exit が非0 → `NotARepository`(メタデータ破損もすべてここに落ちる)
-4. exit 0 → `Ok(())`。リポジトリ配下のサブディレクトリ指定も受理する
+1. パスの存在確認自体が I/O エラー(親ディレクトリを読めない等) → `Failed`
+2. パスが存在しない → `NotFound`
+3. `git -C <repo> rev-parse --show-toplevel` の**起動自体に失敗** → `Failed`
+4. 起動できて exit が非0 → `NotARepository`(メタデータ破損もすべてここに落ちる)
+5. exit 0 → `Ok(())`。リポジトリ配下のサブディレクトリ指定も受理する
+
+存在確認は I/O エラーを不在に丸めない手段で行う(`Path::exists()` ではなく `try_exists()`)。読めないパスを「存在しません」と案内すると、利用者は実在するパスを疑うことになる。
 
 `head_branch(repo)` — どちらかの起動に失敗したら `Failed`。
 
@@ -55,5 +58,5 @@ git CLI へシェルアウトする(`git -C <repo> ...`)。`git` を実行時の
 ## 影響
 
 - `worktree add` / `remove --force` の意味論が git 本体と完全に一致し、後続スライスの冪等要件を素直に書ける。C ツールチェーンが不要で Nix devShell の構成も軽いまま
-- `TargetError::Failed` の到達経路は「git を起動できない」1本に定まる。リポジトリメタデータの破損は `NotARepository`(`validate_repo`)/ `Failed`(`head_branch` / `branch_exists`)に分かれるという非対称を許容する — spec が要求するのは「分類と区別された `Failed` を値として返す」ことである
+- `TargetError::Failed` の到達経路は**対象の分類を確定できない状況**に限る(git を起動できない・パスの存在を確認できない・ブランチ名を扱えない)。分類できたなら `NotFound` / `NotARepository` / `DetachedHead` / `EmptyRepository` のいずれかを返す。この線引きは後続スライスの `create` / `remove` にも同じ形で効く。リポジトリメタデータの破損は `NotARepository`(`validate_repo`)/ `Failed`(`head_branch` / `branch_exists`)に分かれるという非対称を許容する — spec が要求するのは「分類と区別された `Failed` を値として返す」ことである
 - トレードオフ: `git` の存在が実行時依存になる。`head_branch` が2プロセス起動になる。メッセージ文字列への依存は避け、exit code と起動可否だけで分類する

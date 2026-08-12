@@ -19,7 +19,7 @@
 | C | 12 |
 | 合計 | 125 |
 
-スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境で許容するスキップ件数」を宣言する（`SkipBudget`）。宣言を超えたスキップはケースの失敗として現れる。
+スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境でスキップを許容するケース」を集合として宣言する（`SkipBudget`）。集合の外のスキップはそのケースの失敗として現れる。集合は環境の能力から実行時に決める — 区分 C の行は、権限制限が効くかどうか（`permission_restrictions_effective`）で走るか走らないかが変わる（`.adr/055-conformance-skip-budget.md`）。
 
 ## 適用範囲
 
@@ -169,7 +169,7 @@ ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` /
 |---|---|---|---|
 | TC-port-exclusive-lock-001 | 誰も保持していない | A | `try_acquire` |
 | TC-port-exclusive-lock-002 | 別プロセスが保持中 | B | `hold_from_other_process` + `release_holder` |
-| TC-port-exclusive-lock-003 | 別プロセスが保持し続けている | B | `hold_from_other_process`（即座に返ることを経過時間で観測）+ `release_holder` |
+| TC-port-exclusive-lock-003 | 別プロセスが保持し続けている | B | `hold_from_other_process`（取得の試行を別スレッドに置き、期限までに返ることを観測。ADR-060）+ `release_holder` |
 | TC-port-exclusive-lock-004 | ガードを取得後にドロップ済み | B | `try_acquire_from_other_process`（同一プロセス内の再取得は契約外） |
 | TC-port-exclusive-lock-005 | 保持プロセスを強制終了 | B | `hold_from_other_process` + `kill_holder` |
 | TC-port-exclusive-lock-006 | 異なるホームのロックを別ハンドルが保持中 | B | `separate_home` |
@@ -205,8 +205,4 @@ ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` /
 
 対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager`）はフックではなく、すべてのケースが使う。
 
-ADR-027 の一覧から変えた点は次の3つで、根拠は `.adr/027-port-conformance-suite-and-harness-hooks.md` にある。
-
-- `TaskIdGeneratorHarness::another_generator` を足した（ADR-027 の表は TaskIdGenerator の行を持っていなかった）
-- `WorktreeManagerHarness::absent_branch_name` を `head_branch_name` から分けた
-- ExclusiveLock の `break_lock_location` を `unusable_lock`（別ハンドルを返す形）にした
+この一覧と `.adr/027-port-conformance-suite-and-harness-hooks.md` のフック表は同じものを指す。フックを足すときは両方を更新する。

@@ -18,6 +18,20 @@ pub enum AbsolutePathError {
     },
 }
 
+impl AbsolutePathError {
+    /// 制約の説明。
+    ///
+    /// タスクファイルの復号に失敗した理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::NotAbsolute { given } => {
+                format!("絶対パスである必要があります(実際は `{}`)", given.display())
+            }
+        }
+    }
+}
+
 macro_rules! absolute_path {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*

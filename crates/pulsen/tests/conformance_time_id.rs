@@ -74,11 +74,16 @@ impl TaskIdGeneratorHarness for DefaultTaskIdGeneratorHarness {
     }
 }
 
-/// システム時計で許容するスキップ件数。
+/// システム時計でスキップを許容するケース。
 ///
 /// 時刻を過去に設定するにはシステム全体の設定変更が要るため、
 /// TC-port-clock-005 はどの環境でも走らない。
-const ALLOWED_CLOCK_SKIPS: usize = 1;
+fn allowed_clock_skips() -> Vec<&'static str> {
+    vec!["tc_port_clock_005"]
+}
 
-pulsen_conformance::clock_conformance!(SystemClockHarness::new(), ALLOWED_CLOCK_SKIPS);
-pulsen_conformance::task_id_generator_conformance!(DefaultTaskIdGeneratorHarness::new(), 0);
+pulsen_conformance::clock_conformance!(SystemClockHarness::new(), allowed_clock_skips());
+pulsen_conformance::task_id_generator_conformance!(
+    DefaultTaskIdGeneratorHarness::new(),
+    Vec::new()
+);

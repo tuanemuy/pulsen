@@ -108,4 +108,4 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
 // git 操作の失敗も別ハンドルで組めるため、スキップは1件も許容しない。一時ディレクトリ
 // がリポジトリ配下にある環境では TC-port-worktree-manager-003 の前提が成立せず
 // (ADR-033)、その差はここで失敗として現れる。
-pulsen_conformance::worktree_manager_conformance!(GitCliWorktreeManagerHarness::new(), 0);
+pulsen_conformance::worktree_manager_conformance!(GitCliWorktreeManagerHarness::new(), Vec::new());

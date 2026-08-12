@@ -101,7 +101,8 @@ pub fn tc_port_task_id_generator_005_発行されたidから導出する名前�
 /// TaskIdGenerator の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! task_id_generator_conformance {
     ($setup:expr, $allowed_skips:expr) => {

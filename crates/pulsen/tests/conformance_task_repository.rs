@@ -205,14 +205,26 @@ fn deny_dir_write(_dir: &Path) -> Option<Restore> {
     None
 }
 
-/// この環境で許容するスキップ件数。
+/// 権限制限が効かない環境でのみスキップされるケース(HOOKS.md の区分 C)。
 ///
-/// 権限操作を持たないプラットフォームでは、読み取り不能・書き込み不能を前提とする
-/// TC-port-task-repository-005/011/012/019/035/041 が走らない。root 実行のように
-/// `chmod` が効かない環境も同じ状況になるが、そこは宣言と食い違うことを失敗として見せる。
-#[cfg(unix)]
-const ALLOWED_SKIPS: usize = 0;
-#[cfg(not(unix))]
-const ALLOWED_SKIPS: usize = 6;
+/// 読み取り不能・書き込み不能なディレクトリを作れない環境 — 権限操作を持たない
+/// プラットフォーム・root 実行・権限を持たないファイルシステム — では走らない。
+const PERMISSION_CASES: [&str; 6] = [
+    "tc_port_task_repository_005",
+    "tc_port_task_repository_011",
+    "tc_port_task_repository_012",
+    "tc_port_task_repository_019",
+    "tc_port_task_repository_035",
+    "tc_port_task_repository_041",
+];
 
-pulsen_conformance::task_repository_conformance!(FsTaskRepositoryHarness::new(), ALLOWED_SKIPS);
+/// この環境でスキップを許容するケース。
+fn allowed_skips() -> Vec<&'static str> {
+    if pulsen_conformance::permission_restrictions_effective() {
+        Vec::new()
+    } else {
+        PERMISSION_CASES.to_vec()
+    }
+}
+
+pulsen_conformance::task_repository_conformance!(FsTaskRepositoryHarness::new(), allowed_skips());

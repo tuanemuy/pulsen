@@ -3,6 +3,8 @@
 //! 排他の単位はプロセス間なので、保持側は必ずハーネスのフックが用意する別プロセス
 //! (または別ハンドル)にする。同一プロセス内の再取得は契約の対象外。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use pulsen_domain::execution::{ExclusiveLock, LockError};
@@ -11,6 +13,19 @@ use crate::{CaseOutcome, ExclusiveLockHarness, require};
 
 /// 「ブロックしない」とみなす上限。解放を待つ実装は保持が続く限り返らない。
 const NON_BLOCKING: Duration = Duration::from_secs(5);
+
+/// 別スレッドで試みた取得の結果。
+///
+/// ガードはスレッドの中で落とす。`LockGuard` は `Send` を要求しないため、値のまま
+/// スレッド境界を越えられない。
+enum Attempt {
+    /// 取得できた。
+    Acquired,
+    /// 競合して取得できなかった。
+    Contended,
+    /// 機構の異常。
+    Failed(String),
+}
 
 pub fn tc_port_exclusive_lock_001_誰も保持していなければ取得できる(
     harness: &impl ExclusiveLockHarness,
@@ -40,17 +55,57 @@ pub fn tc_port_exclusive_lock_002_別プロセスの保持中は取得できな�
     CaseOutcome::Ran
 }
 
-pub fn tc_port_exclusive_lock_003_保持中の取得は待たずに返る(
-    harness: &impl ExclusiveLockHarness,
-) -> CaseOutcome {
-    let holder = require!(harness.hold_from_other_process());
+/// 取得の試行を別スレッドに置き、期限の監視をこのスレッドに残す。
+///
+/// 同じスレッドで経過時間を測ると、解放を待つ実装では `try_acquire` が返るまで判定に
+/// 到達せず、ケースが名指しする失敗モードでハングする。期限を超えたら先に保持を解放して
+/// 試行を返らせ、待ったことを失敗として報告する。`Lock: Sync` はこの1ケースだけの要求で、
+/// ハーネス全体には課さない(ADR-060)。
+pub fn tc_port_exclusive_lock_003_保持中の取得は待たずに返る<Harness>(
+    harness: &Harness,
+) -> CaseOutcome
+where
+    Harness: ExclusiveLockHarness,
+    Harness::Lock: Sync,
+{
+    let mut holder = Some(require!(harness.hold_from_other_process()));
+    let lock = harness.lock();
+    let returned = AtomicBool::new(false);
 
-    let started = Instant::now();
-    let acquired = harness.lock().try_acquire();
-    let elapsed = started.elapsed();
+    let (attempt, waited) = thread::scope(|scope| {
+        let trying = scope.spawn(|| {
+            let attempt = match lock.try_acquire() {
+                Ok(Some(_guard)) => Attempt::Acquired,
+                Ok(None) => Attempt::Contended,
+                Err(LockError::Failed { message }) => Attempt::Failed(message),
+            };
+            returned.store(true, Ordering::Release);
+            attempt
+        });
 
-    assert!(matches!(acquired, Ok(None)));
-    assert!(elapsed < NON_BLOCKING, "解放を待たずに返る: {elapsed:?}");
+        let deadline = Instant::now() + NON_BLOCKING;
+        while !returned.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::yield_now();
+        }
+
+        let waited = !returned.load(Ordering::Acquire);
+        if waited {
+            // 解放しないと、待つ実装ではスレッドの合流も返らない。
+            let _ = harness.release_holder(holder.take().expect("保持している"));
+        }
+        (
+            trying.join().expect("取得の試行がパニックしていない"),
+            waited,
+        )
+    });
+
+    assert!(!waited, "保持の解放を待たずに返る");
+    match attempt {
+        Attempt::Contended => {}
+        Attempt::Acquired => panic!("保持中のロックが取得できた"),
+        Attempt::Failed(message) => panic!("競合はエラーではない: {message}"),
+    }
+    let holder = holder.expect("期限内に返ったので保持は続いている");
     assert!(harness.release_holder(holder).is_some(), "保持を解放できる");
     CaseOutcome::Ran
 }
@@ -118,7 +173,8 @@ pub fn tc_port_exclusive_lock_007_ロック機構が使えなければ失敗に�
 /// ExclusiveLock の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! exclusive_lock_conformance {
     ($setup:expr, $allowed_skips:expr) => {

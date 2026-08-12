@@ -128,7 +128,8 @@ fn assert_failed(error: Option<TargetError>, method: &str) {
 /// WorktreeManager の適合スイート(対象の検証を行う3メソッド分)をアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
-/// この環境で許容するスキップ件数で、超えたスキップはケースの失敗になる。
+/// この環境でスキップを許容するケース(TC ID)の集合で、集合の外のスキップはその
+/// ケースの失敗になる。
 #[macro_export]
 macro_rules! worktree_manager_conformance {
     ($setup:expr, $allowed_skips:expr) => {

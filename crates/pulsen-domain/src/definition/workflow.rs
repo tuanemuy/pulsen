@@ -52,6 +52,27 @@ pub enum WorkflowStructureError {
     },
 }
 
+impl WorkflowStructureError {
+    /// 破れた不変条件の説明。
+    ///
+    /// スナップショットを復元できない理由は、破損したタスクの一覧・表示を通じて
+    /// 利用者に見せる修復の材料になる。説明の定義箇所をドメインに1つ置く。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::EmptyStatuses => "ステータスが1件もありません".to_owned(),
+            Self::InitialNotFound { initial } => format!(
+                "initial が指すステータス `{}` が statuses にありません",
+                initial.as_str()
+            ),
+            Self::NextNotFound { status, next } => format!(
+                "ステータス `{}` の next が指す `{}` が statuses にありません",
+                status.as_str(),
+                next.as_str()
+            ),
+        }
+    }
+}
+
 /// ステータスの集合と初期ステータス・デフォルト。
 ///
 /// ワークフロー名は保持しない — 表示名は登録時に `WorkflowRef` の規則で決まり、

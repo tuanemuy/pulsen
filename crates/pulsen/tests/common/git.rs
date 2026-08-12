@@ -8,6 +8,8 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use pulsen::adapter::worktree::INHERITED_GIT_ENV;
+
 /// コミットの作者。グローバル設定を無効化するため、コミットのたびに明示する。
 const AUTHOR: [&str; 4] = [
     "-c",
@@ -22,6 +24,10 @@ fn null_device() -> &'static str {
 }
 
 /// 環境を固定した `git -C <dir>`。
+///
+/// 取り除く環境変数はアダプターと同じ集合(`INHERITED_GIT_ENV`)を使う。`is_outside_repository`
+/// はここで作った環境で前提を判定し、その前提に乗って動くのはアダプターなので、集合がずれると
+/// 「フィクスチャはリポジトリ外と判定し、アダプターは親リポジトリを見つける」環境が生まれる。
 fn git(dir: &Path) -> Command {
     let mut command = Command::new("git");
     command
@@ -29,11 +35,11 @@ fn git(dir: &Path) -> Command {
         .arg(dir)
         .env("GIT_CONFIG_GLOBAL", null_device())
         .env("GIT_CONFIG_SYSTEM", null_device())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    for name in INHERITED_GIT_ENV {
+        command.env_remove(name);
+    }
     command
 }
 

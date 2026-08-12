@@ -198,10 +198,12 @@ pub fn parse_document(text: &str) -> Result<Yaml, YamlSyntaxError> {
                 column: location.column(),
             }),
         })?;
-    convert(value)
+    convert(value, "")
 }
 
-fn convert(value: serde_yaml_ng::Value) -> Result<Yaml, YamlSyntaxError> {
+/// 値を変換する。`path` は入れ子の論理位置(最上位は空文字)で、拒否した記法が
+/// どこにあるかを示すために持ち回る。
+fn convert(value: serde_yaml_ng::Value, path: &str) -> Result<Yaml, YamlSyntaxError> {
     match value {
         serde_yaml_ng::Value::Null => Ok(Yaml::Null),
         serde_yaml_ng::Value::Bool(value) => Ok(Yaml::Bool(value)),
@@ -212,22 +214,46 @@ fn convert(value: serde_yaml_ng::Value) -> Result<Yaml, YamlSyntaxError> {
         serde_yaml_ng::Value::String(text) => Ok(Yaml::Text(text)),
         serde_yaml_ng::Value::Sequence(items) => {
             let mut converted = Vec::with_capacity(items.len());
-            for item in items {
-                converted.push(convert(item)?);
+            for (index, item) in items.into_iter().enumerate() {
+                converted.push(convert(item, &format!("{path}[{index}]"))?);
             }
             Ok(Yaml::Sequence(converted))
         }
         serde_yaml_ng::Value::Mapping(mapping) => {
             let mut entries = Vec::with_capacity(mapping.len());
             for (key, value) in mapping {
-                entries.push((key_text(convert(key)?)?, convert(value)?));
+                let key = key_text(convert(key, path)?, path)?;
+                let value = convert(value, &child_path(path, &key))?;
+                entries.push((key, value));
             }
             Ok(Yaml::Mapping(YamlMapping { entries }))
         }
         serde_yaml_ng::Value::Tagged(tagged) => Err(YamlSyntaxError {
-            message: format!("タグ({})は定義の記法に含まれません", tagged.tag),
+            message: format!(
+                "{}にタグ({})があります。タグは定義の記法に含まれません",
+                position(path),
+                tagged.tag
+            ),
             location: None,
         }),
+    }
+}
+
+/// 入れ子の論理位置。最上位のキーは名前だけになる。
+fn child_path(parent: &str, key: &str) -> String {
+    if parent.is_empty() {
+        key.to_owned()
+    } else {
+        format!("{parent}.{key}")
+    }
+}
+
+/// メッセージに埋める論理位置。
+fn position(path: &str) -> String {
+    if path.is_empty() {
+        "最上位".to_owned()
+    } else {
+        format!("`{path}`")
     }
 }
 
@@ -236,18 +262,39 @@ fn convert(value: serde_yaml_ng::Value) -> Result<Yaml, YamlSyntaxError> {
 /// `agents:` / `statuses:` の直下はキー自体が自由形式なので、非文字列キーを文字列化すると
 /// スキーマ走査は通り、そのまま名前として受理される(複合キーは同じ表現に潰れて後勝ちで
 /// 消える)。スキーマに無い記法を黙って読み替えないのはタグの拒否(ADR-042)と同じ根拠。
-fn key_text(key: Yaml) -> Result<String, YamlSyntaxError> {
+///
+/// `location` が `None` なのは `Yaml` がテキスト上の位置を持たないため(位置は
+/// `serde_yaml_ng` がパースを終えた時点で失われる)。代わりに、どのキーがどこで
+/// 拒否されたかを論理位置つきでメッセージに載せる。
+fn key_text(key: Yaml, path: &str) -> Result<String, YamlSyntaxError> {
+    let kind = key.kind();
     match key {
         Yaml::Text(text) => Ok(text),
-        other @ (Yaml::Null
-        | Yaml::Bool(_)
-        | Yaml::Integer(_)
-        | Yaml::Float(_)
-        | Yaml::Sequence(_)
-        | Yaml::Mapping(_)) => Err(YamlSyntaxError {
-            message: format!("キーは文字列である必要があります(実際は{})", other.kind()),
-            location: None,
-        }),
+        Yaml::Null => Err(non_string_key(path, kind, Some("null"))),
+        Yaml::Bool(value) => Err(non_string_key(path, kind, Some(&value.to_string()))),
+        Yaml::Integer(value) => Err(non_string_key(path, kind, Some(&value.to_string()))),
+        Yaml::Float(value) => Err(non_string_key(path, kind, Some(&value.to_string()))),
+        Yaml::Sequence(_) | Yaml::Mapping(_) => Err(non_string_key(path, kind, None)),
+    }
+}
+
+/// 非文字列キーの拒否。スカラーなら書かれた値を示し、引用すれば名前として使えることも
+/// 添える — `1` や `true` は名前の制約(非空・前後空白なし)としては正当なので、
+/// 記法の問題であることが伝わらないと直しようがない。
+fn non_string_key(path: &str, kind: &str, literal: Option<&str>) -> YamlSyntaxError {
+    let message = match literal {
+        Some(literal) => format!(
+            "{}のキー `{literal}` が文字列ではありません({kind})。名前として使うなら \"{literal}\" のように引用してください",
+            position(path)
+        ),
+        None => format!(
+            "{}に{kind}のキーがあります。キーは文字列で書きます",
+            position(path)
+        ),
+    };
+    YamlSyntaxError {
+        message,
+        location: None,
     }
 }
 
@@ -328,24 +375,50 @@ mod tests {
     }
 
     #[test]
-    fn 文字列でないキーは記法として拒否される() {
-        for text in [
-            "1: a\n",
-            "true: a\n",
-            "null: a\n",
-            "1.5: a\n",
-            "? [a, b]\n: c\n",
-            "? {a: b}\n: c\n",
+    fn スカラーのキーは書かれた値と引用の案内つきで拒否される() {
+        for (text, literal) in [
+            ("1: a\n", "1"),
+            ("true: a\n", "true"),
+            ("null: a\n", "null"),
+            ("1.5: a\n", "1.5"),
         ] {
             let error = parse_document(text).expect_err("拒否される");
-            assert!(error.message.contains("キーは文字列"), "{text:?}");
+            assert!(
+                error.message.contains(&format!("`{literal}`")),
+                "{text:?}: {}",
+                error.message
+            );
+            assert!(
+                error.message.contains(&format!("\"{literal}\"")),
+                "{text:?}: {}",
+                error.message
+            );
         }
     }
 
     #[test]
-    fn 入れ子のマッピングでも文字列でないキーは拒否される() {
+    fn 複合キーは記法として拒否される() {
+        for (text, kind) in [
+            ("? [a, b]\n: c\n", "配列"),
+            ("? {a: b}\n: c\n", "マッピング"),
+        ] {
+            let error = parse_document(text).expect_err("拒否される");
+            assert!(
+                error.message.contains("最上位") && error.message.contains(kind),
+                "{text:?}: {}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn 入れ子のマッピングでは拒否されたキーの論理位置が示される() {
         let error = parse_document("agents:\n  1: a\n").expect_err("拒否される");
-        assert!(error.message.contains("キーは文字列"));
+        assert!(
+            error.message.contains("`agents`") && error.message.contains("`1`"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
