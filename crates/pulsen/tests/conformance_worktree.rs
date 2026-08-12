@@ -105,7 +105,26 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
     }
 }
 
-// git 操作の失敗も別ハンドルで組めるため、スキップは1件も許容しない。一時ディレクトリ
-// がリポジトリ配下にある環境では TC-port-worktree-manager-003 の前提が成立せず
-// (ADR-033)、その差はここで失敗として現れる。
-pulsen_conformance::worktree_manager_conformance!(GitCliWorktreeManagerHarness::new(), Vec::new());
+/// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
+///
+/// `non_repo_dir` は「git リポジトリでない実在のディレクトリ」を前提にするため、TMPDIR が
+/// リポジトリ配下だと上位へ遡って成功し、前提が成立しない(ADR-033)。
+const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_port_worktree_manager_003"];
+
+/// この環境でスキップを許容するケース。
+///
+/// git 操作の失敗は別ハンドル(`failing_manager`)で組めるため、許容するのは環境が前提を
+/// 作れない上記1件だけ。宣言をプラットフォームではなく実行時の述語で決めることで、同じ
+/// 前提を使う CLI 側の受け入れテスト(TC-task-register-task-036)と扱いが揃う(ADR-055)。
+fn allowed_skips() -> Vec<&'static str> {
+    if common::git::tmpdir_outside_repository() {
+        Vec::new()
+    } else {
+        OUTSIDE_REPOSITORY_CASES.to_vec()
+    }
+}
+
+pulsen_conformance::worktree_manager_conformance!(
+    GitCliWorktreeManagerHarness::new(),
+    allowed_skips()
+);

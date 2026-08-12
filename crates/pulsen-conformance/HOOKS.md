@@ -19,7 +19,23 @@
 | C | 12 |
 | 合計 | 125 |
 
-スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境でスキップを許容するケース」を集合として宣言する（`SkipBudget`）。集合の外のスキップはそのケースの失敗として現れる。集合は環境の能力から実行時に決める — 区分 C の行は、権限制限が効くかどうか（`permission_restrictions_effective`）で走るか走らないかが変わる（`.adr/055-conformance-skip-budget.md`）。
+スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境でスキップを許容するケース」を集合として宣言する（`SkipBudget`）。集合の外のスキップはそのケースの失敗として現れる。集合は環境の能力から実行時に決める（`.adr/055-conformance-skip-budget.md`）。
+
+## 環境で走らなくなりうる行
+
+**何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する8行だけで、区分 C の残る4行はそれぞれ別の能力を要求する。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
+
+| ID | 区分 | 前提を作れない環境 | 判定 |
+|---|---|---|---|
+| TC-port-config-store-023 | C | 読み取れないファイルを作れない（root 実行・非 POSIX・権限を持たないファイルシステム） | `permission_restrictions_effective` |
+| TC-port-workflow-store-030 | C | 同上 | `permission_restrictions_effective` |
+| TC-port-task-repository-005 / 011 / 012 / 035 | C | 書き込めないディレクトリを作れない（同上） | `permission_restrictions_effective` |
+| TC-port-task-repository-019 / 041 | C | 読み取れないディレクトリを作れない（同上） | `permission_restrictions_effective` |
+| TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか |
+| TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか |
+| TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか |
+| TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか |
+| TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか |
 
 ## 適用範囲
 
@@ -189,7 +205,7 @@ ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` /
 | TC-port-worktree-manager-006 | コミットのない空リポジトリ | B | `repo_without_commit` |
 | TC-port-worktree-manager-007 | 指定ブランチが存在する | B | `repo_with_commit` + `head_branch_name` |
 | TC-port-worktree-manager-008 | 指定ブランチが存在しない | B | `repo_with_commit` + `absent_branch_name` |
-| TC-port-worktree-manager-009 | git 操作自体が失敗する | C | `failing_manager`（3メソッドとも `Failed`） |
+| TC-port-worktree-manager-009 | git 操作自体が失敗する | C | `failing_manager` + `repo_with_commit` + `head_branch_name`（3メソッドとも `Failed`） |
 
 ## フック一覧
 

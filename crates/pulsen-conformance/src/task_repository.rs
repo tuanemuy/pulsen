@@ -704,6 +704,7 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
     let writing = AtomicBool::new(true);
     let observations = AtomicUsize::new(0);
     let overlapped = thread::scope(|scope| {
+        let _stop = StopOnDrop(&writing);
         scope.spawn(|| {
             while writing.load(Ordering::Relaxed) {
                 match repo.find(small.id()) {
@@ -740,9 +741,7 @@ pub fn tc_port_task_repository_042_反復する保存の途中経過は読み手
         }
 
         // 保存を止める前に数える。止めた後の観測は書き込みと重なっていない。
-        let overlapped = observations.load(Ordering::Relaxed) - before;
-        writing.store(false, Ordering::Relaxed);
-        overlapped
+        observations.load(Ordering::Relaxed) - before
     });
 
     assert!(
@@ -793,6 +792,20 @@ pub fn tc_port_task_repository_043_失敗した保存は部分的な結果を残
     CaseOutcome::Ran
 }
 
+/// 読み手の停止をスコープの巻き戻しに載せる(TC-042 / TC-044)。
+///
+/// 読み手の停止条件はこのフラグだけで、`thread::scope` は巻き戻しの前に子スレッドを合流
+/// させる。書き手が `save` / `archive` の失敗でパニックしたとき、停止をクロージャ末尾の
+/// 文で行うと読み手が回り続けてプロセスが返らない — スイートが検出すべき欠陥が、判定では
+/// なくハングとして現れる。
+struct StopOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for StopOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
 /// 観測回数が `floor` を超えるまで実行を譲り、その時点の観測回数を返す(TC-042 / TC-044)。
 ///
 /// 観測が起きないまま書き手が走り切ると「中間状態を観測しなかった」が空虚に成立する。
@@ -831,6 +844,7 @@ pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み
     let moving = AtomicBool::new(true);
     let observations = AtomicUsize::new(0);
     let overlapped = thread::scope(|scope| {
+        let _stop = StopOnDrop(&moving);
         scope.spawn(|| {
             while moving.load(Ordering::Relaxed) {
                 match repo.find(task.id()) {
@@ -867,7 +881,6 @@ pub fn tc_port_task_repository_044_アーカイブ移動の中間状態は読み
         repo.archive(task.id()).expect("アーカイブできる");
         let after = yield_until_observations_exceed(&observations, before);
 
-        moving.store(false, Ordering::Relaxed);
         after - before
     });
 

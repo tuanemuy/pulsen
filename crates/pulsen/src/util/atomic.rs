@@ -140,6 +140,7 @@ mod tests {
 
         let writing = AtomicBool::new(true);
         thread::scope(|scope| {
+            let _stop = StopOnDrop(&writing);
             scope.spawn(|| {
                 while writing.load(Ordering::Relaxed) {
                     // 置換の途中でファイルを開けない瞬間はプラットフォームによってありうる。
@@ -158,8 +159,19 @@ mod tests {
                 write_atomic(&target, &new).expect("新内容");
                 write_atomic(&target, &old).expect("旧内容");
             }
-            writing.store(false, Ordering::Relaxed);
         });
+    }
+
+    /// 読み手の停止をスコープの巻き戻しに載せる。
+    ///
+    /// `thread::scope` は巻き戻しの前に子スレッドを合流させるため、書き手が置換の失敗で
+    /// パニックしたとき、停止をクロージャ末尾の文で行うと読み手が回り続けて返らない。
+    struct StopOnDrop<'a>(&'a AtomicBool);
+
+    impl Drop for StopOnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Relaxed);
+        }
     }
 
     #[test]

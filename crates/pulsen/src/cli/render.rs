@@ -7,7 +7,7 @@ use std::path::Path;
 
 use pulsen_domain::definition::{
     AgentDefError, AgentName, ConfigLoadError, RegistrationError, SourceLocation, TemplateError,
-    WorkflowLoadError, WorkflowParseError,
+    WorkflowLoadError, WorkflowParseError, WorkflowStructureError,
 };
 use pulsen_domain::execution::TargetError;
 use pulsen_domain::task::{AbsolutePathError, CreateError};
@@ -193,7 +193,8 @@ fn workflow_parse_error(error: &WorkflowParseError) -> Vec<String> {
             vec!["initial が指定されていません。".to_owned()]
         }
         WorkflowParseError::InitialNotFound { initial } => vec![format!(
-            "initial が指すステータス `{initial}` が statuses にありません。"
+            "{}。",
+            WorkflowStructureError::describe_initial_not_found(initial)
         )],
         WorkflowParseError::EmptyStatuses => {
             vec!["statuses が空、または指定されていません。".to_owned()]
@@ -212,7 +213,8 @@ fn workflow_parse_error(error: &WorkflowParseError) -> Vec<String> {
             "エージェント実行のステータス `{status}` に next がありません。"
         )],
         WorkflowParseError::NextNotFound { status, next } => vec![format!(
-            "ステータス `{status}` の next が指す `{next}` が statuses にありません。"
+            "{}。",
+            WorkflowStructureError::describe_next_not_found(status, next)
         )],
         WorkflowParseError::InvalidValue { location, message } => {
             vec![format!("{location} の値が不正です: {message}")]

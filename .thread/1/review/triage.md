@@ -299,3 +299,43 @@
   - R2-W-027: `task_id.rs:169-178` を `yyyymmddThhmmss-<8桁>` の形を文字列として固定するテスト（:150 付近の構成のテスト）に統合するか、`compose` を直接検証する形に変える。`path.rs:245-255` は削る（隣接の :219-243 が実際の配置を文字列で固定済み）。
   - R2-W-028: 対象検証が失敗する台本に、登録時検証も失敗するワークフロー（`{model}` を要求する config 等）を組み合わせたケースを1件足し、`Target` が返ることと ID が発行されないことを確かめる。
 - 触るファイル: `crates/pulsen/tests/common/mod.rs`, `crates/pulsen/tests/cli_add_error.rs`, `crates/pulsen/tests/cli_add_boundary.rs`, `crates/pulsen/tests/register_task.rs`, `crates/pulsen/src/adapter/task_id.rs`, `crates/pulsen-domain/src/task/path.rs`
+
+## ラウンド3
+
+3本のレビューの計5件（B 0 / W 5）。統合した組は無く、そのまま **5件**（B 0 / W 5）。判定は **fix 5 / wont-fix 0 / defer 0**。1周目の wont-fix 3件（W-004 / W-012 / W-017）はいずれのレビューも蒸し返しておらず、**wont-fix の継承は0件**。Key が一致する既出指摘は R3-W-005 の1件だけで、過去の判定が `fix` なので判定を継承して再指摘回数を +1 した。
+
+| 統合ID | 統合元 |
+|---|---|
+| R3-W-001 | adapter-test W-001 + arch-spec W-001 の後半（`conformance_worktree.rs` の `Vec::new()`） |
+| R3-W-002 | adapter-test W-002 |
+| R3-W-003 | arch-spec W-001 の前半（HOOKS.md の記述） |
+| R3-W-004 | arch-spec W-002 |
+| R3-W-005 | arch-spec W-003 |
+
+### 判定
+
+| ID | Key（照合キー） | 判定 | 理由 | 再指摘回数 |
+|----|----------------|------|------|-----------|
+| R3-W-001 | tests/conformance_worktree.rs の許容スキップ宣言 | fix | 実コードで確認: `non_repo_dir`（:87）は `common::git::is_outside_repository` が偽なら `None` を返すのに、宣言は `Vec::new()`。TMPDIR がリポジトリ配下の環境では TC-port-worktree-manager-003 が `SkipBudget::record` の `assert!` で失敗する。まったく同じ前提を CLI 側の TC-036 は `git::tmpdir_outside_repository()` で許容集合に入れており（`common/mod.rs:34-35,49-51`）、扱いが2つに割れている。plan.md の記帳基準（「環境が前提を作れずケースが走らなかった行」はスキップして理由を残す）と ADR-055（宣言はプラットフォームではなく環境の能力に対応させる）に対する例外がここ1件だけ残っていた | 0 |
+| R3-W-002 | conformance/task_repository.rs TC-042 / TC-044 の停止条件 | fix | 読み手の停止条件は `writing` / `moving` だけで、`store(false)` は `thread::scope` のクロージャ末尾の文にある。`repo.save(...).expect(...)` / `repo.archive(...).expect(...)` のパニックはそこに到達しないまま巻き戻り、`thread::scope` は巻き戻しの前に子スレッドを合流させるため読み手が無限ループする。**意図的に `Err` を返す `save` / `archive` で再現し、ガード導入前は 40 秒の期限で打ち切られること、導入後は 0.02 秒で FAILED になることを実測**。同型が `util/atomic.rs` のユニットテストにもある。2周目にロック TC-003 を期限監視へ作り替えた（ADR-060）のと同じ失敗モード | 0（2周目 R2-W-026 と同じ失敗モードだが箇所は別） |
+| R3-W-003 | conformance/HOOKS.md:22,192 | fix | 「区分 C の行は権限制限が効くかどうかで走るか走らないかが変わる」が12行中8行にしか当てはまらない（clock-003 / clock-005 / exclusive-lock-007 / worktree-manager-009 は権限と無関係）ことを実コードで確認。出荷しているハーネス自身も文どおりに書けておらず、`conformance_time_id.rs:81` は probe を参照せず `tc_port_clock_005` を無条件に宣言している。HOOKS.md は後続スライスが `allowed_skips` を組むときに読む正本（ADR-055 / AC-8）なので、この文に従うと probe が真の環境で必ず失敗する。:192 の worktree-manager-009 が `failing_manager` しか挙げていない点（実際は `repo_with_commit` / `head_branch_name` も `require!` する）も同じ性質の不正確さ | 0（2周目 R2-W-021 は同じ出荷ドキュメントの別の箇所） |
+| R3-W-004 | .adr/ の連番 056〜059 | fix | `ls .adr/` は 055 の次が 060 で、`grep` しても 056〜059 が `crates/` `.adr/` `.thread/` のどこにも現れないことを確認。ADR-038 が「昇格済みかどうかは Status 行で判別できる状態に保つ」と定め、`adr.md:5` が ADR-041 / 047 の例外を明示的に説明している以上、ここだけ黙って空くのは自ら明文化した規約の破れ。`.adr/` だけを見る後続スライスの担当が「失われた決定」と誤読し、次の採番も決められない | 0 |
+| R3-W-005 | definition/workflow.rs describe() と cli/render.rs workflow_parse_error | fix | `describe()`（:60-70）の2文と `render.rs:195-197, 214-216` の文言が末尾の `。` 以外同一であることをコードで確認。前者は `task_file.rs:603` 経由で `SnapshotUnreadable` の理由、後者は登録時の案内として**どちらも利用者に見える**ため、片方だけ直すと同じ壊れ方が2つの言葉で説明される。`describe()` の doc 自身が「説明の定義箇所をドメインに1つ置く」と書いている。1周目 W-002・2周目 R2-W-009 と同じ判断（ドメインに一元化する）を適用する | 2（1周目 W-002 / 2周目 R2-W-009） |
+
+### wont-fix / defer
+
+なし。5件すべて fix。
+
+- 3本のレビューはいずれも「1周目の wont-fix 3件は蒸し返さない」と冒頭で宣言しており、実際に W-004 / W-012 / W-017 は1件も再指摘されていない。
+- 誤りと判定できる指摘は無かった。該当箇所を1件ずつ読み、`Vec::new()` の宣言と `non_repo_dir` の述語、`store(false)` の位置、区分 C 12行の内訳（権限由来8 / それ以外4）、`ls .adr/` の欠番、2つの文言の一致を実測で裏付けた。
+- スコープ外に出すものは無い。5件とも本 PR 内で完結する。
+
+### 反映内容（ラウンド3）
+
+| ID | 反映 |
+|----|------|
+| R3-W-001 | `crates/pulsen/tests/conformance_worktree.rs` に `allowed_skips()` を置き、`common::git::tmpdir_outside_repository()` が偽のときだけ `tc_port_worktree_manager_003` を許容集合に入れる（`conformance_task_repository.rs:222-228` と同じ形）。CLI 側 TC-036 と同一の述語になり、扱いの割れが消えた |
+| R3-W-002 | `crates/pulsen-conformance/src/task_repository.rs` に `StopOnDrop` を置き、TC-042 / TC-044 の停止をスコープの巻き戻しに載せた。`crates/pulsen/src/util/atomic.rs` の並行ユニットテストにも同じガードを置いた。判断は ADR-063 として起票（`.adr/063-concurrent-observation-stops-the-reader-on-unwind.md`） |
+| R3-W-003 | `HOOKS.md` の「区分 C = 権限制限」の一般化をやめ、「環境で走らなくなりうる行」の節を新設して12行（+ 区分 B の worktree-manager-003）ごとに「前提を作れない環境」と「判定」を表にした。:192 の worktree-manager-009 に `repo_with_commit` / `head_branch_name` を追記 |
+| R3-W-004 | `.thread/1/adr.md:5` に「ADR-056〜059 は欠番（採番したまま使わなかった番号で、決定が失われたわけではない）」を明記。`.adr/` だけを見る読み手のために、採番規則の正本 `.adr/035-file-slice-adrs-from-019.md` の決定にも同じ事実を1行足した |
+| R3-W-005 | `WorkflowStructureError` に `describe_initial_not_found(&str)` / `describe_next_not_found(&str, &str)` を置き、`describe()` と `render.rs` の両方がそれを呼ぶ形にした（`WorkflowParseError` は spec どおりステータス名を `String` で持つため、文字列で受け取る口を公開する理由を why として残した）。文言の定義箇所が1つになった |

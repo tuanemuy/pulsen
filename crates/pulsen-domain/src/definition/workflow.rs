@@ -60,16 +60,28 @@ impl WorkflowStructureError {
     pub fn describe(&self) -> String {
         match self {
             Self::EmptyStatuses => "ステータスが1件もありません".to_owned(),
-            Self::InitialNotFound { initial } => format!(
-                "initial が指すステータス `{}` が statuses にありません",
-                initial.as_str()
-            ),
-            Self::NextNotFound { status, next } => format!(
-                "ステータス `{}` の next が指す `{}` が statuses にありません",
-                status.as_str(),
-                next.as_str()
-            ),
+            Self::InitialNotFound { initial } => Self::describe_initial_not_found(initial.as_str()),
+            Self::NextNotFound { status, next } => {
+                Self::describe_next_not_found(status.as_str(), next.as_str())
+            }
         }
+    }
+
+    /// `initial` の参照先が無いことの説明。
+    ///
+    /// 同じ破れは登録時のパースでも `WorkflowParseError::InitialNotFound` として利用者に
+    /// 見える。あちらはステータス名を文字列で持つため(名前として妥当でない値も報告できる)、
+    /// 説明を1箇所に保てるよう文字列で受け取る形も公開する。
+    #[must_use]
+    pub fn describe_initial_not_found(initial: &str) -> String {
+        format!("initial が指すステータス `{initial}` が statuses にありません")
+    }
+
+    /// `next` の参照先が無いことの説明。文字列で受け取る理由は
+    /// [`Self::describe_initial_not_found`] と同じ。
+    #[must_use]
+    pub fn describe_next_not_found(status: &str, next: &str) -> String {
+        format!("ステータス `{status}` の next が指す `{next}` が statuses にありません")
     }
 }
 
