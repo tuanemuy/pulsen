@@ -10,8 +10,9 @@ const LOCKED: &str = "locked";
 
 /// ロックを保持し続けるフィクスチャの実行ファイル。
 ///
-/// `cargo test` は example もビルドするため、バイナリと同じ出力ディレクトリの
-/// `examples/` に必ず置かれる。
+/// パッケージ全体を対象にした `cargo test` は example もビルドするため、バイナリと同じ
+/// 出力ディレクトリの `examples/` に置かれる。単一のテストターゲットを指定した実行では
+/// ビルドされないため、不在は「前提を作れない環境」として扱う。
 pub fn holder_program() -> Option<PathBuf> {
     let binary = Path::new(env!("CARGO_BIN_EXE_pulsen"));
     let program = binary

@@ -10,10 +10,6 @@ ADR-015 はスナップショットをタスクファイルに正規化構造と
 
 当初は「`snapshot` の**構文**破れ → `SnapshotUnreadable`」と書いていたが実現不能だった。`snapshot` を含むファイル全体を1回の JSON パースで読む以上、snapshot フィールドの中身が JSON 構文として壊れていればファイル全体のパースが失敗する(実測: `{"a":1,"snapshot":{broken}}` → `key must be a string at line 1 column 21`)。
 
-## 検討した代替案
-
-- `snapshot` を JSON 文字列としてネストする — snapshot の構文破れをファイル全体から独立させられるが、エスケープだらけになって requirements §9 の人間可読性と ADR-015 の「正規化構造として埋め込む」を壊す
-
 ## 決定
 
 - タスクファイルは `state/tasks/<task-id>.json`(アーカイブは `state/archive/<task-id>.json`)の JSON 1ファイル。整形して書き、人間が直接読める状態にする
@@ -29,6 +25,10 @@ ADR-015 はスナップショットをタスクファイルに正規化構造と
 - 適合テストの破損フィクスチャはこの区分に沿って「有効な JSON でありながらスナップショットとして解釈できない」形で作る(`"snapshot": "壊れた"` / `{"initial": 123}` / `snapshot` キーの削除 / `task_status` の差し替え)
 - 復号時、`snapshot` フィールドは `Box<serde_json::value::RawValue>` として生のまま保持する。`save_degraded` はディスク上の既存ファイルを読み直して `snapshot` の生バイト列を引き継ぎ、タスク側フィールドだけを差し替えて書き戻す。DTO の `Option<Box<RawValue>>` には `#[serde(skip_serializing_if = "Option::is_none")]` を付け、**キーの不在を不在のまま**書き戻す(既定の直列化ではキー削除が `"snapshot": null` に化け、「元の内容のまま温存する」契約から外れる)
 - タスク側の未知キーは拒否する(`deny_unknown_fields`)。スキーマバージョンのフィールドは設けない
+
+## 検討した代替案
+
+- `snapshot` を JSON 文字列としてネストする — snapshot の構文破れをファイル全体から独立させられるが、エスケープだらけになって requirements §9 の人間可読性と ADR-015 の「正規化構造として埋め込む」を壊す
 
 ## 影響
 

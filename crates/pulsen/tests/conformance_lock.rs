@@ -94,6 +94,26 @@ impl ExclusiveLockHarness for FileExclusiveLockHarness {
     }
 }
 
-// 別プロセスの保持もロック機構の異常も環境非依存に組めるため(ADR-032)、スキップは
-// 1件も許容しない。
-pulsen_conformance::exclusive_lock_conformance!(FileExclusiveLockHarness::new(), Vec::new());
+/// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
+const LOCK_HOLDER_CASES: [&str; 4] = [
+    "tc_port_exclusive_lock_002",
+    "tc_port_exclusive_lock_003",
+    "tc_port_exclusive_lock_004",
+    "tc_port_exclusive_lock_005",
+];
+
+/// この環境でスキップを許容するケース。
+///
+/// ロック機構の異常は別ハンドル(`unusable_lock`)で組めるため、許容するのは保持プロセスの
+/// 実行ファイルが無い場合の上記4件だけ。宣言をプラットフォームではなく実行時の述語で
+/// 決めることで、同じフィクスチャを使う CLI 側の受け入れテスト
+/// (TC-task-register-task-017)と扱いが揃う(ADR-055)。
+fn allowed_skips() -> Vec<&'static str> {
+    if common::lock::holder_program().is_some() {
+        Vec::new()
+    } else {
+        LOCK_HOLDER_CASES.to_vec()
+    }
+}
+
+pulsen_conformance::exclusive_lock_conformance!(FileExclusiveLockHarness::new(), allowed_skips());

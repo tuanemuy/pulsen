@@ -379,3 +379,41 @@
 | `task_status` と `snapshot` の JSON キー名を変える（両方が不在になる） | TC-009 が落ちる | 修正後は FAILED。同じ変異の下で修正前の比較（`task["task_status"] == task["snapshot"]["initial"]`）に戻すと **ok で通る**ことも実測し、キー不在を検出できるようになったことを確認した |
 
 いずれの変異も検証後に復元し、`git diff` に残っていないことを確認した。
+
+## ラウンド5
+
+最終レビュー1本の3件（B 0 / W 3）。統合した組は無く、そのまま **3件**（B 0 / W 3）。判定は **fix 3 / wont-fix 0 / defer 0**。1周目の wont-fix 3件（W-004 / W-012 / W-017）はレビューが冒頭で明示的に対象外と宣言しており、**wont-fix の継承は0件**。Key が一致する既出指摘は R5-W-001（3周目 R3-W-001）と R5-W-003（1周目 W-036）の2件で、いずれも過去の判定が `fix` なので判定を継承して再指摘回数を +1 した。
+
+### 判定
+
+| ID | Key（照合キー） | 判定 | 理由 | 再指摘回数 |
+|----|----------------|------|------|-----------|
+| R5-W-001 | conformance_lock.rs のスキップ宣言が無条件の空集合 | fix | `rm -f target/debug/examples/lock_holder && cargo test --test conformance_lock` で **4 failed** を再現。単一テストターゲット指定の実行は example をビルドしないため `holder_program()` が `None` を返し、TC-port-exclusive-lock-002/003/004/005 が「スキップ」ではなく失敗になる。失敗の案内は「環境で前提条件を用意できるようにする」と促すが、環境にもアダプターにも問題は無く読み手を誤誘導する。同じフィクスチャについて受け入れテスト側（`tests/common/mod.rs`）は実行時 probe で判定しており、扱いが2つに割れていた。3周目 R3-W-001 で確定した基準（ADR-055「宣言はプラットフォームではなく環境の能力に対応させる」）の適用漏れが1箇所だけ残ったもの | 1（3周目 R3-W-001） |
+| R5-W-002 | .adr/ の見出し規約（ADR-038）の破れ | fix | `grep -n '^#\+ ' .adr/*.md` を全件（001〜064）に掛けて確認。`.adr/048` は `### 検討した代替案`、`.adr/050` / `.adr/054` は `検討した代替案:` の平文で、`grep -l '^## 検討した代替案'` から漏れる。`.adr/025` は `## 検討した代替案` が `## 決定` より前。ADR-038 は見出しの並びを定め、その効果として「`.adr/` 全体で見出しが1つに揃い、機械的な確認が全件に効く」を掲げている。既存 `.adr/001`〜`018` は18件すべて規約どおりで、破れているのは本 PR が追加した側だけ。1周目 W-027 / W-028、2周目 R2-W-017、3周目 R3-W-004 と同じ「自ら明文化した規約の破れは放置しない」の適用 | 0 |
+| R5-W-003 | .thread/1/adr.md ADR-041 の適合ケース集計 | fix | `:715` の「ポートのみ28件 / フック86件 / spec が明示するスキップ可11件」に対し、出荷物 `crates/pulsen-conformance/HOOKS.md:19-24` は A 28 / B 85 / C 12。1周目 W-036(b) で TC-port-clock-003 を B → C に直した結果が `adr.md` に届いていない。ADR-041 は `.adr/` へ昇格せず内容を `.adr/027` に畳んだため、この行が当該集計の唯一の記録として残っている | 1（1周目 W-036） |
+
+### wont-fix / defer
+
+なし。3件すべて fix。
+
+- レビューは冒頭で1周目の wont-fix 3件を対象外と宣言しており、実際に W-004 / W-012 / W-017 は1件も再指摘されていない。
+- 誤りと判定できる指摘は無かった。3件とも実測で裏付けた（example を退避した単体実行の 4 failed、`.adr/*.md` 全件の見出し走査、`HOOKS.md` の集計との突き合わせ）。
+- スコープ外に出すものは無い。3件とも本 PR 内で完結し、適合ケースの件数（125件）も変わらない。
+
+### 反映内容（ラウンド5）
+
+| ID | 反映 |
+|----|------|
+| R5-W-001 | `crates/pulsen/tests/conformance_lock.rs` に `allowed_skips()` を置き、`common::lock::holder_program()` が `None` のときだけ TC-002〜005 の4件を許容集合に入れる（`conformance_worktree.rs` / `conformance_task_repository.rs` と同じ形）。`crates/pulsen/tests/common/lock.rs` の doc から「必ず置かれる」の主張を外し、example がビルドされるのはパッケージ全体を対象にした実行に限ることと、不在は前提を作れない環境として扱うことを書いた。CLI 側の受け入れテスト（TC-task-register-task-017）と同一の述語になり、扱いの割れが消えた |
+| R5-W-002 | `.adr/048` の `### 検討した代替案` を `##` に、`.adr/050` / `.adr/054` の平文 `検討した代替案:` を `## 検討した代替案` に直した。`.adr/025` は当該節を `## 決定` の後ろへ移した。`.adr/001`〜`064` の全件で見出しの並びが ADR-038 の規約どおりになった |
+| R5-W-003 | `.thread/1/adr.md:715` を「ポートのみ28件 / フック85件 / spec が明示するスキップ可12件」に直した（正は `HOOKS.md`） |
+
+### 反映の検証
+
+| 確認 | 結果 |
+|---|---|
+| `rm -f target/debug/examples/lock_holder && cargo test --test conformance_lock -- --nocapture` | `7 passed; 0 failed`。TC-002/003/004/005 の4件が SKIP 行つきで通る（002/003/005 は `hold_from_other_process`、004 は `try_acquire_from_other_process`） |
+| example がある状態で `cargo test --test conformance_lock -- --nocapture` | `7 passed`、SKIP 行なし。許容集合が空になり4件が実走する |
+| 他の適合スイートの単体実行（`conformance_worktree` / `conformance_time_id` / `conformance_config_store` / `conformance_workflow_store` / `conformance_task_repository`） | すべて `0 failed`。SKIP は `tc_port_clock_005`（`rewind`）の1件のみで、同種の適用漏れは無い |
+| example を退避した `cargo test --test cli_add_error` | `31 passed`。`tc_task_register_task_017` が SKIP 行つきで通り、適合スイート側と同じ扱いになっている |
+| `grep -c '^## 検討した代替案' .adr/*.md` の全件走査 | 見出しを持つ ADR がすべて `##` レベルで一致し、`## 決定` より後ろにある |
