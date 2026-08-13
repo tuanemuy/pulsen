@@ -18,8 +18,9 @@ use super::fsdir::ensure_dir;
 
 /// 置換・移動・読み取りを試みる回数の上限。
 ///
-/// 0 を表せない型にするのは、上限が「1回は試みる」を含むため。回数を数え上げる側が
-/// 引き算で 0 を扱わずに済む。
+/// 0 を表せない型にするのは、打ち切りが `attempted == MAX_ATTEMPTS.get()` の等値比較だから。
+/// 上限が 0 なら `attempted` は 1 から増えるだけで条件が成立せず、一時的な拒否が続く限り
+/// ループが返らない。
 const MAX_ATTEMPTS: NonZeroU32 = NonZeroU32::new(10).expect("上限は1回以上");
 
 /// 最初の再試行までの待ち時間。試行ごとに倍にする。
@@ -39,8 +40,10 @@ const FIRST_RETRY_WAIT: Duration = Duration::from_millis(1);
 /// あって、既存の権限を引き継ぐ設計ではない。
 ///
 /// 一時的な拒否(`transiently_denied`)を吸収するため、成功する呼び出しも失敗する
-/// 呼び出しも**最大 511ms ブロックしうる**。排他ロックを保持したまま呼ぶ側では、
-/// この遅延がロックの保持時間にそのまま乗る。
+/// 呼び出しも**1回の呼び出しあたり最大 511ms ブロックしうる**。短い待ちは OS のタイマー
+/// 粒度に丸め上げられるため、実測はこれを上回る(Windows の既定粒度は約 15.6ms)。排他
+/// ロックを保持したまま呼ぶ側では、この遅延がロックの保持時間にそのまま乗り、1つの操作が
+/// 複数回呼ぶ経路ではその回数だけ積み上がる。
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = parent_of(path)?;
     ensure_dir(dir)?;
@@ -59,7 +62,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// 移動先のディレクトリは必要に応じて作成する。移動は同一ファイルシステム内を前提とし、
 /// 中間状態(両方に現れる・どちらにも完全体が無い)を作らない。
 ///
-/// `write_atomic` と同じく、一時的な拒否を吸収するため**最大 511ms ブロックしうる**。
+/// `write_atomic` と同じく、一時的な拒否を吸収するため**1回の呼び出しあたり最大 511ms
+/// ブロックしうる**(短い待ちは OS のタイマー粒度で伸びる)。
 pub fn rename_atomic(from: &Path, to: &Path) -> io::Result<()> {
     let source = parent_of(from)?;
     let dir = parent_of(to)?;
@@ -85,13 +89,10 @@ pub fn rename_atomic(from: &Path, to: &Path) -> io::Result<()> {
 ///
 /// 吸収するのは一時的な拒否だけで、エラーの意味は変えない。上限に達したら OS が返した
 /// エラーをそのまま返す(`NotFound` は一時的な拒否ではないので初回で返る)。書き込み側と
-/// 同じく**最大 511ms ブロックしうる**。
+/// 同じく**1回の呼び出しあたり最大 511ms ブロックしうる**(短い待ちは OS のタイマー粒度で
+/// 伸びる)。エントリを走査して1件ずつ読む呼び出し側では、この上限が件数だけ積み上がる。
 pub fn read_atomic(path: &Path) -> io::Result<Vec<u8>> {
-    retry_while_transient(
-        (),
-        |()| fs::read(path).map_err(|error| (error, ())),
-        transiently_denied,
-    )
+    read_with_retry(path, transiently_denied)
 }
 
 /// 一時ファイルを対象へ置き換える。`is_transient` が真とするエラーに限って再試行する。
@@ -119,6 +120,15 @@ fn rename_with_retry(
     retry_while_transient(
         (),
         |()| fs::rename(from, to).map_err(|error| (error, ())),
+        is_transient,
+    )
+}
+
+/// 内容全体を読む。`is_transient` が真とするエラーに限って再試行する。
+fn read_with_retry(path: &Path, is_transient: impl Fn(&io::Error) -> bool) -> io::Result<Vec<u8>> {
+    retry_while_transient(
+        (),
+        |()| fs::read(path).map_err(|error| (error, ())),
         is_transient,
     )
 }
@@ -177,7 +187,9 @@ fn transiently_denied(error: &io::Error) -> bool {
 }
 
 /// unix の `rename` と `open` は開いているハンドルに影響されないため、待って解ける拒否が
-/// 無い。
+/// 無い。分類が空である以上、公開関数が再試行に入る様子は unix では原理的に観測できない
+/// — テストは分類そのもの・再試行の経路・「一時的でない拒否に予算を使わない」の3つに
+/// 分けて押さえる。
 #[cfg(not(windows))]
 fn transiently_denied(_error: &io::Error) -> bool {
     false
@@ -210,8 +222,15 @@ fn sync_dir(_dir: &Path) {}
 mod tests {
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Instant;
 
     use super::*;
+
+    /// 阻害要因を別スレッドから取り除くまでの待ち。
+    ///
+    /// 本番の経路(`persist_with_retry` / `rename_with_retry` / `read_with_retry`)をそのまま
+    /// 呼ぶために、状況を変える手段を試行の外側に置く。待ちは再試行の予算の内側に収める。
+    const OBSTACLE_LIFETIME: Duration = Duration::from_millis(20);
 
     #[test]
     fn 新しい内容で既存のファイルが置き換わる() {
@@ -294,25 +313,70 @@ mod tests {
     }
 
     #[test]
-    fn 置換が一時的に拒まれても上限内なら置き換わる() {
+    fn 一時的な拒否と分類されるのは共有違反とアクセス拒否だけ() {
+        const ACCESS_DENIED: i32 = 5;
+        const SHARING_VIOLATION: i32 = 32;
+        const FILE_NOT_FOUND: i32 = 2;
+        const DISK_FULL: i32 = 112;
+
+        // 待てば解ける窓を作るのは Windows の置換・移動・読み取りだけなので、他の OS では
+        // 同じコードでも一時的とは見なさない。
+        for code in [ACCESS_DENIED, SHARING_VIOLATION] {
+            assert_eq!(
+                transiently_denied(&io::Error::from_raw_os_error(code)),
+                cfg!(windows),
+                "{code}"
+            );
+        }
+        for code in [FILE_NOT_FOUND, DISK_FULL] {
+            assert!(
+                !transiently_denied(&io::Error::from_raw_os_error(code)),
+                "{code}"
+            );
+        }
+        assert!(!transiently_denied(&io::Error::other(
+            "OS のエラーではない"
+        )));
+    }
+
+    #[test]
+    fn 時間で解けない拒否に再試行の予算を使わない() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let missing = base.path().join("task.json");
+        let to = base.path().join("archived.json");
+
+        let started = Instant::now();
+        let error = read_atomic(&missing).expect_err("読めない");
+        let read_elapsed = started.elapsed();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+
+        let started = Instant::now();
+        let error = rename_atomic(&missing, &to).expect_err("移動できない");
+        let rename_elapsed = started.elapsed();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+
+        // 予算を使い切っていれば、公開関数が渡している分類がこの拒否を一時的と見なして
+        // いることになる。時間で解けない失敗を再試行で遅らせない、が分類の役目。
+        let budget = retry_budget();
+        assert!(read_elapsed < budget, "{read_elapsed:?}");
+        assert!(rename_elapsed < budget, "{rename_elapsed:?}");
+    }
+
+    #[test]
+    fn 置換が一時的に拒まれても上限内に解ければ置き換わる() {
         let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let target = base.path().join("task.json");
         fs::create_dir(&target).expect("置換を拒ませるものを置ける");
         let temp = NamedTempFile::new_in(base.path()).expect("一時ファイルを作れる");
 
-        retry_while_transient(
-            temp,
-            |temp| match temp.persist(&target) {
-                Ok(_) => Ok(()),
-                Err(failed) => {
-                    // 拒否が続かない状況を作る。持ち越した一時ファイルで次の試行が置き換える。
-                    let _ = fs::remove_dir(&target);
-                    Err((failed.error, failed.file))
-                }
-            },
-            |_| true,
-        )
-        .expect("最終的に置き換わる");
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                thread::sleep(OBSTACLE_LIFETIME);
+                fs::remove_dir(&target).expect("阻害要因を取り除ける");
+            });
+
+            persist_with_retry(temp, &target, |_| true).expect("最終的に置き換わる");
+        });
 
         assert!(target.is_file());
         assert_eq!(entry_names(base.path()), vec!["task.json".to_owned()]);
@@ -353,6 +417,9 @@ mod tests {
                         "書きかけの内容を観測した: {} バイト",
                         observed.len()
                     );
+                    // 読み手には上限が無い一方で書き手は予算の内に窓を取り切る必要がある。
+                    // 譲るのは病的な CPU 飢餓だけを避けるためで、インターリーブの窓は残る。
+                    thread::yield_now();
                 }
             });
 
@@ -401,26 +468,39 @@ mod tests {
     }
 
     #[test]
-    fn 移動が一時的に拒まれても上限内なら移動する() {
+    fn 移動が一時的に拒まれても上限内に解ければ移動する() {
         let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let from = base.path().join("task.json");
         let to = base.path().join("archived.json");
 
-        retry_while_transient(
-            (),
-            |()| {
-                fs::rename(&from, &to).map_err(|error| {
-                    // 拒否が続かない状況を作る。次の試行では移動できる。
-                    let _ = fs::write(&from, b"content");
-                    (error, ())
-                })
-            },
-            |_| true,
-        )
-        .expect("最終的に移動する");
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                thread::sleep(OBSTACLE_LIFETIME);
+                fs::write(&from, b"content").expect("阻害要因を取り除ける");
+            });
+
+            rename_with_retry(&from, &to, |_| true).expect("最終的に移動する");
+        });
 
         assert!(!from.exists());
         assert_eq!(fs::read(&to).expect("読める"), b"content");
+    }
+
+    #[test]
+    fn 読み取りが一時的に拒まれても上限内に解ければ読める() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let target = base.path().join("task.json");
+
+        let bytes = thread::scope(|scope| {
+            scope.spawn(|| {
+                thread::sleep(OBSTACLE_LIFETIME);
+                write_atomic(&target, b"content").expect("阻害要因を取り除ける");
+            });
+
+            read_with_retry(&target, |_| true).expect("最終的に読める")
+        });
+
+        assert_eq!(bytes, b"content");
     }
 
     #[test]
@@ -440,6 +520,13 @@ mod tests {
         let root = Path::new("/");
 
         assert!(write_atomic(root, b"content").is_err());
+    }
+
+    /// 上限まで再試行したときに待つ時間の合計。
+    fn retry_budget() -> Duration {
+        (0..MAX_ATTEMPTS.get() - 1)
+            .map(|step| FIRST_RETRY_WAIT * 2u32.pow(step))
+            .sum()
     }
 
     fn entry_names(dir: &Path) -> Vec<String> {
