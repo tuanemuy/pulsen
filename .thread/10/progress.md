@@ -1,6 +1,6 @@
 # 進捗メモ — Issue #10
 
-`.github/workflows/ci.yml` を新規追加し、3ランナーで実行して**全7ジョブが緑**になった（run 31657976822）。steps.md のステップ1〜12 がすべて完了。
+`.github/workflows/ci.yml` を新規追加し、3ランナーで実行して**全7ジョブが緑**になった（run 31657976822、コミット `af24360`）。steps.md のステップ1〜11 が完了し、ステップ12 の機械確認と、PR 本文・Issue #10・PR #11 への記録も済んでいる。**ただし全緑は `af24360` に対する観測であり、その後に入った `.github/workflows/ci.yml` と `crates/pulsen/src/` の変更はまだ CI を通していない。**
 
 ## CI の実測結果
 
@@ -17,14 +17,16 @@
 
 ## 初回実行で落ちた Windows の6件と、その吸収
 
-いずれも ADR-008 の「本 Issue で扱う」側に収まり、別 Issue への切り出し・撤退条件の適用はしていない。
+いずれも adr.md ADR-008 の「本 Issue で扱う」側に収まり、別 Issue への切り出し・撤退条件の適用はしていない。
 
 | 失敗 | 原因 | 吸収 |
 |---|---|---|
 | `adapter::task_file::tests` 5件 | フィクスチャが `/abs/path` を絶対パスとして渡していた。Windows では絶対パスではないので、ドメインの `RepoPath` 検証が正しく `NotAbsolute` を返していた | フィクスチャを `MAIN_SEPARATOR` から組む既存の書き方（ADR-037）に揃えた。ドメイン側は無変更 |
-| `util::atomic::tests::読み手は旧内容か新内容のどちらかだけを観測する` 1件 | 読み手がハンドルを開いている間の置換を Windows が `ERROR_ACCESS_DENIED`(5) で拒む | `write_atomic` に共有違反限定・上限付きの再試行を入れた（ADR-010） |
+| `util::atomic::tests::読み手は旧内容か新内容のどちらかだけを観測する` 1件 | 読み手がハンドルを開いている間の置換を Windows が `ERROR_ACCESS_DENIED`(5) で拒む | `write_atomic` に共有違反限定・上限付きの再試行を入れた（adr.md ADR-010） |
 
-あわせて **`rename_atomic`（`archive` の経路、TC-port-task-repository-044）にも同じ再試行を掛けた**（ADR-012）。Windows は最初の失敗ターゲットで cargo が停止していたため 044 は「赤でない」のではなく「未観測」で、plan.md のリスク欄が 042 と 044 を同一原因の対として挙げていた。分類と上限は1つのループに集約してある。
+あわせて **`rename_atomic`（`archive` の経路、TC-port-task-repository-044）にも同じ再試行を掛けた**（adr.md ADR-012）。Windows は最初の失敗ターゲットで cargo が停止していたため 044 は「赤でない」のではなく「未観測」で、plan.md のリスク欄が 042 と 044 を同一原因の対として挙げていた。分類と上限は1つのループに集約してある。
+
+同じ理由で **読み手側にも吸収を入れた**（adr.md ADR-013）。`MoveFileEx` は置き換えられる側を delete-pending に落とすため、置換の窓では読み手も `ERROR_ACCESS_DENIED` を受ける。`FsTaskRepository` の内容の読み取りを `util::atomic::read_atomic` に通し、書き手と同じ分類・上限を共有させた。Windows の適合スイートはこの窓を一度も踏んでいないので、044 と同じく「赤でない」ではなく「未観測」として扱っている。
 
 ## スキップの実測（AC-6(d)）
 
@@ -35,23 +37,30 @@
 | ubuntu / macOS | 1件 | `tc_port_clock_005`（ハーネスが `rewind` を提供しない恒久スキップ） |
 | Windows | 11件 | 上記 + 権限系10件（適合行8 + CLI 受け入れ2） |
 
-走ったテストバイナリは3 OS とも19個で同数。詳細は `crates/pulsen-conformance/HOOKS.md` の「3ランナーでの実測」節に記録した。
+走ったテストバイナリは3 OS とも15本で同数（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて18）。詳細は `crates/pulsen-conformance/HOOKS.md` の「3ランナーでの実測」節に記録した。
 
 `pulsen-conformance` の lib ユニットテストは `SkipBudget` 自身を架空のケース名で検証するため、実在の適合ケースと区別できない `SKIP` 行を全 OS で3件出す。ジョブサマリーの集計はこの区間を除外している。
 
 ## 未検証のまま残ること
 
-**この CI が実測したのは `origin/main`（9d54376）時点のコードであり、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない。** Issue #10 のクローズは「クロスプラットフォームが検証済み」を意味しない。この事実は PR 本文と Issue #10 のコメントにも残してある。
+**この CI が実測したのは `af24360`（Issue #10 の CI とその吸収まで適用した時点）のコードであり、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない。** Issue #10 のクローズは「クロスプラットフォームが検証済み」を意味しない。この事実は PR 本文と [Issue #10 のコメント](https://github.com/tuanemuy/pulsen/issues/10#issuecomment-5275112376) に残してある。
 
-PR #11 へは次の3件を引き継ぐ（#11 にコメントで伝える）:
+PR #11 へは次の3件を引き継ぐ。[PR #11 のコメント](https://github.com/tuanemuy/pulsen/pull/11#issuecomment-5275112482) で伝えた:
 
-1. HOOKS.md の実測は `origin/main` 時点のもので、#11 がスイートと example を足した時点で部分的に古くなる。更新は #11 の責務。
-2. 本 Issue の修正が入った `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` とのコンフリクト解消は #11 側で行う（マージ順は本 Issue 先行）。
+1. HOOKS.md の実測は #11 のマージ前のもので、#11 がスイートと example を足した時点で部分的に古くなる。更新は #11 の責務。
+2. 本 Issue の修正が入った `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` / `crates/pulsen/src/adapter/task_repository.rs` とのコンフリクト解消は #11 側で行う（マージ順は本 Issue 先行）。
 3. #11 の `ProcessController` が Windows で赤になった場合の対応も #11 側。
+
+## 全緑のあとに入った変更（CI 未実行）
+
+run 31657976822 より後に入っており、3ランナーでの結果はまだ無い。次の push で取る。
+
+- `.github/workflows/ci.yml`: 前提検査に `id` を足した / 非 root アサートを `id` 自体の失敗と非数値出力でも落ちる形にした（adr.md の ADR-001・ADR-005）/ `cargo test` に `--no-fail-fast` を足した / サマリーに除外件数を出すようにした / MSRV の版数を `env` 越しに渡すようにした。
+- `crates/pulsen/src/util/atomic.rs`・`crates/pulsen/src/adapter/task_repository.rs`: 読み取りを `read_atomic` に通した（adr.md ADR-013）。上限を `NonZeroU32` にし、打ち切りの回数と分類分岐を観測するユニットテストを足した。
 
 ## 残っている見立て
 
-CI が緑になった今も、次は環境の揺らぎで赤くなりうる。撤退条件（ADR-008）は適用していないので、これらは通常の CI の赤として扱う。
+CI が緑になった今も、次は環境の揺らぎで赤くなりうる。撤退条件（adr.md ADR-008）は適用していないので、これらは通常の CI の赤として扱う。
 
 - `spawn_holder` は `SIGNAL_DEADLINE`(10秒) 超過でも `None` を返すが、`SkipBudget` の許容集合は `holder_program().is_some()` だけを見る。Windows で Defender のスキャンにより初回起動が遅れると、ロック適合4件が「スキップ」ではなく**失敗**として現れる。今回の実行では踏んでいない。
-- `rustup update stable` で常に現行 stable を使うため、新しい clippy lint / rustfmt の整形変更が入った日に、コードを変えていなくても赤くなりうる（ADR-004 が意図的に受け入れたトレードオフ）。受け皿は steps.md ステップ10。
+- `rustup update stable` で常に現行 stable を使うため、新しい clippy lint / rustfmt の整形変更が入った日に、コードを変えていなくても赤くなりうる（adr.md ADR-004 が意図的に受け入れたトレードオフ）。受け皿は steps.md ステップ10。

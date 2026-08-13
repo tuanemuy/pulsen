@@ -55,13 +55,15 @@ msrv     : {ubuntu, macos, windows}   前提の検査 → rust-version 読み出
 
 **YAML の記法**: `${{ }}` を含む値は**必ずブロック記法で書く**。YAML のフローコレクション内の plain scalar は `{` `}` `[` `]` `,` を含められないため、`concurrency: { group: ${{ github.workflow }}-${{ github.ref }}, ... }` はパーサで `did not find expected ',' or '}' while parsing a flow mapping` になる(実測)。同じ理由で `permissions: contents: read` のような入れ子マッピングの1行書きも `mapping values are not allowed in this context` で落ちる。式を含まない `strategy: { fail-fast: false, matrix: { os: [...] } }` や `env: { ... }` はフロー記法でも通るが、記法を混ぜると「どれが通ってどれが落ちるか」を都度判断することになるので、ワークフロー全体をブロック記法で書く。
 
-`shell: bash` は GitHub Actions が `bash --noprofile --norc -eo pipefail {0}` で起動する(Windows では Git for Windows 同梱の bash)。`pipefail` は `tee` を挟んでも cargo の失敗を伝播させるために要るが、同じ `-e` が `grep` にも効き、**該当行が無いときの exit 1 でステップが失敗する**。`grep` を使う全ステップで終了コードの扱いを明示する(ステップ3)。
+`shell: bash` は GitHub Actions が `bash --noprofile --norc -eo pipefail {0}` で起動する(Windows では Git for Windows 同梱の bash)。`pipefail` は `tee` を挟んでも cargo の失敗を伝播させるために要る。
+
+同じ `-e` は `grep` の「該当なし」(exit 1)にも効くが、**効くのは `grep` を単独のコマンドとして置いた場合だけ**である。`if` / `while` の条件、`&&` / `||` の左側、`!` の後ろでは `-e` が効かない。`$(grep ...)` のようなコマンド置換の終了コードは、代入や `[` の引数、`case` の被検査式として使われた時点で捨てられ、残るのは `[` や `case` 自身の結果である。`grep` を書くときは、その位置がどちらなのかを見て決める(ステップ3・ステップ4)。「`-e` の下では `grep` が必ずステップを落とす」と読むと、要らない `|| true` が付いて、本当に落ちてほしい失敗まで一緒に握り潰す。
 
 ## 実装ステップ
 
 ステップ 1〜4 でワークフローを組み立て、ステップ 5 で初めて CI を回す。ステップ 6〜10 は **ステップ 5 の結果に応じてのみ実施する条件付きステップ**で、どれも「CI が緑になるまで」を完了条件とする。ただしその射程には上限があり、層を越える吸収の停止規則と、緑にできない場合の撤退条件は adr.md ADR-008 に従う。**判定は CI が赤になった時点で実装者が行い、結果を PR 本文に残す** — 判定を先送りしたまま試行を繰り返さない。
 
-ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差の吸収(ステップ 6〜8)** だけである。ステップ9(MSRV 回避)とステップ10(lint / 整形の追随)は Issue 本文が明示的に求めた作業で、触るファイルの場所では切らない。撤退条件のほうは条件付きステップ全体に掛かる。
+adr.md ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差の吸収(ステップ 6〜8)** だけである。ステップ9(MSRV 回避)とステップ10(lint / 整形の追随)は Issue 本文が明示的に求めた作業で、触るファイルの場所では切らない。撤退条件のほうは条件付きステップ全体に掛かる。
 
 ### 1. ワークフローの骨格と fmt ジョブ
 
@@ -111,18 +113,18 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
 - **変更内容:**
   - `test` ジョブ。ブロック記法で `strategy.fail-fast: false` と `strategy.matrix.os: [ubuntu-latest, macos-latest, windows-latest]`、`runs-on: ${{ matrix.os }}`、`timeout-minutes: 30`。
   - `actions/checkout@v7`。
-  - **前提の検査**(先頭): このジョブが使うランナー同梱ツールの存在を確認する(AC-7)。`rustup` は版も表示し、スキップ報告(ステップ3)が依存する `awk` / `cat` / `grep` / `tee` は `command -v` で存在と解決先パスを見る(検査の形を道具ごとに分ける理由と、`sort` を使わない理由は adr.md ADR-001)。
+  - **前提の検査**(先頭): このジョブが使うランナー同梱ツールの存在を確認する(AC-7)。`rustup` は版も表示し、スキップ報告(ステップ3)が依存する `awk` / `cat` / `grep` / `tee` と、非 root アサートが依存する `id` は `command -v` で存在と解決先パスを見る(検査の形を道具ごとに分ける理由と、`sort` を使わない理由は adr.md ADR-001)。
 
     ```yaml
     - name: ランナー同梱ツールの前提を確認する
       run: |
         rustup --version
-        for tool in awk cat grep tee; do
+        for tool in awk cat grep id tee; do
           command -v "$tool" || { echo "::error::$tool が見つからない" >&2; exit 1; }
         done
     ```
 
-  - あわせて unix ランナーでは非 root であることを直接アサートする。
+  - あわせて unix ランナーでは非 root であることを直接アサートする。`id -u` の出力は代入で受けてから検査する — `if [ "$(id -u)" -eq 0 ]` の形では `id` の失敗が `-e` の効かない位置に来るため、`[` が「整数でない」で偽になるだけで検査が空振りしたまま成功する。数値でない出力も root でない扱いにせず失敗させる(adr.md ADR-005)。
 
     ```yaml
     - name: 非 root で走っていることを確認する
@@ -130,17 +132,21 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
       # SkipBudget の権限系の宣言は permission_restrictions_effective() の probe で決まる。
       # root で走ると chmod が効かず、権限系10件が「宣言済みスキップ」として静かに緑になる。
       # スキップ件数を数えるのではなく、その前提が崩れていないことを直接見る。
+      # CI が独自に持つ唯一の合否判定なので、判定できなかったときに通す側へ倒さない。
       run: |
-        if [ "$(id -u)" -eq 0 ]; then
-          echo "::error::root で実行されている。SkipBudget の権限系の宣言が崩れる" >&2
-          exit 1
-        fi
-        echo "uid=$(id -u)"
+        uid=$(id -u)
+        echo "uid=$uid"
+        case $uid in
+          0) echo "::error::root で実行されている。SkipBudget の権限系の宣言が崩れる" >&2; exit 1 ;;
+          '' | *[!0-9]*) echo "::error::uid を読み出せない: '$uid'" >&2; exit 1 ;;
+          *) ;;
+        esac
     ```
 
   - toolchain: `rustup update stable --no-self-update` → `rustup default stable` → `rustup component add clippy` → `rustc --version` の表示。第三者製 Action は使わない。
   - `cargo build --workspace --locked`
-  - `cargo test --workspace --locked -- --nocapture 2>&1 | tee test.log`(ワークフロー既定の bash は `-eo pipefail` 付きなので、`tee` を挟んでも cargo の失敗が伝播する。ステップごとの `shell:` 指定は要らない)
+  - `cargo test --workspace --locked --no-fail-fast -- --nocapture 2>&1 | tee test.log`(ワークフロー既定の bash は `-eo pipefail` 付きなので、`tee` を挟んでも cargo の失敗が伝播する。ステップごとの `shell:` 指定は要らない)
+  - **`--no-fail-fast` を付ける。** 既定ではテストターゲット単位で打ち切られるため、最初に落ちたバイナリより後ろが一度も走らず、残りは「赤でない」ではなく**未観測**になる。マトリクスの `fail-fast: false` と clippy の `if: success() || failure()` が持つ「1回の実行で指摘を揃える」原則を、テストバイナリの間にも掛ける。失敗時の終了コードは非ゼロのままなので判定は緩まない。ステップ3 の3状態(到達していない / 走っていない / 走ったが 0 件)が実際に尽くせるのも、打ち切られた実行が無い前提で成り立つ。
   - clippy はステップ列の最後に置くが、**先行ステップが赤でも走らせる**(adr.md ADR-007)。
 
     ```yaml
@@ -164,7 +170,8 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
   - **`pulsen-conformance` の lib ユニットテストの区間を除外する。** このクレートの `#[cfg(test)] mod tests` は `SkipBudget` の仕様自体を検証しており、`tc_port_clock_005_時刻の巻き戻し` / `tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` という**架空のケース名**で `SKIP ` 行を3件出す(うち2件は `#[should_panic]`)。実在の適合ケースと形が区別できないため、混ざるとサマリーの読み手が「走らなかった適合ケース」を誤って数え、HOOKS.md との突き合わせが永久に成立しなくなる。cargo はテストバイナリごとに `Running ...` 行を出すので、`Running unittests src/lib.rs (…pulsen_conformance-…)` から次の `Running ` 行までを落とす。
   - **区間の判定は ANSI エスケープを落としてから行う。** `CARGO_TERM_COLOR: always`(ステップ1)の下では cargo の `Running` 行が `\033[1m\033[92m     Running\033[0m unittests src/lib.rs (…pulsen_conformance-…)` の形になり、行頭が空白ではなく ESC になる。行頭一致で区間を判定すると除外がまるごと効かず、架空の3件がサマリーへ混ざって期待集合との突き合わせが**初回から必ず**食い違う(色なし1件 / 色あり4件。実測)。一方 `SKIP ` 行と `test result:` 行は libtest の出力で、パイプ越しでは色が付かない(実測)。除去は照合用の変数に対してだけ行い、比較対象の1行を作ってから判定する。
   - **重複除去に `sort` を使わない**(adr.md ADR-001)。区間判定に使っている awk へ寄せ、`sort` への依存自体を持たない。
-  - **`-e` の扱いを明示する。** 既定シェルの bash は `-eo pipefail` 付きで起動するので、`grep` が「該当なし」で返す exit 1 がそのままステップの失敗になる。件数の数え上げは `|| true` で `-e` から切り離す。抽出は awk 1本になり、該当行が無くても exit 0 で空文字を返す。
+  - **除外した件数もサマリーに出す**(adr.md ADR-005)。除外の単位はケース名ではなくテストバイナリの区間なので、将来そのバイナリが実在ケースのスキップを出せばサマリーから黙って消える。可視化しか役割を持たない機構なので、件数が 3 から動くことが唯一の合図になる。
+  - **`-e` の扱いを位置ごとに見る。** 既定シェルの bash は `-eo pipefail` 付きで起動するが、`$(grep -c ...)` を `[` の引数に置く限り `grep` の exit 1 は `[` の結果に飲まれ、ステップの失敗にならない(「設計」参照)。終了コードを切り離す `|| true` は要らない。抽出の awk は該当行が無くても exit 0 で終わり、`END` で「なし」を出す。
 
     ```bash
     summary() { { echo "### 走らなかったケース($RUNNER_OS)"; cat; } >> "$GITHUB_STEP_SUMMARY"; }
@@ -172,23 +179,24 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
       echo "テストステップまで到達していない(test.log が無い)。" | summary
       exit 0
     fi
-    if [ "$(grep -c '^test result:' test.log || true)" = "0" ]; then
+    if [ "$(grep -c '^test result:' test.log)" = "0" ]; then
       echo "テストバイナリが1つも走っていない(test.log にテスト結果行が無い)。SKIP の有無は判断できない。" | summary
       exit 0
     fi
-    skips=$(awk -v esc="$(printf '\033')" '
+    awk -v esc="$(printf '\033')" '
       { line = $0; gsub(esc "\\[[0-9;]*m", "", line) }
       line ~ /^ *Running / { drop = (line ~ /pulsen_conformance-/) }
-      !drop && line ~ /^SKIP / && !seen[line]++ { print "- " line }
-    ' test.log)
-    if [ -z "$skips" ]; then
-      echo "なし(テストは走ったが SKIP 行は無かった)" | summary
-    else
-      printf '%s\n' "$skips" | summary
-    fi
+      drop && line ~ /^SKIP / && !dropped[line]++ { excluded++ }
+      !drop && line ~ /^SKIP / && !seen[line]++ { kept = kept "- " line "\n" }
+      END {
+        printf "除外: SkipBudget 自己テスト %d 件\n\n", excluded
+        if (kept == "") print "なし(テストは走ったが SKIP 行は無かった)"
+        else printf "%s", kept
+      }
+    ' test.log | summary
     ```
 
-    ESC を awk のプログラム中に直接書かず `-v` で渡すのは、正規表現定数の `\033` の解釈が実装依存だから。この形は gawk 5.4.1 と macOS 同梱の awk(20200816、GitHub の macOS ランナーと同じ系統)の両方で動くことを、色あり/色なしの `test.log` と上記4状態すべてで実測した。
+    ESC を awk のプログラム中に直接書かず `-v` で渡すのは、正規表現定数の `\033` の解釈が実装依存だから。ESC の渡し方と区間判定は、gawk 5.4.1 と macOS 同梱の awk(20200816、GitHub の macOS ランナーと同じ系統)の両方で、色あり/色なしの `test.log` と上記4状態すべてについて実測した形である。
 
   - ワークフローに why コメントを残す: **宣言集合の外のスキップは `SkipBudget` 自身がそのケースの失敗にする(ADR-055)。CI が件数で二重化すると判定が観測結果に依存して循環するので、ここは記録だけを担う。環境前提の検査はステップ2 の非 root アサートが持ち、root で走るコンテナを使うとその前提が崩れるため `container:` は使わない。**
 - **期待スキップ集合(実行前に確定する):** HOOKS.md の「環境で走らなくなりうる行」から予測すると、**ubuntu / macOS は1件、Windows は11件**。Windows で追加的に落ちるのは、`permission_restrictions_effective()` が `cfg(not(unix))` で常に false になることによる権限系10件だけである。
@@ -226,7 +234,7 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
         command -v grep || { echo "::error::grep が見つからない" >&2; exit 1; }
     ```
 
-    **`cargo --version` を入れるのはこのジョブだけ理由がある。** fmt / stable ジョブは `rustup default stable` で自分の toolchain を用意してから cargo を使うが、MSRV ジョブは `rustup default` を一度も呼ばず、ランナーに既定 toolchain が設定済みであることに暗黙に依存して `cargo metadata` を叩く。既定が無ければ rustup のシムが「no override and no default toolchain set」で落ち、それが**版数の読み出しの失敗**として現れる — ADR-001 が避けたかった「不可解な失敗として現れる」形そのもの。あわせて、どの cargo が metadata を出したかがログに残る(このジョブが2つの toolchain を触ることの裏取りになる。adr.md ADR-002)。
+    **`cargo --version` を入れるのはこのジョブだけ理由がある。** fmt / stable ジョブは `rustup default stable` で自分の toolchain を用意してから cargo を使うが、MSRV ジョブは `rustup default` を一度も呼ばず、ランナーに既定 toolchain が設定済みであることに暗黙に依存して `cargo metadata` を叩く。既定が無ければ rustup のシムが「no override and no default toolchain set」で落ち、それが**版数の読み出しの失敗**として現れる — adr.md ADR-001 が避けたかった「不可解な失敗として現れる」形そのもの。あわせて、どの cargo が metadata を出したかがログに残る(このジョブが2つの toolchain を触ることの裏取りになる。adr.md ADR-002)。
   - 版数の読み出し(`id: msrv`): **ワークスペース全メンバーの `rust_version`** を対象にする。3クレートはいずれも `rust-version.workspace = true` で、`workspace.package.rust-version` が唯一の宣言である。`cargo metadata` は継承を解決したうえで各パッケージに `rust_version` を載せるので、1パッケージだけを見ると、将来どれかが個別に `rust-version` を持ったときに CI がそれを検証しないまま通す。
 
     ```bash
@@ -241,8 +249,9 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
     ```
 
     値が割れていたら失敗させるのは、どの版で検証すべきかが一意に決まらない状態を黙って通さないため。`grep -c .` は該当なしで exit 1 を返すが `case` の被検査式に置けば `-e` の対象外になる。`cargo metadata` にも `--locked` を付けるのは、`--locked` を受け付けるコマンドの側で例外を作らないため(adr.md ADR-006)。`--no-deps` は依存解決を行わないので実害の有無ではなく、決定と実装が1箇所だけ食い違う状態を残さないことが理由。
-  - `rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal --no-self-update`
-  - `cargo +${{ steps.msrv.outputs.version }} build --workspace --all-targets --locked`
+  - `rustup toolchain install "$MSRV" --profile minimal --no-self-update`
+  - `cargo "+$MSRV" build --workspace --all-targets --locked`
+  - **読み出した版数はステップの `env` 越しに渡す**(`MSRV: ${{ steps.msrv.outputs.version }}`)。`${{ }}` は `run` のスクリプトへテキストとして展開されるため、直接書くと `Cargo.toml`(フォークが自由に書き換えられる)由来の値をシェルの構文にそのまま混ぜることになる。`cargo` が `rust-version` に数値形しか通さないことへ安全性を預けると、根拠がこのワークフローの外にしか無い状態になる。
   - ワークフローに why コメントを残す: **版数をワークフローに書かないのは、`Cargo.toml` の `rust-version` と CI が検証する版が黙ってズレるのを構造的に防ぐため。`--all-targets` にするのは、テスト・example も MSRV でコンパイルできることまでを宣言の意味に含めるため。**
 - **理由:** Issue の「MSRV ジョブ(`rust-version` に固定した toolchain でのビルド)」を、宣言と実測が原理的にズレない形で満たす(adr.md ADR-001)。`check` ではなく `build` にするのは、Issue が「ビルド」を求めており、`check` はコード生成・リンク段階でしか出ない失敗を取りこぼすため — それが最も起きやすいのは一度もリンクされたことのない Windows 側コードで、そこは stable ジョブでも MSRV でのリンクは見ていない(adr.md ADR-002)。テストの**実行**までは stable ジョブが見るので重ねない。
 
@@ -262,17 +271,17 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
 
 ### 7.(条件付き)Windows のテスト失敗を吸収する
 
-**全ケース共通の原則**(adr.md ADR-008): 実測の結果「その環境では前提を作れない」と判明した場合、`cfg(windows)` の決め打ちではなく **probe を足して `SkipBudget` の許容集合に入れ、HOOKS.md に行を足す**形で表す。`continue-on-error` で緑に見せることも、テストを緩めることもしない。CI が赤になった時点で、その修正が下の吸収先に収まるかを**その場で判定する**(判定者は実装者、記録先は PR 本文)。収まらないと判定したら直さずに切り出す — 判定の境界は ADR-008 が定める。
+**全ケース共通の原則**(adr.md ADR-008): 実測の結果「その環境では前提を作れない」と判明した場合、`cfg(windows)` の決め打ちではなく **probe を足して `SkipBudget` の許容集合に入れ、HOOKS.md に行を足す**形で表す。`continue-on-error` で緑に見せることも、テストを緩めることもしない。CI が赤になった時点で、その修正が下の吸収先に収まるかを**その場で判定する**(判定者は実装者、記録先は PR 本文)。収まらないと判定したら直さずに切り出す — 判定の境界は adr.md ADR-008 が定める。
 
 - **対象ファイル:** 失敗した内容に応じて次のいずれか。
-  - アトミック置換の共有違反(ユニットテストと `TC-port-task-repository-042` / `044` の両方)→ `crates/pulsen/src/util/atomic.rs`
+  - アトミック置換の共有違反(ユニットテストと `TC-port-task-repository-042` / `044` の両方)→ `crates/pulsen/src/util/atomic.rs`、読み手側を通す場合はその呼び出し元 `crates/pulsen/src/adapter/task_repository.rs`
   - git フィクスチャの崩れ(`NUL`)→ `crates/pulsen/tests/common/git.rs`
   - ロック保持プロセスの合図が期限内に返らない → `crates/pulsen/tests/common/lock.rs`
   - ` .yaml` フィクスチャを作れない → `crates/pulsen/tests/cli_add_error.rs` と probe の追加先(`crates/pulsen/tests/common/mod.rs`)
   - 一時ディレクトリがリポジトリ配下になる → `crates/pulsen/tests/common/git.rs`(`tmpdir_outside_repository` の判定)
   - `fs::rename` の上書き差 → `crates/pulsen/src/util/atomic.rs`
 - **変更内容:**
-  - 置換の共有違反: `write_atomic` の中で `persist` の一時的な拒否に対する短い再試行を持つ。`persist` を使う置換手順そのものは変えず、`write_atomic` / `rename_atomic` のシグネチャと契約(失敗時に一時ファイルを残さない・対象が変わらない)も変えないので、ADR-008 の停止規則には当たらない。回数を使い切ったら `io::Error` を返す(握り潰さない)。「置換が一時的に拒否されても最終的に置き換わる」「使い切ったら Err になる」をユニットテストで表す。ユニットテストと適合スイート(`TC-port-task-repository-042` / `044`)は同じ原因の別の現れ方なので、片方だけを見て閉じない。
+  - 置換の共有違反: `write_atomic` の中で `persist` の一時的な拒否に対する短い再試行を持つ。`persist` を使う置換手順そのものは変えず、`write_atomic` / `rename_atomic` のシグネチャと契約(失敗時に一時ファイルを残さない・対象が変わらない)も変えないので、adr.md ADR-008 の停止規則には当たらない。回数を使い切ったら `io::Error` を返す(握り潰さない)。「置換が一時的に拒否されても最終的に置き換わる」「使い切ったら Err になる」をユニットテストで表す。ユニットテストと適合スイート(`TC-port-task-repository-042` / `044`)は同じ原因の別の現れ方なので、片方だけを見て閉じない。**同じ窓は読み手にも当たる**ので、読み取りも同じ分類・上限を共有する形で吸収する(adr.md ADR-013)。契約が書き手側だけでは満たせない以上、書き手を直して読み手を残すと 042 / 044 は読み手側で落ちる。
   - `NUL`: 空の一時ファイルを作ってそのパスを `GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` に渡す等、Windows でも確実に「空の設定」になる手段へ差し替える。ADR-033 の意図(開発者のグローバル設定・既定ブランチ名に依存しない)は保つ。
   - 合図が返らない: 吸収の方向は2つあり、どちらを採るかは実測後に決める。(a) `SIGNAL_DEADLINE` を伸ばす — ADR-060 の「フィクスチャのハングはテストの失敗より診断が難しい」を崩さない範囲で。(b) 許容集合の述語を `holder_program().is_some()`(実行ファイルの有無)から「実際に1回保持させてみて成立するか」の probe へ寄せる — ADR-055 に揃うが、probe が本番のケースと同じ資源を奪う。**(a) を先に試す。**
   - ` .yaml`: 「語幹が空白だけのファイルを作れるか」を実際に試す probe を足し、作れない環境ではそのケースを `SkipBudget` の許容集合に入れる。`cfg(windows)` での決め打ちはしない。
@@ -323,8 +332,8 @@ ADR-008 の吸収先ディレクトリによる判定が掛かるのは **OS 差
   - HOOKS.md の記述が、上記の一致した期待集合と揃っていること。
 - **人が読んで判断すること**(plan.md「レビューで見る観点」): OS 差の吸収として加えた変更が `util/` / `adapter/` / `tests/` / `pulsen-conformance/src/` に収まっているか、`cfg` の決め打ちでなく probe + 許容集合になっているか、AC-5 の対象外のファイルに AC-2 / AC-3 / AC-4 / AC-8 のいずれの理由が付いているか。いずれも差分の**意味**を読まないと判断できない。
 - **成果物に残すこと:**
-  - **CI が実測した範囲**: PR 本文・Issue #10 のコメント・`.thread/10/progress.md` に、「CI が実測したのは `origin/main` 時点のコードで、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない」を1行残す。#10 のクローズが「クロスプラットフォームは検証済み」と読まれないようにするため。
-  - **撤退した場合の未達範囲**: ADR-008 の撤退条件を適用したなら、外したジョブ・未達の OS・切り出した Issue 番号を Issue #10 のコメントにも残す(AC-2)。ワークフローの why コメントと PR だけだと、Issue のトラッキング上は要件が満たされたように見える。
+  - **CI が実測した範囲**: PR 本文・Issue #10 のコメント・`.thread/10/progress.md` に、「CI が実測したのは PR #11 のマージ前のコード(実測したコミットを名指しする)で、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない」を1行残す。#10 のクローズが「クロスプラットフォームは検証済み」と読まれないようにするため。
+  - **撤退した場合の未達範囲**: adr.md ADR-008 の撤退条件を適用したなら、外したジョブ・未達の OS・切り出した Issue 番号を Issue #10 のコメントにも残す(AC-2)。ワークフローの why コメントと PR だけだと、Issue のトラッキング上は要件が満たされたように見える。
   - **期待集合を更新した場合**: AC-6(d) の3点(当初の予測値・観測値・予測が外れた理由)が PR 本文に揃っていること。
-  - **PR #11 へ引き継ぐこと**: PR #11 にコメントを1件残し、次の3件を伝える。(1) HOOKS.md の実測は `origin/main` 時点のもので、#11 がスイートと example を足した時点で部分的に古くなるため、その更新は #11 の責務であること。(2) 本 Issue の条件付き修正が入ったファイル(実際に触ったものを列挙。`tests/common/git.rs` / `tests/common/mod.rs` / `util/atomic.rs` は #11 も触っており、ステップ10 の rustfmt 掛け直しが発火した場合はソースツリー全域)とのコンフリクト解消は #11 側で行うこと。(3) #11 の `ProcessController` が Windows で赤になった場合の対応も #11 側であること。**引き継ぎ先が #11 なのに記録先が #10 側にしか無いと、#11 の担当者がこの3件を知る経路が存在しない。**
+  - **PR #11 へ引き継ぐこと**: PR #11 にコメントを1件残し、次の3件を伝える。(1) HOOKS.md の実測は #11 のマージ前のもので、#11 がスイートと example を足した時点で部分的に古くなるため、その更新は #11 の責務であること。(2) 本 Issue の条件付き修正が入ったファイル(実際に触ったものを列挙。`tests/common/git.rs` / `tests/common/mod.rs` / `util/atomic.rs` は #11 も触っており、ステップ10 の rustfmt 掛け直しが発火した場合はソースツリー全域)とのコンフリクト解消は #11 側で行うこと。(3) #11 の `ProcessController` が Windows で赤になった場合の対応も #11 側であること。**引き継ぎ先が #11 なのに記録先が #10 側にしか無いと、#11 の担当者がこの3件を知る経路が存在しない。**
 - **理由:** 受け入れ基準のうち機械で閉じられるものと、人が読まないと閉じられないものを分けて確認する。未達・未検証が残る場合は、それが Issue の外から見える場所に残っていることまでを完了条件にする。

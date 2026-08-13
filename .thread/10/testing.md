@@ -29,7 +29,7 @@ CI が回すのと同じ内容をローカルで先に通しておく（`origin/
 
 ```sh
 cargo build --workspace --locked
-cargo test --workspace --locked
+cargo test --workspace --locked --no-fail-fast
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 ```
@@ -116,9 +116,10 @@ gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 - **期待結果:**
   1. 非 root アサートが緑（ランナーは非 root で走っている）。
   2. どちらも**ヒット0件** — `container:` を使わず、`cargo test --test <名前>` の単一ターゲット指定もしていない。
-  3. サマリーに SKIP 行が列挙されており、`pulsen-conformance` の lib ユニットテスト区間（`SkipBudget` 自身を検証する架空ケース3件）が除外されている。
+  3. サマリーに SKIP 行が列挙されており、`pulsen-conformance` の lib ユニットテスト区間（`SkipBudget` 自身を検証する架空ケース3件）が除外されている。除外件数が「3 件」と表示されている（区間で落とした件数が 3 から動いていれば、実在ケースのスキップを巻き込んでいる可能性がある。adr.md ADR-005）。
   4. **unix は `tc_port_clock_005` の1件のみ、Windows はそれに権限系10件を加えた11件。**
 - **確認ポイント:**
+  - 非 root アサートのログに `uid=<数値>` が出ていること。このステップは `id` 自体の失敗と数値でない出力も失敗として扱う（CI が独自に持つ唯一の合否判定を、判定できなかったときに通す側へ倒さない。adr.md ADR-005）。
   - サマリーが「なし」と出た場合、本当に SKIP が0件なのか、テストが走っていないのかを区別する（走っていない場合は「テストが走っていない」と表示される設計。steps.md ステップ3）。
   - **一致しなかった場合、観測値をそのまま期待値に書き写して閉じない。** 期待集合の更新には (1) 当初の予測値 (2) 観測値 (3) HOOKS.md のどの行・どの probe の見立てを誤ったかまで遡った理由、の3点が PR 本文に揃うことが条件（AC-6(d)）。
   - ロック系5件・`non_repo_dir` 系2件が現れた場合はフィクスチャ側の欠陥として扱い、期待値の書き換えでは閉じない。
@@ -191,12 +192,12 @@ gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 
 ### 3. ランナー同梱ツールの前提が崩れたときにその場で失敗する
 
-- **目的:** rustup / cargo / jq / awk / grep / tee の不在が「cargo の不可解な失敗」ではなく前提検査の失敗として現れることを確認する（AC-7）。
+- **目的:** rustup / cargo / jq / awk / grep / id / tee の不在が「cargo の不可解な失敗」ではなく前提検査の失敗として現れることを確認する（AC-7）。
 - **手順:**
   1. 各ジョブのログ先頭の前提検査ステップを見る。
   2. `grep -n "sort" .github/workflows/ci.yml` を実行する。
 - **期待結果:**
-  1. fmt は `rustup`、stable は `rustup` と `awk` / `cat` / `grep` / `tee`、msrv は `rustup` / `cargo` / `jq` / `grep` を確認している。`rustup` / `cargo` / `jq` は版を表示し、残りは `command -v` で解決先パスを表示している。
+  1. fmt は `rustup`、stable は `rustup` と `awk` / `cat` / `grep` / `id` / `tee`、msrv は `rustup` / `cargo` / `jq` / `grep` を確認している。`rustup` / `cargo` / `jq` は版を表示し、残りは `command -v` で解決先パスを表示している。
   2. **ヒット0件** — `sort` はどのジョブも使わない（Windows で `System32\sort.exe` を掴む事故を避けるため。adr.md ADR-001）。
 - **確認ポイント:** Windows のログで `command -v` の解決先が Git for Windows 側（`/usr/bin/...`）を指していること。
 
@@ -215,4 +216,4 @@ gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 
 - **プロダクションコードへの影響:** ワークフローファイルの追加自体はビルド対象に影響しない。影響が出るのは条件付き修正（ステップ6〜10）が発火した場合のみで、その場合はローカルで `cargo test --workspace --locked` が引き続き緑であることを確認する（macOS 458件 PASS が計画時のベースライン）。
 - **`.adr/022` / `.adr/023` との整合:** MSRV を上げた場合のみ。`rust-version` の新しい値が `.adr/022`（`std::fs::File::try_lock` の安定化 = 1.89）・`.adr/023`（`std::env::home_dir()` の非推奨解除 = 1.87.0）の根拠と矛盾しないことを読み合わせる（AC-4）。
-- **PR #11（tick）への影響:** 本 Issue が先行マージされる。条件付き修正が `tests/common/git.rs` / `tests/common/mod.rs` / `util/atomic.rs` に入った場合、また ステップ10 の `cargo fmt --all` 掛け直しが発火した場合はソースツリー全域が衝突面になる。衝突の解消と、#11 が追加するコードの Windows 挙動は #11 側の責務（plan.md スコープ「PR #11 とのマージ順」）。**この Issue の CI が実測したのは `origin/main` 時点のコードであり、プロセス同定・デタッチ起動の Windows 挙動は未検証のまま残る。**
+- **PR #11（tick）への影響:** 本 Issue が先行マージされる。条件付き修正が入ったのは `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` / `crates/pulsen/src/adapter/task_repository.rs` の3ファイルで、ここが衝突面になる（ステップ10 の `cargo fmt --all` 掛け直しは発火していないので、ソースツリー全域には広がっていない）。衝突の解消と、#11 が追加するコードの Windows 挙動は #11 側の責務（plan.md スコープ「PR #11 とのマージ順」）。**この Issue の CI が実測したのは `af24360`（PR #11 のマージ前）のコードであり、プロセス同定・デタッチ起動の Windows 挙動は未検証のまま残る。**

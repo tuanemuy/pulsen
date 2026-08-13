@@ -79,13 +79,15 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: ランナー同梱ツールの前提を確認する
-        # rustup は版まで表示する。awk / cat / grep / tee は --version に移植性が無く
+        # rustup は版まで表示する。awk / cat / grep / id / tee は --version に移植性が無く
         # （macOS の BSD tee は illegal option で落ちる）、存在と解決先パスだけを見る。
         # 解決先を出すのは、Windows で Git for Windows 側ではなく System32 側の同名プログラムを
         # 掴んでいないかがログから分かるため。
+        # id を含めるのは、CI が独自に持つ唯一の合否判定（下の非 root アサート）が
+        # この道具の出力に乗るため。記録用の道具を検査して判定用の道具を検査しない理由がない。
         run: |
           rustup --version
-          for tool in awk cat grep tee; do
+          for tool in awk cat grep id tee; do
             command -v "$tool" || { echo "::error::$tool が見つからない" >&2; exit 1; }
           done
 
@@ -95,12 +97,20 @@ jobs:
         # root で走ると chmod が効かず、権限系10件が「宣言済みスキップ」として静かに緑になる。
         # スキップ件数を数えるのではなく、その前提が崩れていないことを直接見る。
         # 同じ理由でジョブのコンテナ指定は使わない（コンテナのランナーは root で走る）。
+        #
+        # uid を先に代入で受けるのは、if の条件内では -e が効かないため。条件の中で直接
+        # コマンド置換すると、id が落ちても [ が「整数でない」で偽になるだけで、検査が
+        # 空振りしたままステップが成功する。代入形なら id の失敗でその場で落ちる。
+        # 数値でない出力も root でない扱いにせず失敗させる — CI が独自に持つ唯一の合否判定を、
+        # 判定できなかったときに通す側へ倒さない。
         run: |
-          if [ "$(id -u)" -eq 0 ]; then
-            echo "::error::root で実行されている。SkipBudget の権限系の宣言が崩れる" >&2
-            exit 1
-          fi
-          echo "uid=$(id -u)"
+          uid=$(id -u)
+          echo "uid=$uid"
+          case $uid in
+            0) echo "::error::root で実行されている。SkipBudget の権限系の宣言が崩れる" >&2; exit 1 ;;
+            '' | *[!0-9]*) echo "::error::uid を読み出せない: '$uid'" >&2; exit 1 ;;
+            *) ;;
+          esac
 
       - name: 現行 stable の toolchain を用意する
         run: |
@@ -122,7 +132,14 @@ jobs:
         # 切り替えると example がビルドされず、ロック系の4件＋1件が「宣言済みスキップ」に化ける。
         # --workspace のままにすることがこの経路の構造的な回避であり、SkipBudget の許容集合には
         # 入れない。
-        run: cargo test --workspace --locked -- --nocapture 2>&1 | tee test.log
+        #
+        # --no-fail-fast が無いと、既定のテストターゲット単位の打ち切りで最初に落ちたバイナリ
+        # 以降が一度も走らず、残りは「赤でない」ではなく「未観測」になる。マトリクスの
+        # fail-fast: false と clippy の if: success() || failure() が持つ「1回の実行で指摘を
+        # 揃える」原則を、テストバイナリの間にも掛ける。失敗時の終了コードは非ゼロのままなので
+        # 判定は緩まない。次のステップの3状態が実際に尽くせるのも、打ち切られた実行が無い前提で
+        # 成り立っている。
+        run: cargo test --workspace --locked --no-fail-fast -- --nocapture 2>&1 | tee test.log
 
       - name: 走らなかったケースを報告する
         if: always()
@@ -137,33 +154,40 @@ jobs:
         # 行頭が空白ではなく ESC になり、行頭一致がまるごと効かなくなる）。ESC を awk の
         # プログラム中に書かず -v で渡すのは、正規表現定数での \033 の解釈が実装依存だから。
         #
+        # 落とした件数を出すのは、除外の単位がケース名ではなくテストバイナリの区間だから。
+        # 将来そのバイナリが実在ケースのスキップを出せばサマリーから黙って消えるが、可視化しか
+        # 役割を持たない機構なので消えたことを他の手段では検出できない。件数が3から動くことが
+        # 唯一の合図になる。区間で判定すること自体は、ケース名の列挙より腐りにくいので変えない。
+        #
         # 「SKIP 0 件」と「テストが走っていない」を同じ表示にしない。このステップは always() で
         # 走るため、build で落ちた実行でも表示が出る。test.log の有無だけでは足りない
         # （テストステップまで到達すれば、コンパイルに失敗しても tee が test.log を残す）ので、
         # テスト結果行の有無も見て3状態に分ける。
         #
-        # grep の「該当なし」は -e の下でステップの失敗になるため、数え上げは || true で切り離す。
-        # 抽出は awk 1本なので該当行が無くても exit 0 で空文字を返す。
+        # grep -c が該当なしで返す exit 1 は、if の条件・[ の引数に置く限りステップの失敗に
+        # ならない（その位置ではコマンド置換の終了コードが捨てられ、-e も効かない）。
+        # 終了コードを切り離す小細工は要らない。
         run: |
           summary() { { echo "### 走らなかったケース($RUNNER_OS)"; cat; } >> "$GITHUB_STEP_SUMMARY"; }
           if [ ! -f test.log ]; then
             echo "テストステップまで到達していない(test.log が無い)。" | summary
             exit 0
           fi
-          if [ "$(grep -c '^test result:' test.log || true)" = "0" ]; then
+          if [ "$(grep -c '^test result:' test.log)" = "0" ]; then
             echo "テストバイナリが1つも走っていない(test.log にテスト結果行が無い)。SKIP の有無は判断できない。" | summary
             exit 0
           fi
-          skips=$(awk -v esc="$(printf '\033')" '
+          awk -v esc="$(printf '\033')" '
             { line = $0; gsub(esc "\\[[0-9;]*m", "", line) }
             line ~ /^ *Running / { drop = (line ~ /pulsen_conformance-/) }
-            !drop && line ~ /^SKIP / && !seen[line]++ { print "- " line }
-          ' test.log)
-          if [ -z "$skips" ]; then
-            echo "なし(テストは走ったが SKIP 行は無かった)" | summary
-          else
-            printf '%s\n' "$skips" | summary
-          fi
+            drop && line ~ /^SKIP / && !dropped[line]++ { excluded++ }
+            !drop && line ~ /^SKIP / && !seen[line]++ { kept = kept "- " line "\n" }
+            END {
+              printf "除外: SkipBudget 自己テスト %d 件\n\n", excluded
+              if (kept == "") print "なし(テストは走ったが SKIP 行は無かった)"
+              else printf "%s", kept
+            }
+          ' test.log | summary
 
       - name: lint する
         # テストが落ちても clippy まで進める。1回の実行で「動くか」と「綺麗か」の両方の
@@ -219,10 +243,18 @@ jobs:
           echo "MSRV: $versions"
 
       - name: MSRV の toolchain を用意する
-        run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal --no-self-update
+        # 読み出した版数は env 越しに渡す。${{ }} は run のスクリプトにテキストとして展開される
+        # ため、値の出所（フォークが自由に書き換えられる Cargo.toml）をそのままシェルの構文に
+        # 混ぜることになる。cargo が rust-version に数値形しか通さないことに安全性を預けると、
+        # 根拠がこのワークフローの外にしか無い状態になる。
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: rustup toolchain install "$MSRV" --profile minimal --no-self-update
 
       - name: MSRV でビルドする
         # --all-targets にするのは、テストと example もその版でコンパイル・リンクできることまでを
         # 宣言の意味に含めるため。check ではなく build なのは、リンク段階でしか出ない失敗を
         # 取りこぼさないため。テストの実行までは test ジョブが見るので重ねない。
-        run: cargo +${{ steps.msrv.outputs.version }} build --workspace --all-targets --locked
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+$MSRV" build --workspace --all-targets --locked
