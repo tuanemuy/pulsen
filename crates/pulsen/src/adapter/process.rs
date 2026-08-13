@@ -501,6 +501,18 @@ mod identity {
                 message: format!("同定情報の項目が足りない (pid {})", pid.get()),
             });
         };
+        // 形式外の値から `KillIdent` / `ProcessStartTime` を組まない。どちらも非空しか
+        // 見ないため、数値性を確かめずに通すと帳簿に kill できない同定子が永続化される。
+        let Ok(pgrp) = pgrp.parse::<u32>() else {
+            return Err(Io::Failed {
+                message: format!("プロセスグループIDを読み取れない (pid {})", pid.get()),
+            });
+        };
+        let Ok(ticks) = ticks.parse::<u64>() else {
+            return Err(Io::Failed {
+                message: format!("起動時刻を読み取れない (pid {})", pid.get()),
+            });
+        };
 
         let boot_id =
             std::fs::read_to_string(root.join("sys/kernel/random/boot_id")).map_err(|error| {
@@ -546,6 +558,28 @@ mod identity {
             IdentitySource::platform_default()
         }
 
+        const BOOT_ID: &str = "0e5ec6f0-2f24-4c19-9a52-9d3e6f9b3d21";
+
+        /// `pgrp`(後半3番目)と起動時刻(後半20番目)を差し替えた `stat` の内容。
+        fn stat_content(pgrp: &str, ticks: &str) -> String {
+            let filler = ["0"; 16].join(" ");
+            format!("4242 (sl ee) p) S 1 {pgrp} {filler} {ticks}")
+        }
+
+        /// 内容を指定した procfs 相当の取得元と、そこに置いた pid。
+        fn fake_procfs(stat: &str) -> (tempfile::TempDir, IdentitySource, Pid) {
+            let root = tempfile::tempdir().expect("一時ディレクトリを作れる");
+            let pid = Pid::new(4242);
+            let process_dir = root.path().join(pid.get().to_string());
+            std::fs::create_dir_all(&process_dir).expect("作れる");
+            std::fs::write(process_dir.join("stat"), stat).expect("書ける");
+            let random = root.path().join("sys/kernel/random");
+            std::fs::create_dir_all(&random).expect("作れる");
+            std::fs::write(random.join("boot_id"), format!("{BOOT_ID}\n")).expect("書ける");
+            let source = IdentitySource::new(root.path().to_path_buf());
+            (root, source, pid)
+        }
+
         #[test]
         fn 同一プロセスの2回の観測は等価な起動時刻を返す() {
             let pid = Pid::new(std::process::id());
@@ -558,6 +592,28 @@ mod identity {
                 .expect("生存中");
 
             assert_eq!(first.starttime, second.starttime);
+        }
+
+        #[test]
+        fn 形式どおりのstatからは同定情報が組み立てられる() {
+            let (_root, source, pid) = fake_procfs(&stat_content("77", "939856880"));
+
+            let observed = observe(&source, pid).expect("観測できる").expect("生存中");
+
+            assert_eq!(observed.kill_ident.as_str(), "-77");
+            assert_eq!(observed.starttime.as_str(), format!("{BOOT_ID}:939856880"));
+        }
+
+        #[test]
+        fn 形式外のフィールドは不在ではなく機構の失敗になる() {
+            for (pgrp, ticks) in [("x", "939856880"), ("-77", "939856880"), ("77", "x")] {
+                let (_root, source, pid) = fake_procfs(&stat_content(pgrp, ticks));
+
+                assert!(
+                    matches!(observe(&source, pid), Err(Io::Failed { .. })),
+                    "pgrp={pgrp} ticks={ticks}"
+                );
+            }
         }
 
         #[test]

@@ -80,3 +80,12 @@ R5: 新規 4 / fix 2 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0（方�
 | `adapter/worktree.rs:run_worktree/docの食い違い` | R6 | fix-editorial | 「非0終了も失敗として畳む」が実装と違う（畳むのは起動失敗だけ。非0は `require_success` が見る） | 0 |
 
 R6: 新規 2 / fix 1 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 新規2件・独立・すべて fix 系）
+| `cli/render.rs:push_attempts/attemptディレクトリ名の複製` | R7 | fix | `attempt-<n>` を直書きしており、単一の定義箇所として置いた `RunDirPath::ATTEMPT_PREFIX` と複製になっている | 0 |
+| `conformance/HOOKS.md:対象アクセサ/fn controllerの欠落` | R7 | fix-editorial | 正本を HOOKS.md 一本にしたのに「アクセサはフックではない」の列挙に `fn controller` が無い | 0 |
+| `adapter/process.rs:identity(linux)::observe/数値検査の非対称` | R7 | fix | ADR-067 の写像表にある「フィールドが形式外 → `Err(Io)`」が Linux 側だけ未実装。POSIX 非 Linux 側は `parse` で検査している | 0 |
+
+| `tests/cli_wrapper.rs:シグナル死/起動済みの主張` | R7 | fix | `stdout.log` は 126/127 でも作られるため「エージェントは起動されている」を支えない | 0 |
+| `conformance/HOOKS.md:環境依存表/agent_probe依存行の過多` | R7 | fix-editorial | `022` / `023` は `agent_command` を使わないのに一括で挙げている | 0 |
+| `conformance_worktree.rs:worktree_root/symlink失敗の握り潰し` | R7 | fix | 正規化の分岐を通す前提が報告なしに消える（スキップ規律の外の縮退） | 0 |
+
+R7: 新規 6 / fix 4 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 全件 fix 系で見送り判定ゼロ、いずれも別ファイルで独立）

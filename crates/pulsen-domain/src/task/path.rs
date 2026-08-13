@@ -116,8 +116,17 @@ impl RunDirPath {
             .as_path()
             .join(Self::RUNS_DIR)
             .join(id.as_str())
-            .join(format!("{}{}", Self::ATTEMPT_PREFIX, number.get()));
+            .join(Self::attempt_dir_name(number));
         Self(path)
+    }
+
+    /// attempt ディレクトリの名前 `attempt-<n>`。
+    ///
+    /// 表示や走査は run ディレクトリの値を持たない断片(タスクIDと attempt 番号だけ)を
+    /// 扱うことがある。命名の定義箇所を `derive` と共有し、接頭辞を変えたときに綴りが
+    /// 分かれないようにする。
+    pub fn attempt_dir_name(number: AttemptNumber) -> String {
+        format!("{}{}", Self::ATTEMPT_PREFIX, number.get())
     }
 
     /// `derive` の逆写像。`<state_root>/runs/<task-id>/attempt-<n>` の形でなければ `None`。
@@ -299,6 +308,19 @@ mod tests {
             ])
             .as_path()
         );
+    }
+
+    #[test]
+    fn attemptディレクトリの名前は導出したrunディレクトリの末尾と一致する() {
+        for number in [1, 3, 42] {
+            let number = AttemptNumber::parse(number).expect("受理される");
+            let run_dir = RunDirPath::derive(&state_root(), &task_id(), number);
+
+            assert_eq!(
+                run_dir.as_path().file_name(),
+                Some(OsStr::new(&RunDirPath::attempt_dir_name(number))),
+            );
+        }
     }
 
     #[test]

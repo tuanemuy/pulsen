@@ -38,13 +38,14 @@
 | TC-port-process-controller-023 | C | 実行権限のない実体を作れない（同上） | `permission_restrictions_effective` |
 | TC-port-process-controller-025 | C | 書き込めないログの置き場を作れない（同上） | `permission_restrictions_effective` |
 | TC-port-process-controller-024 | B | exit code を持たない終了（シグナル死）を作れない（非 POSIX） | `agent_probe abort` がシグナル死になるプラットフォームか |
-| TC-port-process-controller-001 / 002 / 003 / 017〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため |
+| TC-port-process-controller-001 / 002 / 003 / 017〜021 / 024〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため |
 | TC-port-process-controller-002 | B | 上記に加えて、デタッチ性のフィクスチャ（`examples/spawn_probe`）がビルドされていない | ハーネスが `spawn_from_other_process` を提供するか。同じく**スキップ許容集合には入れない** |
 | TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか |
 | TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか |
 | TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか |
 | TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか |
 | TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか |
+| TC-port-worktree-manager-010 / 012〜016 と追加ケース（`create_prunable`） | B | worktree の置き場をシンボリックリンク経由にできない（ディレクトリのリンクを張れない環境） | ハーネスが `unused_workspace` / `workspace_with_orphan_branch` / `workspace_with_prunable_registration` / `workspace_over_plain_dir` / `workspace_over_other_branch` を提供するか。置き場が未作成であることを前提にする TC-011 だけはリンクを要さない |
 | TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 別プロセスにロックを保持させる実行ファイルが無い（単一テストターゲットを指定した実行では example がビルドされない） | ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか |
 
 ## 適用範囲
@@ -301,6 +302,6 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 | `RunStoreHarness` | `expected_run_dir` / `attempt_dir_present` / `put_unreadable_content` / `make_unreadable` / `make_attempt_unwritable` / `concurrent_store` |
 | `ProcessControllerHarness` | `observe_wall_clock` / `failing_identity_controller` / `worktree` / `missing_worktree` / `log_paths` / `unwritable_log_path` / `agent_command` / `missing_command` / `non_executable_command` / `launch_spec` / `wait_for_run_files` / `spawn_from_other_process` / `failing_controller` / `run_dir_is_empty` |
 
-対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager`）はフックではなく、すべてのケースが使う。
+対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager` / `fn controller`）はフックではなく、すべてのケースが使う。
 
 フックの一覧はこのファイルが正本。`.adr/027-port-conformance-suite-and-harness-hooks.md` のフック表は決定時点の記録なので、フックを足すときに更新するのはこのファイルだけでよい。

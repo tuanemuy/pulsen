@@ -179,12 +179,14 @@ fn シグナルで死んだエージェントは非ゼロの符号化値とし�
         .run()
         .assert_succeeded();
 
-    assert!(
-        launch.run_dir().join("stdout.log").is_file(),
-        "エージェントは起動されている"
-    );
     let code = launch.exit_code();
     assert_ne!(code, 0, "非0で符号化される");
+    // 126 / 127 はラッパーが起動不能・コマンド不在に使う符号化値。これらを除くことで、
+    // 「起動してから死んだ」が POSIX 以外の環境でも符号化値だけで決まる。
+    assert!(
+        code != 126 && code != 127,
+        "起動できずに終わったのではない: {code}"
+    );
     #[cfg(unix)]
     assert_eq!(code, 128 + 6, "SIGABRT で死んだ");
 }

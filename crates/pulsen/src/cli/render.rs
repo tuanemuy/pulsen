@@ -11,8 +11,8 @@ use pulsen_domain::definition::{
 };
 use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
 use pulsen_domain::task::{
-    AbsolutePathError, AttemptNumber, CreateError, ExecutionStateKind, SaveError, TaskId,
-    TransitionError,
+    AbsolutePathError, AttemptNumber, CreateError, ExecutionStateKind, RunDirPath, SaveError,
+    TaskId, TransitionError,
 };
 
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
@@ -275,7 +275,7 @@ fn push_attempts(out: &mut String, label: &str, attempts: &[(String, AttemptNumb
     }
     let attempts = attempts
         .iter()
-        .map(|(dir, number)| format!("{dir}/attempt-{}", number.get()))
+        .map(|(dir, number)| format!("{dir}/{}", RunDirPath::attempt_dir_name(*number)))
         .collect::<Vec<_>>()
         .join(", ");
     push_field(out, label, &attempts);

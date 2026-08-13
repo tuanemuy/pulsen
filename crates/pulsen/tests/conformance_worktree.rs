@@ -6,6 +6,7 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use pulsen::adapter::worktree::{GitCliWorktreeManager, INHERITED_GIT_ENV};
 use pulsen_conformance::WorktreeManagerHarness;
@@ -64,17 +65,16 @@ impl GitCliWorktreeManagerHarness {
     /// worktree の置き場。**シンボリックリンク経由**のパスとして組む。
     ///
     /// 同定の鍵は物理パスなので(ADR-077)、置き場が実体そのものだと正規化の分岐が
-    /// どのケースからも実行されない。リンクを作れない環境では実体へ落とす。
-    fn worktree_root(&self) -> PathBuf {
+    /// どのケースからも実行されない。リンクを張れない環境は前提を用意できない環境なので、
+    /// 実体へ落として黙って通すのではなく `None` を返してスキップに載せる。
+    fn worktree_root(&self) -> Option<PathBuf> {
         let real = self.dir("worktrees-real");
         let link = self.dir("worktrees");
-        if fs::create_dir_all(&real).is_err() {
-            return real;
-        }
+        fs::create_dir_all(&real).ok()?;
         if !link.exists() {
-            symlink_dir(&real, &link);
+            symlink_dir(&real, &link)?;
         }
-        if link.is_dir() { link } else { real }
+        link.is_dir().then_some(link)
     }
 
     /// 置き場の下にタスク1件分のワークスペースを組む。
@@ -85,7 +85,7 @@ impl GitCliWorktreeManagerHarness {
     }
 
     fn workspace(&self, name: &str) -> Option<Workspace> {
-        self.workspace_in(&self.worktree_root(), name)
+        self.workspace_in(&self.worktree_root()?, name)
     }
 
     fn marker_path(&self, workspace: &Workspace) -> PathBuf {
@@ -104,17 +104,36 @@ fn branch(name: &str) -> Option<BranchName> {
 }
 
 #[cfg(unix)]
-fn symlink_dir(original: &Path, link: &Path) {
-    let _ = std::os::unix::fs::symlink(original, link);
+fn symlink_dir(original: &Path, link: &Path) -> Option<()> {
+    std::os::unix::fs::symlink(original, link).ok()
 }
 
 #[cfg(windows)]
-fn symlink_dir(original: &Path, link: &Path) {
-    let _ = std::os::windows::fs::symlink_dir(original, link);
+fn symlink_dir(original: &Path, link: &Path) -> Option<()> {
+    std::os::windows::fs::symlink_dir(original, link).ok()
 }
 
 #[cfg(not(any(unix, windows)))]
-fn symlink_dir(_original: &Path, _link: &Path) {}
+fn symlink_dir(_original: &Path, _link: &Path) -> Option<()> {
+    None
+}
+
+/// この環境でディレクトリのシンボリックリンクを張れるか(1度だけ調べて使い回す)。
+///
+/// 判定はフックが踏む手順(実体を作り、そこへリンクを張り、リンク越しにディレクトリとして
+/// 見えるか)と同じにする — 判定と実際のスキップが食い違わない。
+fn symlinked_root_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+    *AVAILABLE.get_or_init(|| {
+        let Ok(probe) = tempfile::tempdir() else {
+            return false;
+        };
+        let real = probe.path().join("real");
+        let link = probe.path().join("link");
+        fs::create_dir_all(&real).is_ok() && symlink_dir(&real, &link).is_some() && link.is_dir()
+    })
+}
 
 /// 用意した占有 worktree が、登録・実体ともに揃っていることを確かめる。
 ///
@@ -328,17 +347,34 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
 /// リポジトリ配下だと上位へ遡って成功し、前提が成立しない(ADR-033)。
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_port_worktree_manager_003"];
 
+/// ディレクトリのシンボリックリンクを張れない環境でのみスキップされるケース。
+///
+/// `ws.path` の置き場をリンク経由で組む `create` のケース(ADR-077)。置き場が未作成である
+/// ことを前提にする TC-011 だけは、リンクを張る対象が無いためここに入らない。
+const SYMLINKED_ROOT_CASES: [&str; 7] = [
+    "tc_port_worktree_manager_010",
+    "tc_port_worktree_manager_012",
+    "tc_port_worktree_manager_013",
+    "tc_port_worktree_manager_014",
+    "tc_port_worktree_manager_015",
+    "tc_port_worktree_manager_016",
+    "create_prunable",
+];
+
 /// この環境でスキップを許容するケース。
 ///
 /// git 操作の失敗は別ハンドル(`failing_manager`)で組めるため、許容するのは環境が前提を
-/// 作れない上記1件だけ。宣言をプラットフォームではなく実行時の述語で決めることで、同じ
+/// 作れない上記2組だけ。宣言をプラットフォームではなく実行時の述語で決めることで、同じ
 /// 前提を使う CLI 側の受け入れテスト(TC-task-register-task-036)と扱いが揃う(ADR-055)。
 fn allowed_skips() -> Vec<&'static str> {
-    if common::git::tmpdir_outside_repository() {
-        Vec::new()
-    } else {
-        OUTSIDE_REPOSITORY_CASES.to_vec()
+    let mut allowed = Vec::new();
+    if !common::git::tmpdir_outside_repository() {
+        allowed.extend(OUTSIDE_REPOSITORY_CASES);
     }
+    if !symlinked_root_available() {
+        allowed.extend(SYMLINKED_ROOT_CASES);
+    }
+    allowed
 }
 
 pulsen_conformance::worktree_manager_conformance!(
