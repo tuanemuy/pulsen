@@ -1,4 +1,4 @@
-# 086: 起動確認だけをサマリーの新しいフィールドにし、記録した失敗は `errors` に載せる
+# 094: 起動確認だけをサマリーの新しいフィールドにし、記録した失敗は `errors` に載せる
 
 ## ステータス
 
@@ -15,7 +15,7 @@ spec の tick の出力 DTO は `launched` / `transitioned` / `skipped_back` / `
 | worktree 作成失敗の記録 | 実行状態・`attempt_count`・失敗要因 |
 | テンプレート展開失敗の記録 | `spawn_fail_count`・失敗要因 |
 
-集計されないまま tick を終えるとサマリーが空になり、「処理対象のタスクはありませんでした。」と表示される（ADR-084 の判定）。主経路である起動確認が毎回この表示になるため、放置できない。
+集計されないまま tick を終えるとサマリーが空になり、「処理対象のタスクはありませんでした。」と表示される（ADR-092 の判定）。主経路である起動確認が毎回この表示になるため、放置できない。
 
 ## 決定
 
@@ -23,7 +23,7 @@ spec の tick の出力 DTO は `launched` / `transitioned` / `skipped_back` / `
 
 launching → running の取込にだけ、フィールド `confirmed_running: Vec<TaskId>` を1つ足す。`transitioned` はタスクステータスの遷移、`skipped_back` は skipped 判定による起動待ち復帰で語義が確定しており、実行状態の取込をどちらかに混ぜると後続スライスが同じフィールドを別の意味で埋めることになる。
 
-`errors` の形も spec の `{ task_id, path, message }` ではなく分類の列挙として持つ（ADR-073）。文言の組み立ては `cli::render` に置く。
+`errors` の形も spec の `{ task_id, path, message }` ではなく分類の列挙として持つ（ADR-081）。文言の組み立ては `cli::render` に置く。
 
 ## 検討した代替案
 
@@ -32,7 +32,7 @@ launching → running の取込にだけ、フィールド `confirmed_running: V
 
 ## 影響
 
-- 書き込みを行った tick が必ずサマリーに現れ、ADR-084 の不変が構成として成立する
+- 書き込みを行った tick が必ずサマリーに現れ、ADR-092 の不変が構成として成立する
 - 後続スライスは `transitioned` / `skipped_back` を spec の語義のまま使える
 - トレードオフ: 出力 DTO が spec から1フィールド分ずれるため、spec 追従が必要になる
 - トレードオフ: 1つのタスクが1回の tick で `errors` と `frozen` の両方に現れうる（上限超過で凍結した失敗）。失敗の原因と結末は別の情報なので、どちらか一方に畳まない

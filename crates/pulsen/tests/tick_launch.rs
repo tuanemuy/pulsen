@@ -203,7 +203,7 @@ fn ワークスペースを確定しただけで終わるtickは存在しない(
             summary.errors.as_slice(),
             [TickIssue::CommandExpansionFailed { .. }]
         ),
-        "書き込んだ tick は必ずサマリーに現れる(ADR-084)"
+        "書き込んだ tick は必ずサマリーに現れる(ADR-092)"
     );
 }
 

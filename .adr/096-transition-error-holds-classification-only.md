@@ -1,4 +1,4 @@
-# 088: `TransitionError` は分類だけを持ち、文言は `cli::render` が組み立てる
+# 096: `TransitionError` は分類だけを持ち、文言は `cli::render` が組み立てる
 
 ## ステータス
 
@@ -6,9 +6,9 @@
 
 ## コンテキスト
 
-`TransitionError::InvalidState` の `expected` には `"pending | failed"` という表示用の文字列が入り、`InvariantViolated { message: String }` は日本語の完成文をドメインが作っていた。ADR-073 は tick の報告について「文言は CLI 層で組み立てる」と決め、報告用の分類値からは完成文言を外している。
+`TransitionError::InvalidState` の `expected` には `"pending | failed"` という表示用の文字列が入り、`InvariantViolated { message: String }` は日本語の完成文をドメインが作っていた。ADR-081 は tick の報告について「文言は CLI 層で組み立てる」と決め、報告用の分類値からは完成文言を外している。
 
-`describe` 系（ADR-082）は「タスクファイルに失敗要因として永続化される」という why が付くので別扱いだが、`TransitionError` は永続化されず表示にしか使われないため、その why が効かない。
+`describe` 系（ADR-090）は「タスクファイルに失敗要因として永続化される」という why が付くので別扱いだが、`TransitionError` は永続化されず表示にしか使われないため、その why が効かない。
 
 ## 決定
 

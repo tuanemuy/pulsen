@@ -44,7 +44,7 @@ cargo fmt --check
 
 AC-1 が要求するのは `cargo clippy -- -D warnings` だが、examples とテストを含めて見るため `--all-targets` を付ける。
 
-AC-1 の「OS 依存分岐がアダプター層に隔離されている」ことの機械的確認。Issue #1 の `cfg(unix)` / `cfg(windows)` だけを見る grep では ADR-067 が生む `#[cfg(target_os = "linux")]` を素通りさせるため、述語を4つに広げる。
+AC-1 の「OS 依存分岐がアダプター層に隔離されている」ことの機械的確認。Issue #1 の `cfg(unix)` / `cfg(windows)` だけを見る grep では ADR-075 が生む `#[cfg(target_os = "linux")]` を素通りさせるため、述語を4つに広げる。
 
 ```sh
 grep -rnE 'cfg\([^)]*\b(unix|windows|target_os|target_family)\b' crates/*/src/
@@ -253,7 +253,7 @@ EOF
   4. `ls "$SETUP_HOME/worktrees/" "$SETUP_HOME/state/runs/" 2>/dev/null; echo $?`
   5. `pulsen tick --home "$SETUP_HOME"; echo $?`（2回目。冪等性）
 - **期待結果:** 手順2・5 とも exit code 0 で、「処理対象がない」旨が表示される。手順3 で `state/tasks/` が空（またはロック取得の副産物として `state/` と `state/lock` だけがある）。手順4 で `worktrees/` も `state/runs/` も作られていない。
-- **確認ポイント:** サマリーに `launched` / `frozen` / `errors` などの空フィールドが並ばず、「対象なし」だけが読めること（ADR-065: 値の入っていないフィールドは表示しない）。2回目の実行で表示が変わらないこと。
+- **確認ポイント:** サマリーに `launched` / `frozen` / `errors` などの空フィールドが並ばず、「対象なし」だけが読めること（ADR-073: 値の入っていないフィールドは表示しない）。2回目の実行で表示が変わらないこと。
 
 ### 2. 起動フェーズ — worktree・ブランチ・launching 記録・runディレクトリ
 
@@ -278,7 +278,7 @@ EOF
   - 手順4: `execution` が `{"state":"launching","recorded_at":"<RFC3339 UTC>"}`、`workspace` が `{"path":"<PULSEN_HOME>/worktrees/<T3>","branch":"pulsen/<T3>"}`、`current_attempt` が `{"number":1,"run_dir":"<PULSEN_HOME>/state/runs/<T3>/attempt-1","process":null}`、`counters` は全0のまま、`task_status` は `queued` のまま。
   - 手順5: `worktrees/<T3>` が実体として存在し、`git worktree list` に登録されている。ブランチ `pulsen/<T3>` が `main` から作られている。
   - 手順6: `attempt-1/` が存在し、`starttime` / `pid` が現れる（ラッパーはデタッチ起動で非同期に完了するため、直後に見えなければ2〜3秒あけて再実行する）。
-- **確認ポイント:** `workspace.path` と `current_attempt.run_dir` がいずれも**絶対パス**であること（外部スケジューラーからの起動が成立する前提。AC-12）。`pid` の中身が `{"pid":<数値>,"kill_ident":"<非空文字列>"}` であること — `kill_ident` が空文字や `0` になっていると Issue #3 の kill が無関係なプロセスを対象にしうる（ADR-067）。`starttime` が `{"ident":"...","wall":"..."}` の形で、`ident` が非空であること。
+- **確認ポイント:** `workspace.path` と `current_attempt.run_dir` がいずれも**絶対パス**であること（外部スケジューラーからの起動が成立する前提。AC-12）。`pid` の中身が `{"pid":<数値>,"kill_ident":"<非空文字列>"}` であること — `kill_ident` が空文字や `0` になっていると Issue #3 の kill が無関係なプロセスを対象にしうる（ADR-075）。`starttime` が `{"ident":"...","wall":"..."}` の形で、`ident` が非空であること。
 
 ### 3. spawn確認 — 次 tick での running 取込と猶予内の冪等性
 
@@ -314,7 +314,7 @@ EOF
   - 手順2・3: `execution` が `{"state":"running"}` になり、`current_attempt.process` に `pid` / `kill_ident` / `starttime`（`ident` と `wall`）が入る。`counters.spawn_fail_count` は 0。`task_status` は `queued` のまま。
   - 手順4: `invalidated`（無効化マーカー）が作られていない（猶予超過していないため）。
   - 手順5: exit code 0 で「処理対象のタスクはありませんでした。」が表示され、tick の前後でタスクファイルのチェックサムが一致する。`attempt-3/` は空のまま（`invalidated` も作られない）。
-- **確認ポイント:** `current_attempt.process.starttime.ident` が `attempt-1/starttime` ファイルの `ident` と**完全に一致**すること — ラッパーが記録した値がそのまま帳簿へ移ることが、Issue #3 の生存判定の前提になる（ADR-067）。取り込み後も `attempt_count` が 0 のままであること（起動は attempt_count を消費しない）。
+- **確認ポイント:** `current_attempt.process.starttime.ident` が `attempt-1/starttime` ファイルの `ident` と**完全に一致**すること — ラッパーが記録した値がそのまま帳簿へ移ることが、Issue #3 の生存判定の前提になる（ADR-075）。取り込み後も `attempt_count` が 0 のままであること（起動は attempt_count を消費しない）。
 
 ### 4. ラッパーの成果物とスナップショットの有効性
 
@@ -332,7 +332,7 @@ EOF
 - **期待結果:**
   - 手順1: `pid` / `starttime` / `stdout.log` / `stderr.log` / `exit` の5ファイルが揃う。`invalidated` は無い。
   - 手順2: `planning` が出力されている。手順2 で書き換えた `edited-should-not-appear` は**出ていない**（スナップショットが使われた証拠）。
-  - 手順4: `{"code":0}`（ADR-072 により JSON。素の `0` ではない）。
+  - 手順4: `{"code":0}`（ADR-080 により JSON。素の `0` ではない）。
   - 手順5: `pid` は `{"pid":<数値>,"kill_ident":"<非空>"}`、`starttime` は `{"ident":"<非空>","wall":"<RFC3339>"}`。
   - 手順6: worktree に `plan.txt` があり、`plan` のコミットが1件積まれている。
 - **確認ポイント:** `starttime` の mtime が `pid` の mtime より**古いか同時**であること（`ls -la --time-style=full-iso` や `stat` で確認。starttime → pid の順序が二重起動排除の前提。plan.md リスク項）。`exit` が `pid` より後に現れていること。`stderr.log` が存在すること（空でもよい）。
@@ -417,7 +417,7 @@ EOF
   - 手順2: ヘルプが表示され、`--run-dir` / `--workspace` と末尾のエージェントコマンドの3値を取ることが読める。
   - 手順4・5: `$WRUN` に `starttime` / `pid` / `stdout.log` / `stderr.log` / `exit` が揃い、`exit` は `{"code":7}`、`stdout.log` に `out`、`stderr.log` に `err`。config が無くても影響しない。
   - 手順6: `$WRUN2` に `starttime` と `pid` は書かれるが `exit` は書かれず、`ran.txt` も作られない（マーカーがあるのでエージェントを起動せず正常終了する）。
-- **確認ポイント:** 手順4 の run_dir は `state/runs/<task-id>/attempt-<n>` の形をしているだけで、**タスクが実在しなくても動く**こと（ラッパーは帳簿を読まない。ADR-070）。ラッパー自身の標準出力には何も出ないこと（結果はファイルにしか現れない）。ラッパー自身の終了コードは spec が規定していないので主張しない。
+- **確認ポイント:** 手順4 の run_dir は `state/runs/<task-id>/attempt-<n>` の形をしているだけで、**タスクが実在しなくても動く**こと（ラッパーは帳簿を読まない。ADR-078）。ラッパー自身の標準出力には何も出ないこと（結果はファイルにしか現れない）。ラッパー自身の終了コードは spec が規定していないので主張しない。
 
 ### 8. 外部スケジューラー(cron)からの tick と任意の作業ディレクトリからの起動
 
@@ -492,7 +492,7 @@ EOF
   4. `md5 -q "$PULSEN_HOME/state/tasks/"*.json > /tmp/pulsen-test/after.md5 2>/dev/null || md5sum "$PULSEN_HOME/state/tasks/"*.json > /tmp/pulsen-test/after.md5; diff /tmp/pulsen-test/before.md5 /tmp/pulsen-test/after.md5; echo $?`
   5. `ls -l "$PULSEN_HOME/state/tasks/"`（`updated_at` の変化を伴う mtime 更新が無いこと）
 - **期待結果:** 手順2・3 とも exit code 0。手順4 の `diff` が差分なし（exit 0）で、`running` のタスクにも `launching`（猶予内）のタスクにも書き込みが発生しない。
-- **確認ポイント:** `running` のタスクに対して tick が「未実装」等の報告を出さないこと（ADR-065: 未配線のアームは報告もしない）。サマリーの `errors` が空であること。
+- **確認ポイント:** `running` のタスクに対して tick が「未実装」等の報告を出さないこと（ADR-073: 未配線のアームは報告もしない）。サマリーの `errors` が空であること。
 
 ## エッジケース・異常系
 
@@ -518,9 +518,9 @@ EOF
   - 手順3: exit code 0。サマリーに T12 の失敗が報告される。
   - 手順4: `execution` が `{"state":"failed"}`、`counters.attempt_count` が 1（= 上限 1。**等号では凍結しない**）、`last_failure.kind` が `worktree_create` でメッセージが記録されている。`workspace` は `null` のまま。`state/runs/<T12>/` と `worktrees/<T12>` は作られていない。
   - 手順6: `attempt_count` が 2 > 1 のため `execution` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":null}` になり、tick サマリーの `frozen` に1件記録される。
-  - 手順7: 以降の tick は T12 に何もしない（`updated_at` が変わらない。ADR-065 で `Stopped` のアームは未配線）。
-  - 手順8: T12 の通知行は無い（notify は Issue #3。ADR-066）。
-- **確認ポイント:** `notified_at` が `null` のまま永続化されていること（Issue #3 がマージされた後の最初の tick が catch-up するための at-least-once の前提。ADR-066）。失敗しても runディレクトリが作られないこと（採番は worktree 確保の**後**）。
+  - 手順7: 以降の tick は T12 に何もしない（`updated_at` が変わらない。ADR-073 で `Stopped` のアームは未配線）。
+  - 手順8: T12 の通知行は無い（notify は Issue #3。ADR-074）。
+- **確認ポイント:** `notified_at` が `null` のまま永続化されていること（Issue #3 がマージされた後の最初の tick が catch-up するための at-least-once の前提。ADR-074）。失敗しても runディレクトリが作られないこと（採番は worktree 確保の**後**）。
 
 ### 2. テンプレート展開失敗（登録後の設定破壊）と config 修復での復帰
 
@@ -560,7 +560,7 @@ EOF
 ### 3. パース不能なタスクファイルの混在と他タスクの続行
 
 - **対応する受け入れ基準:** AC-12
-- **前提:** フィクスチャA（config 復元済み）。`task-execution.md` TC-20 手順1〜4。plan.md の読み替えにより、手順1 に `pipeline` のタスク（T20p）を1件追加する — `draft.yaml` の T20h は Pending × Cleanup で、`Cleanup` のアームは本スライスで配線しないため（ADR-065）「他タスクへの影響なし」を裏付ける対象にならない。
+- **前提:** フィクスチャA（config 復元済み）。`task-execution.md` TC-20 手順1〜4。plan.md の読み替えにより、手順1 に `pipeline` のタスク（T20p）を1件追加する — `draft.yaml` の T20h は Pending × Cleanup で、`Cleanup` のアームは本スライスで配線しないため（ADR-073）「他タスクへの影響なし」を裏付ける対象にならない。
 - **目的:** 読めないタスクファイルが**報告のみ**でスキップされ、書き込み・stopped 化が起きないこと、同一 tick の他タスクが通常どおり起動されることを確認する。
 - **手順:**
   1. `pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo; echo $?` → `export T20=<task-id>`
@@ -576,7 +576,7 @@ EOF
 - **期待結果:**
   - 手順5: exit code **0**。サマリーの「スキップ(1件):」に `<パス>: タスクファイルを読めません(<原因>)` として **T20 のファイルパス**が報告される。
   - 手順6: 内容は `broken` のまま（破損ファイルへの書き込みは行われない）。
-  - 手順7: T20H は `pending` のまま何も起きない（`Cleanup` のアームが未配線。ADR-065。TC-20 の「アーカイブされる」は Issue #6 に読み替え）。
+  - 手順7: T20H は `pending` のまま何も起きない（`Cleanup` のアームが未配線。ADR-073。TC-20 の「アーカイブされる」は Issue #6 に読み替え）。
   - 手順8: T20P は破損ファイルと**同一 tick で起動され**、`launching`・`worktrees/<T20P>`・`state/runs/<T20P>/attempt-1/` が作られる。
   - 手順9: T20 に関する通知は無い。
 - **確認ポイント:** スキップの行から「どのファイルが読めなかったか」がパスで特定できること（修復の入口。`ls` が無い本スライスではこれが唯一の報告経路）。破損ファイルの mtime が変わっていないこと。
@@ -688,7 +688,7 @@ EOF
 
 ### 8. ブランチのみ残存した状態からの worktree 張り直し
 
-- **対応する受け入れ基準:** AC-15（ADR-077）
+- **対応する受け入れ基準:** AC-15（ADR-085）
 - **前提:** フィクスチャA。`workspace` が**未確定**のタスクに対して、リポジトリには `pulsen/<task-id>` ブランチだけがコミットを積んだ状態で存在する。利用者の `git worktree remove` / git の自動 prune / Issue #6 の終端処理の後に実際に生じる状態。
 - **目的:** 登録が無くブランチだけが残っている状態から、`worktree add`（`-f` なし）で**ブランチ先端を変えずに**張り直され、積まれたコミットの成果物が worktree に戻ることを確認する。
 - **手順:**
@@ -732,15 +732,15 @@ EOF
   4. `ls -la "$WRUN3" /tmp/pulsen-test/notrun`
   5. `cd /Users/hikaru/github.com/tuanemuy/pulsen`
 - **期待結果:** 手順1〜3 のすべてが非0で終了する。手順4 で `$WRUN3` も `/tmp/pulsen-test/notrun` も**空のまま**（`starttime` / `pid` / `exit` / ログのいずれも作られていない）。
-- **確認ポイント:** 手順3 の run_dir は実在するディレクトリだが `<state_root>/runs/<task-id>/attempt-<n>` の形をしていないため拒否されること（ADR-070 の逆写像が `None` を返す経路）。エラーが標準エラーに出て、標準出力が汚れないこと。
+- **確認ポイント:** 手順3 の run_dir は実在するディレクトリだが `<state_root>/runs/<task-id>/attempt-<n>` の形をしていないため拒否されること（ADR-078 の逆写像が `None` を返す経路）。エラーが標準エラーに出て、標準出力が汚れないこと。
 
 ## 既存機能への影響確認
 
-- **`pulsen add` の経路が壊れていないこと:** 本スライスは `wire::Runtime` にアクセサとポートを追加し（steps.md ステップ17）、`WireError` に1変種を足す（ADR-068）。`add` は `ProcessController` を必要としないので、`current_exe()` の失敗で `add` が落ちないことを確認する。`.thread/1/testing.md` の確認項目1・2・4（未初期化ホームの案内 / ホーム解決の優先順位 / 登録成功時の表示とタスクファイルの中身）をスポットチェックとして再実行し、Issue #1 時点と同じ結果になること。
+- **`pulsen add` の経路が壊れていないこと:** 本スライスは `wire::Runtime` にアクセサとポートを追加し（steps.md ステップ17）、`WireError` に1変種を足す（ADR-076）。`add` は `ProcessController` を必要としないので、`current_exe()` の失敗で `add` が落ちないことを確認する。`.thread/1/testing.md` の確認項目1・2・4（未初期化ホームの案内 / ホーム解決の優先順位 / 登録成功時の表示とタスクファイルの中身）をスポットチェックとして再実行し、Issue #1 時点と同じ結果になること。
 
-- **`pulsen --help` の表示:** サブコマンドとして `add` / `tick` / `help` が並び、`wrapper` が現れないこと（ADR-069）。`pulsen tick --help` に引数が無いこと（`--home` は global フラグとして現れる）。引数の使い方の誤りが clap 既定の exit code 2 になること。
+- **`pulsen --help` の表示:** サブコマンドとして `add` / `tick` / `help` が並び、`wrapper` が現れないこと（ADR-077）。`pulsen tick --help` に引数が無いこと（`--home` は global フラグとして現れる）。引数の使い方の誤りが clap 既定の exit code 2 になること。
 
-- **AC-1 の grep 期待値の更新:** Issue #1 の testing.md は `crates/pulsen/src/` 側のヒットを `util/atomic.rs` だけとしていた。本スライスで `adapter/process.rs` が加わり、さらに述語を4つに広げたことで `adapter/task_repository.rs` の `#[cfg(all(test, unix))]` も拾うため、期待値は3ファイルになる（ADR-067 Consequences）。`crates/pulsen-domain/` が0件であることは変わらない。この期待値の変更は Issue #1 の testing.md 側には反映しない（各 Issue の testing.md はその時点の期待を書く）。
+- **AC-1 の grep 期待値の更新:** Issue #1 の testing.md は `crates/pulsen/src/` 側のヒットを `util/atomic.rs` だけとしていた。本スライスで `adapter/process.rs` が加わり、さらに述語を4つに広げたことで `adapter/task_repository.rs` の `#[cfg(all(test, unix))]` も拾うため、期待値は3ファイルになる（ADR-075 Consequences）。`crates/pulsen-domain/` が0件であることは変わらない。この期待値の変更は Issue #1 の testing.md 側には反映しない（各 Issue の testing.md はその時点の期待を書く）。
 
 - **`state/` のレイアウトへの追加:** 本スライスで `state/runs/` と `worktrees/` が初めて作られる。Issue #1 の「`add` は `worktrees/` も `state/runs/` も作らない」という期待（`.thread/1/testing.md` 確認項目4 手順5）が引き続き成り立つこと — 作るのは tick だけであること。
 

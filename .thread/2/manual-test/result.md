@@ -85,7 +85,7 @@ exit=1  （1件もヒットなし）
   exit=0
   ```
 
-- **期待との差:** なし。tick が作ったのは `state/` と `state/lock` だけで `state/tasks/` は空、`worktrees/` と `state/runs/` は未作成。表示は「処理対象のタスクはありませんでした。」の1行のみで `launched` / `frozen` / `errors` の空フィールドは並ばない（ADR-065）。2回目も同一表示・exit 0。
+- **期待との差:** なし。tick が作ったのは `state/` と `state/lock` だけで `state/tasks/` は空、`worktrees/` と `state/runs/` は未作成。表示は「処理対象のタスクはありませんでした。」の1行のみで `launched` / `frozen` / `errors` の空フィールドは並ばない（ADR-073）。2回目も同一表示・exit 0。
 
 ### 2. 起動フェーズ — worktree・ブランチ・launching 記録・runディレクトリ
 
@@ -240,7 +240,7 @@ exit=1  （1件もヒットなし）
   0 （grep_exit=1、ヒットなし）
   ```
 
-- **期待との差:** なし。`starttime` (…823.904) < `pid` (…823.913) < `exit` (…824.071) の順序が成立。`exit` は ADR-072 どおり JSON。stdout に `planning` が出て `edited-should-not-appear` は出ない = 登録時スナップショットが使われている。worktree に `plan.txt` と `plan` コミット1件。
+- **期待との差:** なし。`starttime` (…823.904) < `pid` (…823.913) < `exit` (…824.071) の順序が成立。`exit` は ADR-080 どおり JSON。stdout に `planning` が出て `edited-should-not-appear` は出ない = 登録時スナップショットが使われている。worktree に `plan.txt` と `plan` コミット1件。
 
 ### 5. 同一リポジトリ・2タスクの独立した起動
 
@@ -515,7 +515,7 @@ exit=1  （1件もヒットなし）
   === after ===  mtime 3件とも before と完全一致
   ```
 
-- **期待との差:** なし。`running` の3タスクに対して tick は何も書かず、「未実装」等の報告も出さない（ADR-065: 未配線のアームは報告もしない）。`errors` は空。
+- **期待との差:** なし。`running` の3タスクに対して tick は何も書かず、「未実装」等の報告も出さない（ADR-073: 未配線のアームは報告もしない）。`errors` は空。
 
 ## エッジケース・異常系
 
@@ -563,7 +563,7 @@ exit=1  （1件もヒットなし）
   === notify.log ===  0 バイト
   ```
 
-- **期待との差:** なし。`attempt_count` が 1（= 上限）では凍結せず、2 > 1 で `stopped` / `retry_limit_exceeded` になる。`notified_at` は `null` のまま永続化（ADR-066 の at-least-once 前提）。失敗しても run ディレクトリは作られない（採番は worktree 確保の後）。凍結後の tick は T12 に一切書き込まない。
+- **期待との差:** なし。`attempt_count` が 1（= 上限）では凍結せず、2 > 1 で `stopped` / `retry_limit_exceeded` になる。`notified_at` は `null` のまま永続化（ADR-074 の at-least-once 前提）。失敗しても run ディレクトリは作られない（採番は worktree 確保の後）。凍結後の tick は T12 に一切書き込まない。
 
 ### 2. テンプレート展開失敗（登録後の設定破壊）と config 修復での復帰
 
@@ -925,7 +925,7 @@ exit=1  （1件もヒットなし）
   notrun entries=0
   ```
 
-- **期待との差:** なし。4ケースすべて非0で終了し、両ディレクトリとも空のまま（`starttime` / `pid` / `exit` / ログのいずれも作られない）。エラーはすべて標準エラーに出て標準出力は0バイト。実在するディレクトリでも `<state_root>/runs/<task-id>/attempt-<n>` の形でなければ拒否される（ADR-070 の逆写像が `None`）。
+- **期待との差:** なし。4ケースすべて非0で終了し、両ディレクトリとも空のまま（`starttime` / `pid` / `exit` / ログのいずれも作られない）。エラーはすべて標準エラーに出て標準出力は0バイト。実在するディレクトリでも `<state_root>/runs/<task-id>/attempt-<n>` の形でなければ拒否される（ADR-078 の逆写像が `None`）。
 
 ## 既存機能への影響確認
 
@@ -994,7 +994,7 @@ exit=1  （1件もヒットなし）
   $ pulsen add              → exit=2
   ```
 
-- **期待との差:** なし。`wrapper` はサブコマンド一覧に現れない（ADR-069）。`tick` に位置引数は無く `--home` は global フラグとして現れる。引数の誤用は clap 既定の exit 2。
+- **期待との差:** なし。`wrapper` はサブコマンド一覧に現れない（ADR-077）。`tick` に位置引数は無く `--home` は global フラグとして現れる。引数の誤用は clap 既定の exit 2。
 
 ### 3. AC-1 の grep 期待値の更新
 

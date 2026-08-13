@@ -1,4 +1,4 @@
-# 069: `wrapper` は clap の隠しサブコマンドにする
+# 077: `wrapper` は clap の隠しサブコマンドにする
 
 ## ステータス
 
@@ -15,7 +15,7 @@ pages は `wrapper` を「ツール自身のバイナリをラッパーモード
 - `Command` enum に `#[command(hide = true)] Wrapper(WrapperArgs)` を足す
 - `WrapperArgs` の末尾可変長（エージェントコマンド）は `trailing_var_arg` + `allow_hyphen_values` で受ける。エージェントのコマンドは `--model` のような `-` 始まりのトークンや、config の配列形式が許す空文字列トークンを含みうる。明示しないと `spawn_wrapper` が組んだ argv をラッパー側のパーサが受理せず、起動経路だけが壊れて run ディレクトリには何も残らない（ADR-049 で `--base` のハイフン値に対して行ったのと同じ扱い）。argv の定義箇所がアダプターと CLI に分かれるため、往復テストで受理を主張する
 - ヘルプの検証は「ヘルプに現れるのは利用者向けサブコマンドだけであること」と「`wrapper` はヘルプに現れないが実行はできること」の2つの主張に分ける
-- `--home` は `global = true` なので `wrapper` にも付くが、ラッパーはこれを**使わない**（ADR-070）
+- `--home` は `global = true` なので `wrapper` にも付くが、ラッパーはこれを**使わない**（ADR-078）
 
 ## 検討した代替案
 

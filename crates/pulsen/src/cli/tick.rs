@@ -24,7 +24,7 @@ pub enum TickCommandError {
 pub fn execute(home: Option<PathBuf>) -> Result<TickOutcome, TickCommandError> {
     let runtime = wire::compose(home).map_err(TickCommandError::Wire)?;
     // 自身の実行ファイルのパスを要するのはプロセスを起動する経路だけなので、
-    // `compose` ではなくここで解決する(ADR-068)。
+    // `compose` ではなくここで解決する(ADR-076)。
     let processes = wire::process_controller().map_err(TickCommandError::Wire)?;
 
     Tick::new(

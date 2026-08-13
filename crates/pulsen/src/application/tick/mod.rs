@@ -8,7 +8,7 @@
 //! 失敗させるのは、走査そのものができない場合とロック機構の異常だけ。
 //!
 //! タスクファイルに書き込んだ経路は、必ずサマリーのいずれかのフィールドを埋める
-//! (ADR-084 / ADR-086)。埋めないと、状態を変えた tick が「処理対象なし」と表示される。
+//! (ADR-092 / ADR-094)。埋めないと、状態を変えた tick が「処理対象なし」と表示される。
 
 mod confirm_spawn;
 mod launch;
@@ -57,7 +57,7 @@ pub enum TickError {
 
 /// 個別タスクの処理をスキップした理由。
 ///
-/// 文言ではなく分類として持ち、利用者に見せる言葉は `cli::render` が決める(ADR-073)。
+/// 文言ではなく分類として持ち、利用者に見せる言葉は `cli::render` が決める(ADR-081)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TickIssue {
     /// タスクファイル全体を読めない。
@@ -157,8 +157,8 @@ pub enum TickIssue {
 /// tick パスの結果。
 ///
 /// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` を足した形
-/// (ADR-086)。本スライスで値が入るのは、配線した手続きが埋める `launched` /
-/// `confirmed_running` / `frozen` / `errors` だけになる(ADR-065)。
+/// (ADR-094)。本スライスで値が入るのは、配線した手続きが埋める `launched` /
+/// `confirmed_running` / `frozen` / `errors` だけになる(ADR-073)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。
@@ -187,7 +187,7 @@ impl TickSummary {
     /// 記録すべきことが1つも起きなかったか。
     ///
     /// タスクファイルに書き込んだ tick は、書き込みの内容がいずれかのフィールドに
-    /// 現れるため偽になる(ADR-084)。
+    /// 現れるため偽になる(ADR-092)。
     pub fn is_empty(&self) -> bool {
         self.launched.is_empty()
             && self.confirmed_running.is_empty()
@@ -314,7 +314,7 @@ where
     /// 遷移の結果を永続化し、凍結ならサマリーに記録する。
     ///
     /// stopped を書いたすべての経路がここを通るため、通知の共通手続きはこの関数の1箇所に
-    /// 置ける(ADR-066)。stopped は `notified_at: None` で永続化されるので、通知が無い間も
+    /// 置ける(ADR-074)。stopped は `notified_at: None` で永続化されるので、通知が無い間も
     /// 次以降の tick が catch-up できる。
     fn commit(&self, task: &Task, freeze: Freeze, summary: &mut TickSummary) -> Persisted {
         match self.tasks.save(task) {

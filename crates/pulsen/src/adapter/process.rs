@@ -1,6 +1,6 @@
 //! プラットフォーム依存のプロセス操作による `ProcessController` の実装。
 //!
-//! `unsafe` は使わず、std の安全 API と外部コマンドの起動だけで組む(ADR-067)。
+//! `unsafe` は使わず、std の安全 API と外部コマンドの起動だけで組む(ADR-075)。
 //!
 //! 同定情報(起動時刻・プロセスグループ)の取得は、プラットフォームごとの `identity`
 //! モジュールにある**1つの関数**に閉じる。記録側(`own_identity`)と照合側が同じ表現を
@@ -41,7 +41,7 @@ const NOT_FOUND: i32 = 127;
 /// 何を指すかはプラットフォームで違う(POSIX 非 Linux は `ps` の実行ファイル、Linux は
 /// procfs のルート、Windows は powershell の実行ファイル)。構築時に注入することで、
 /// 適合テストが「取得機構そのものが失敗する状況」を別のインスタンスとして作れる
-/// (ADR-068)。
+/// (ADR-076)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentitySource(PathBuf);
 
@@ -82,7 +82,7 @@ pub struct SystemProcessController {
 }
 
 impl SystemProcessController {
-    /// 自バイナリのパスと同定情報の取得元を受け取る(ADR-068)。
+    /// 自バイナリのパスと同定情報の取得元を受け取る(ADR-076)。
     ///
     /// `std::env::current_exe()` を読むのは合成ルートの1箇所だけにする — 適合テストは
     /// テストバイナリではなく本物の `pulsen` を注入する必要がある。
@@ -102,7 +102,7 @@ impl SystemProcessController {
     ///
     /// この構成の `spawn_wrapper` は構造上必ず `SpawnError` を返すため、`spawn_wrapper` の
     /// 適合契約の対象外である — 適合スイートが検証するのは [`SystemProcessController::new`]
-    /// の構成に限る。ラッパー自身は spawn を行わないので、この経路には到達しない(ADR-068)。
+    /// の構成に限る。ラッパー自身は spawn を行わないので、この経路には到達しない(ADR-076)。
     pub fn without_self_exe(identity_source: IdentitySource, clock: SystemClock) -> Self {
         Self {
             self_exe: None,
@@ -144,7 +144,7 @@ impl ProcessController for SystemProcessController {
     fn own_identity(&self) -> Result<WrapperIdentity, Io> {
         let pid = Pid::new(std::process::id());
         // 自プロセスの観測なので「対象が存在しない」はありえない。三値を二値へ畳むのは
-        // 呼び出し側の責務であって、共有する取得関数には持ち込まない(ADR-067)。
+        // 呼び出し側の責務であって、共有する取得関数には持ち込まない(ADR-075)。
         let observed =
             identity::observe(&self.identity_source, pid)?.ok_or_else(|| Io::Failed {
                 message: format!("自プロセス (pid {}) を観測できない", pid.get()),
@@ -702,7 +702,7 @@ mod identity {
     ///
     /// POSIX 側と違い PATH 解決の名前のままにする。`%SystemRoot%\System32\...` の絶対パスは
     /// 本環境で実測できず、誤った固定値は取得そのものを不能にする。PATH が tick 間で変わると
-    /// 照合が壊れうる制約は Issue #10 の実機確認に申し送る(ADR-067)。
+    /// 照合が壊れうる制約は Issue #10 の実機確認に申し送る(ADR-075)。
     pub fn default_source() -> PathBuf {
         PathBuf::from("powershell")
     }
@@ -852,7 +852,7 @@ mod tests {
     }
 
     /// シグナル死の符号化(`128+シグナル番号`)は POSIX の慣例で、適合スイート側は
-    /// 「非0の符号化値」までしか主張しない(ADR-074)。具体値はここで固定する。
+    /// 「非0の符号化値」までしか主張しない(ADR-082)。具体値はここで固定する。
     #[cfg(unix)]
     #[test]
     fn シグナルで終了したエージェントは128足すシグナル番号に符号化される() {

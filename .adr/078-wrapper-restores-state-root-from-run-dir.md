@@ -1,4 +1,4 @@
-# 070: ラッパーは config もホームも読まず、`RunDirPath` から state root を復元して RunStore を組む
+# 078: ラッパーは config もホームも読まず、`RunDirPath` から state root を復元して RunStore を組む
 
 ## ステータス
 

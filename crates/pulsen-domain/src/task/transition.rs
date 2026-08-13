@@ -10,7 +10,7 @@ use super::state::ExecutionStateKind;
 /// 前提として検査し値で返す。パニックは遷移関数自身が事後条件を破った場合に限る。
 ///
 /// この値は永続化されず表示にしか使われないため、分類だけを持ち、利用者に見せる文言は
-/// 表示側が組み立てる(ADR-073)。
+/// 表示側が組み立てる(ADR-081)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransitionError {
     /// 前提状態の不一致。

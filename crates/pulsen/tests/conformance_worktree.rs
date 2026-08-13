@@ -64,7 +64,7 @@ impl GitCliWorktreeManagerHarness {
 
     /// worktree の置き場。**シンボリックリンク経由**のパスとして組む。
     ///
-    /// 同定の鍵は物理パスなので(ADR-077)、置き場が実体そのものだと正規化の分岐が
+    /// 同定の鍵は物理パスなので(ADR-085)、置き場が実体そのものだと正規化の分岐が
     /// どのケースからも実行されない。リンクを張れない環境は前提を用意できない環境なので、
     /// 実体へ落として黙って通すのではなく `None` を返してスキップに載せる。
     fn worktree_root(&self) -> Option<PathBuf> {
@@ -352,7 +352,7 @@ const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_port_worktree_manager_003"];
 
 /// ディレクトリのシンボリックリンクを張れない環境でのみスキップされるケース。
 ///
-/// `ws.path` の置き場をリンク経由で組む `create` のケース(ADR-077)。置き場が未作成である
+/// `ws.path` の置き場をリンク経由で組む `create` のケース(ADR-085)。置き場が未作成である
 /// ことを前提にする TC-011 だけは、リンクを張る対象が無いためここに入らない。
 const SYMLINKED_ROOT_CASES: [&str; 7] = [
     "tc_port_worktree_manager_010",

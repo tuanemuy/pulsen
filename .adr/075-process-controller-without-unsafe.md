@@ -1,4 +1,4 @@
-# 067: `ProcessController` のプラットフォーム実装は `unsafe` なしで組み、同定情報は単一の観測関数に閉じる
+# 075: `ProcessController` のプラットフォーム実装は `unsafe` なしで組み、同定情報は単一の観測関数に閉じる
 
 ## ステータス
 
@@ -47,7 +47,7 @@ std の安全 API と外部コマンドの起動だけで組み、`unsafe_code =
 
 不在を `Err(Io)` に畳んではならない。畳むと「生存プロセスを観測できない tick が状態を変更せずスキップし続け、`DiedWithoutExit` にも `KillOnTimeout` にも到達しない」= running のまま永久滞留になる。実測では不在も**エラーの形**で返る（macOS の `ps -o lstart=,pgid= -p <不在pid>` は exit 1・stdout 空、Linux の `/proc/<pid>/stat` は `NotFound`）ため、二値のままだと畳む実装が自然に書けてしまう。
 
-プラットフォームごとの取得は次のとおり。取得元（POSIX 非 Linux は `ps` の実行ファイルパス、Linux は procfs のルート、Windows は powershell の実行ファイルパス）は構築時に注入する（ADR-068）。
+プラットフォームごとの取得は次のとおり。取得元（POSIX 非 Linux は `ps` の実行ファイルパス、Linux は procfs のルート、Windows は powershell の実行ファイルパス）は構築時に注入する（ADR-076）。
 
 - **Linux**: `<procfs_root>/<pid>/stat`（既定は `/proc`）の起動時刻（clock ticks）を **boot id と合成した `<boot_id>:<ticks>`** とする。ticks は**最後の `)` より後ろを空白で分割した20番目**（全体の22番目）として読む — 2番目のフィールド（comm）は実行ファイル名を `()` で囲んだもので、名前に空白や `)` を含むと素朴な空白分割では位置がずれる（実測: `sleep` を `sl ee) p` という名前で起動すると素朴な22番目は `1` を返す）。この関数は任意 pid を取る `starttime_of` と共有されるため、自プロセス名で顕在化しないことを根拠にできない。boot id は `<procfs_root>/sys/kernel/random/boot_id`
 - **その他の POSIX**: `<identity_source> -o lstart=,pgid= -p <pid>`（既定は `/bin/ps`）の1行を、最後の空白で PGID（最終トークン）と `lstart`（残りを trim した文字列）に分ける。起動時に `LC_ALL=C` と `TZ=UTC` を**注入**し、`LANG` / `LC_TIME` / `LC_ALL` の継承を落とす。キーワードの順を逆にすると `lstart` 側に空白パディングが残るので、`lstart=,pgid=` の順で固定する
@@ -79,7 +79,7 @@ std の安全 API と外部コマンドの起動だけで組み、`unsafe_code =
 | Windows: exit 0 かつ出力が空 | `Ok(None)`（不在） |
 | Windows: それ以外の失敗・形式外 | `Err(Io)` |
 
-Linux で「ルート不在」と「`<root>/<pid>/stat` の `NotFound`」を分けるのは、取得元が注入される（ADR-068）ため両者が同じ `NotFound` として現れるからである。分けないと、壊れた取得元を注入したときに `Ok(None)` =「そのプロセスは死んでいる」が返り、機構失敗を死亡に写像しない契約が注入で再現できなくなる。
+Linux で「ルート不在」と「`<root>/<pid>/stat` の `NotFound`」を分けるのは、取得元が注入される（ADR-076）ため両者が同じ `NotFound` として現れるからである。分けないと、壊れた取得元を注入したときに `Ok(None)` =「そのプロセスは死んでいる」が返り、機構失敗を死亡に写像しない契約が注入で再現できなくなる。
 
 `ProcessStartTime::parse` の `Empty` を握り潰して既定値で `Ok` を装わないことが「不正な同定情報で `Ok` を装わない」の趣旨そのものであり、上表の `Err(Io)` 行はすべてこの趣旨に属する。
 

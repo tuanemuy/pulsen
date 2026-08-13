@@ -3,6 +3,14 @@
 //! パスの導出と命名形式はドメインの `TaskFilePath` が単一の定義箇所であり、この
 //! アダプターはレイアウトを組み立て直さない。書き込みは常に全体のアトミック置換で、
 //! 移動は単一ファイルの rename に帰着する(ADR-015)。
+//!
+//! 内容の読み取りは `fs::read` ではなく `util::atomic::read_atomic` を通す。置換の窓は
+//! 書き手と読み手の両方に当たるため、片方だけを吸収すると「読み手はロックなしで常に
+//! 一貫した内容を見る」が読み取り側で崩れる。
+//!
+//! 一時的な拒否の吸収でブロックしうる時間(1回あたり最大 511ms)は、複数回呼ぶ経路では
+//! その回数だけ積み上がる。`save_degraded` は読んでから書くので最大2倍、`list` はエントリ
+//! 数 N だけ読むので最大 N 倍になる。
 
 use std::fs;
 use std::io;
@@ -14,7 +22,7 @@ use pulsen_domain::task::{
 };
 
 use super::task_file;
-use crate::util::atomic::{rename_atomic, write_atomic};
+use crate::util::atomic::{read_atomic, rename_atomic, write_atomic};
 
 /// タスクファイルの置き場。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +72,7 @@ impl FsTaskRepository {
 
     fn lookup(&self, area: Area, id: &TaskId) -> Result<Option<TaskLookup>, ReadError> {
         let path = self.path(area, id);
-        let bytes = match fs::read(&path) {
+        let bytes = match read_atomic(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(unreachable_entry(&path, &error)?
@@ -119,7 +127,7 @@ impl FsTaskRepository {
 
         let mut entries = Vec::with_capacity(paths.len());
         for path in paths {
-            let bytes = match fs::read(&path) {
+            let bytes = match read_atomic(&path) {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     match unreachable_entry(&path, &error)? {
@@ -190,7 +198,7 @@ impl TaskRepository for FsTaskRepository {
 
     fn save_degraded(&self, task: &DegradedTask) -> Result<(), SaveError> {
         let path = self.path(Area::Active, task.id());
-        let existing = match fs::read(&path) {
+        let existing = match read_atomic(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Err(SaveError::NotFound);
