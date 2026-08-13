@@ -97,3 +97,5 @@ R7: 新規 6 / fix 4 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0（方�
 | `tests/cli_tick.rs:tc_exec_tick_015/効かないスキップ宣言` | R8 | fix | 先に `agent_probe` の `expect` で落ちるため到達せず、plan.md のスキップ表にも無い | 0 |
 
 R8: 新規 6 / fix 3 / fix-editorial 3 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 全件 fix 系で見送り判定ゼロ。サマリー表示の扱いはメインが「実装を残し記述を実態に合わせる」と裁定）
+
+R9: 新規 0 / fix 0 / fix-editorial 0 / wont-fix 0 / defer 0 / 継承 0（全5観点アクティブのまま fix ゼロ。確認ラウンドを兼ねて完了）
