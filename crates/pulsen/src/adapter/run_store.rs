@@ -167,7 +167,7 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), Io> {
 
 /// DTO を JSON バイト列にする。
 ///
-/// 人間が直接辿れること(requirements §9)を満たすため整形して書く。
+/// 人間が直接辿れることを満たすため整形して書く。
 fn encode<T: Serialize>(dto: &T) -> Result<Vec<u8>, Io> {
     serde_json::to_vec_pretty(dto).map_err(|error| Io::Failed {
         message: format!("内容を直列化できない: {error}"),

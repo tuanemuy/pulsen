@@ -160,7 +160,7 @@ impl Runtime {
 
 /// グローバルホームを解決し、アダプターを構築してグローバル設定を読み込む。
 ///
-/// 起動時のグローバル設定の読み込みは全コマンド共通(pages ※1)なので、ここで行う。
+/// 起動時のグローバル設定の読み込みは全コマンド共通なので、ここで行う。
 pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
     let home = resolve_home(home_flag)?;
 
@@ -264,7 +264,7 @@ fn id_generator_cause(error: &IdGeneratorInitError) -> String {
     }
 }
 
-/// `--home` > `PULSEN_HOME` > `~/.pulsen/` の順で解決する(pages 共通事項)。
+/// `--home` > `PULSEN_HOME` > `~/.pulsen/` の順で解決する。
 fn resolve_home(flag: Option<PathBuf>) -> Result<PulsenHome, WireError> {
     if let Some(path) = flag {
         return home_from(path);

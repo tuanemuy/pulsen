@@ -1,7 +1,7 @@
 //! 出力文言の組み立て。
 //!
 //! ユースケースは原因を値として返すだけで、利用者に見せる言葉はここで決める。
-//! 出力は人間可読なテキストに限る — 機械可読形式は提供しない(pages 共通事項)。
+//! 出力は人間可読なテキストに限る — 機械可読形式は提供しない。
 
 use std::path::Path;
 
@@ -347,7 +347,7 @@ fn wire_error(error: &WireError) -> String {
     }
 }
 
-/// グローバル設定の読み込みの失敗(pages ※1)。
+/// グローバル設定の読み込みの失敗。
 fn config_error(config_path: &Path, error: &ConfigLoadError) -> String {
     match error {
         ConfigLoadError::NotFound { home } => problem(

@@ -4,7 +4,7 @@
 //! 手続きへ分岐する。判断はドメイン(`Task` の遷移関数・`LaunchingClassifier`)が行い、
 //! ここは「ポートで観測 → ドメインで判断 → ポートで実行」の配線に徹する。
 //!
-//! 1タスクの処理失敗は `errors` に記録して残りを続行する(requirements §9)。tick 全体を
+//! 1タスクの処理失敗は `errors` に記録して残りを続行する。tick 全体を
 //! 失敗させるのは、走査そのものができない場合とロック機構の異常だけ。
 //!
 //! タスクファイルに書き込んだ経路は、必ずサマリーのいずれかのフィールドを埋める
@@ -313,9 +313,9 @@ where
 
     /// 遷移の結果を永続化し、凍結ならサマリーに記録する。
     ///
-    /// stopped を書いたすべての経路がここを通る。Issue #3 は共通手続き notify の呼び出しを
-    /// この関数の中に足すだけでよい(ADR-066)。stopped は `notified_at: None` で永続化
-    /// されるので、通知が無い間も次以降の tick が catch-up できる。
+    /// stopped を書いたすべての経路がここを通るため、通知の共通手続きはこの関数の1箇所に
+    /// 置ける(ADR-066)。stopped は `notified_at: None` で永続化されるので、通知が無い間も
+    /// 次以降の tick が catch-up できる。
     fn commit(&self, task: &Task, freeze: Freeze, summary: &mut TickSummary) -> Persisted {
         match self.tasks.save(task) {
             Ok(()) => {
