@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn 時間で解けない拒否に再試行の予算を使わない() {
+    fn 時間で解けない拒否は再試行の予算の対象にならない() {
         let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let missing = base.path().join("task.json");
         let to = base.path().join("archived.json");
@@ -367,8 +367,12 @@ mod tests {
         let read_error = read_atomic(&missing).expect_err("読めない");
         let rename_error = rename_atomic(&missing, &to).expect_err("移動できない");
 
-        // 予算を使うかどうかは、公開関数が渡している分類がこの拒否をどう見るかで決まる。
+        // 見ているのは、公開関数が実際に返した拒否を分類に掛けると予算がゼロになること。
         // 経過時間で同じことを言うと、遅いランナーでは実装と無関係に判定がぶれる。
+        //
+        // 公開関数が `transiently_denied` を渡している配線そのものはここでは押さえられない。
+        // 緩い分類に差し替えても、この拒否が `NotFound` であることは変わらないため。
+        // 配線が壊れたときの被害は有界な遅延に限られる（ADR-012）。
         for error in [read_error, rename_error] {
             assert_eq!(error.kind(), io::ErrorKind::NotFound);
             assert_eq!(budget_spent_on(&error), Duration::ZERO, "{error:?}");
