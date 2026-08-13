@@ -111,12 +111,12 @@ gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 - **手順:**
   1. unix（ubuntu / macOS）の stable ジョブのログで、非 root アサートのステップが成功していることを見る。
   2. `grep -n "container:" .github/workflows/ci.yml` と `grep -n -- "--test " .github/workflows/ci.yml` を実行する。
-  3. 各 OS の run ページでジョブサマリーを開き、`SKIP ` 行の一覧を読む。
+  3. 各 OS の run ページでジョブサマリーを開き、除外件数と `SKIP ` 行の一覧を読む。**3 OS 分を並べて読む** — 除外の単位はケース名ではなくテストバイナリの区間なので、1 OS だけ件数がずれる形が起こりうる。
   4. その一覧を steps.md ステップ3 に**実行前から書いてある期待集合**と突き合わせる。
 - **期待結果:**
   1. 非 root アサートが緑（ランナーは非 root で走っている）。
   2. どちらも**ヒット0件** — `container:` を使わず、`cargo test --test <名前>` の単一ターゲット指定もしていない。
-  3. サマリーに SKIP 行が列挙されており、`pulsen-conformance` の lib ユニットテスト区間（`SkipBudget` 自身を検証する架空ケース3件）が除外されている。除外件数が「3 件」と表示されている（区間で落とした件数が 3 から動いていれば、実在ケースのスキップを巻き込んでいる可能性がある。adr.md ADR-005）。
+  3. サマリーに SKIP 行が列挙されており、`pulsen-conformance` の lib ユニットテスト区間（`SkipBudget` 自身を検証する架空ケース3件）が除外されている。除外件数が **3 OS すべてで**「3 件」と表示されている（1 OS だけであっても 3 から動いていれば、実在ケースのスキップを巻き込んでいるか、抽出が架空ケースを取りこぼしている。adr.md ADR-005）。
   4. **unix は `tc_port_clock_005` の1件のみ、Windows はそれに権限系10件を加えた11件。**
 - **確認ポイント:**
   - 非 root アサートのログに `uid=<数値>` が出ていること。このステップは `id` 自体の失敗と数値でない出力も失敗として扱う（CI が独自に持つ唯一の合否判定を、判定できなかったときに通す側へ倒さない。adr.md ADR-005）。
@@ -216,4 +216,4 @@ gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 
 - **プロダクションコードへの影響:** ワークフローファイルの追加自体はビルド対象に影響しない。影響が出るのは条件付き修正（ステップ6〜10）が発火した場合のみで、その場合はローカルで `cargo test --workspace --locked` が引き続き緑であることを確認する（macOS 458件 PASS が計画時のベースライン）。
 - **`.adr/022` / `.adr/023` との整合:** MSRV を上げた場合のみ。`rust-version` の新しい値が `.adr/022`（`std::fs::File::try_lock` の安定化 = 1.89）・`.adr/023`（`std::env::home_dir()` の非推奨解除 = 1.87.0）の根拠と矛盾しないことを読み合わせる（AC-4）。
-- **PR #11（tick）への影響:** 本 Issue が先行マージされる。条件付き修正が入ったのは `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` / `crates/pulsen/src/adapter/task_repository.rs` の3ファイルで、ここが衝突面になる（ステップ10 の `cargo fmt --all` 掛け直しは発火していないので、ソースツリー全域には広がっていない）。衝突の解消と、#11 が追加するコードの Windows 挙動は #11 側の責務（plan.md スコープ「PR #11 とのマージ順」）。**この Issue の CI が実測したのは `af24360`（PR #11 のマージ前）のコードであり、プロセス同定・デタッチ起動の Windows 挙動は未検証のまま残る。**
+- **PR #11（tick）への影響:** 本 Issue が先行マージされる。条件付き修正が入ったのは `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` / `crates/pulsen/src/adapter/task_repository.rs` の3ファイルで、ここが衝突面になる（ステップ10 の `cargo fmt --all` 掛け直しは発火していないので、ソースツリー全域には広がっていない）。衝突の解消と、#11 が追加するコードの Windows 挙動は #11 側の責務（plan.md スコープ「PR #11 とのマージ順」）。**この Issue の CI が実測したのは `9675b2f`（PR #11 のマージ前）のコードであり、プロセス同定・デタッチ起動の Windows 挙動は未検証のまま残る。**

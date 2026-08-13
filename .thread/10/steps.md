@@ -89,7 +89,7 @@ adr.md ADR-008 の吸収先ディレクトリによる判定が掛かるのは *
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-  # 色を付けると cargo の "Running" 行が ESC で始まり、行頭一致での区間判定が効かなくなる。
+  # 色を付けると cargo の "Running" 行が ESC で始まり、そのままでは区間判定が効かなくなる。
   # サマリー抽出は ANSI を落としてから照合する(ステップ3)。
   env:
     CARGO_TERM_COLOR: always
@@ -165,10 +165,12 @@ adr.md ADR-008 の吸収先ディレクトリによる判定が掛かるのは *
 
 - **対象ファイル:** `.github/workflows/ci.yml`、本ファイル(期待集合の記録)
 - **変更内容:** ステップ 2 のテスト実行の直後に**報告ステップを1つだけ**足す。合否を判定するステップは足さない。
-  - **スキップの報告**(`if: always()`、全 OS): `test.log` から `^SKIP ` 行を抜き出し、重複を除いて `$GITHUB_STEP_SUMMARY` に「走らなかったケース(<OS>)」として列挙する。
+  - **スキップの報告**(`if: always()`、全 OS): `test.log` から、行のどこに現れるかを問わず `SKIP ` を抜き出し、重複を除いて `$GITHUB_STEP_SUMMARY` に「走らなかったケース(<OS>)」として列挙する。`SKIP` の本文は行末まで続くので、見つけた位置から末尾までを1件の同一性(重複排除と表示)に使う。
   - **「スキップなし」と「テストが走っていない」を区別する**(adr.md ADR-005)。判定は2段。報告ステップは `if: always()` なので build 失敗後も走るが、`test.log` の有無だけでは足りない — build ステップで落ちればテストステップごと飛ばされて `test.log` は生まれない一方、テストステップまで到達してコンパイルに失敗した場合は `tee` がエラー出力を書いた `test.log` が残る。後者を捕まえるためにテスト結果行(`^test result:`)の有無も見て、「到達していない」「走っていない」「走ったが 0 件」の3状態に分ける。
-  - **`pulsen-conformance` の lib ユニットテストの区間を除外する。** このクレートの `#[cfg(test)] mod tests` は `SkipBudget` の仕様自体を検証しており、`tc_port_clock_005_時刻の巻き戻し` / `tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` という**架空のケース名**で `SKIP ` 行を3件出す(うち2件は `#[should_panic]`)。実在の適合ケースと形が区別できないため、混ざるとサマリーの読み手が「走らなかった適合ケース」を誤って数え、HOOKS.md との突き合わせが永久に成立しなくなる。cargo はテストバイナリごとに `Running ...` 行を出すので、`Running unittests src/lib.rs (…pulsen_conformance-…)` から次の `Running ` 行までを落とす。
-  - **区間の判定は ANSI エスケープを落としてから行う。** `CARGO_TERM_COLOR: always`(ステップ1)の下では cargo の `Running` 行が `\033[1m\033[92m     Running\033[0m unittests src/lib.rs (…pulsen_conformance-…)` の形になり、行頭が空白ではなく ESC になる。行頭一致で区間を判定すると除外がまるごと効かず、架空の3件がサマリーへ混ざって期待集合との突き合わせが**初回から必ず**食い違う(色なし1件 / 色あり4件。実測)。一方 `SKIP ` 行と `test result:` 行は libtest の出力で、パイプ越しでは色が付かない(実測)。除去は照合用の変数に対してだけ行い、比較対象の1行を作ってから判定する。
+  - **`pulsen-conformance` の lib ユニットテストの区間を除外する。** このクレートの `#[cfg(test)] mod tests` は `SkipBudget` の仕様自体を検証しており、`tc_port_clock_005_時刻の巻き戻し` / `tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` という**架空のケース名**で `SKIP ` 行を3件出す(うち2件は `#[should_panic]`)。実在の適合ケースと形が区別できないため、混ざるとサマリーの読み手が「走らなかった適合ケース」を誤って数え、HOOKS.md との突き合わせが永久に成立しなくなる。cargo はテストバイナリごとに `Running ...` 行を出すので、`Running unittests src/lib.rs (…pulsen_conformance-…)` から区間を開き、次の `Running ` / `Doc-tests ` 行か `test result:` 行で閉じる。`test result:` でも閉じるのは、最後の `Running ` 以降ずっと区間が開いたままになると、そこから後ろの SKIP がすべて除外側へ回るため。閉じる側に倒すのは、余分に列挙されるほうが黙って消えるより読み手が気づけるから。
+  - **区間の判定は ANSI エスケープを落としてから行う。** `CARGO_TERM_COLOR: always`(ステップ1)の下では cargo の `Running` 行が `\033[1m\033[92m     Running\033[0m unittests src/lib.rs (…pulsen_conformance-…)` の形になり、行頭が空白ではなく ESC になる。ANSI を残したまま区間を判定すると除外がまるごと効かず、架空の3件がサマリーへ混ざって期待集合との突き合わせが**初回から必ず**食い違う(色なし1件 / 色あり4件。実測)。一方 `SKIP ` 行と `test result:` 行は libtest の出力で、パイプ越しでは色が付かない(実測)。除去は照合用の変数に対してだけ行い、比較対象の1行を作ってから判定する。
+  - **行頭に錨を打たない。** `--nocapture` 下の libtest は改行を伴わない進捗行 `test <名前> ... ` を先に書き、その改行待ちの行末に別スレッドのテストの stdout がそのまま載る。`SKIP ` 行も `Running ` 行も `test result:` 行も、進捗行に連結された姿で現れうる。行頭一致だけで書くと、連結した SKIP が抽出にも除外にも入らず(Windows で実測)、連結した `Running ` 行は区間の切り替えを取りこぼす。連結の位置は「`... `」の直後に限らず、判定の綴りに直付いた `okSKIP tc_port_clock_004_…` の形も実測で出ている。位置を列挙しても網羅にならないので、3種類とも**行のどこに現れても拾う**。
+  - **拾いすぎる側に倒す。** この機構は可視化しか役割を持たないので、偽陽性と偽陰性の重さが対称でない。本文に綴りを含むメッセージを誤って拾えばサマリーに1行余分に出るだけだが、取りこぼせば黙って消え、他に検出経路がない。区間の判定も同じ向きで、`Running` / `Doc-tests` / `test result:` のどれを誤検出しても区間が開く(＝列挙される)側にしか倒れない。
   - **重複除去に `sort` を使わない**(adr.md ADR-001)。区間判定に使っている awk へ寄せ、`sort` への依存自体を持たない。
   - **除外した件数もサマリーに出す**(adr.md ADR-005)。除外の単位はケース名ではなくテストバイナリの区間なので、将来そのバイナリが実在ケースのスキップを出せばサマリーから黙って消える。可視化しか役割を持たない機構なので、件数が 3 から動くことが唯一の合図になる。
   - **`-e` の扱いを位置ごとに見る。** 既定シェルの bash は `-eo pipefail` 付きで起動するが、`$(grep -c ...)` を `[` の引数に置く限り `grep` の exit 1 は `[` の結果に飲まれ、ステップの失敗にならない(「設計」参照)。終了コードを切り離す `|| true` は要らない。抽出の awk は該当行が無くても exit 0 で終わり、`END` で「なし」を出す。
@@ -179,15 +181,21 @@ adr.md ADR-008 の吸収先ディレクトリによる判定が掛かるのは *
       echo "テストステップまで到達していない(test.log が無い)。" | summary
       exit 0
     fi
-    if [ "$(grep -c '^test result:' test.log)" = "0" ]; then
+    if [ "$(grep -c 'test result:' test.log)" = "0" ]; then
       echo "テストバイナリが1つも走っていない(test.log にテスト結果行が無い)。SKIP の有無は判断できない。" | summary
       exit 0
     fi
     awk -v esc="$(printf '\033')" '
       { line = $0; gsub(esc "\\[[0-9;]*m", "", line) }
-      line ~ /^ *Running / { drop = (line ~ /pulsen_conformance-/) }
-      drop && line ~ /^SKIP / && !dropped[line]++ { excluded++ }
-      !drop && line ~ /^SKIP / && !seen[line]++ { kept = kept "- " line "\n" }
+      match(line, /SKIP /) {
+        skip = substr(line, RSTART)
+        if (drop) { if (!dropped[skip]++) excluded++ }
+        else if (!seen[skip]++) kept = kept "- " skip "\n"
+      }
+      line ~ /test result:/ { drop = 0 }
+      match(line, /(Running|Doc-tests) /) {
+        drop = (substr(line, RSTART + RLENGTH) ~ /pulsen_conformance-/)
+      }
       END {
         printf "除外: SkipBudget 自己テスト %d 件\n\n", excluded
         if (kept == "") print "なし(テストは走ったが SKIP 行は無かった)"
@@ -196,7 +204,9 @@ adr.md ADR-008 の吸収先ディレクトリによる判定が掛かるのは *
     ' test.log | summary
     ```
 
-    ESC を awk のプログラム中に直接書かず `-v` で渡すのは、正規表現定数の `\033` の解釈が実装依存だから。ESC の渡し方と区間判定は、gawk 5.4.1 と macOS 同梱の awk(20200816、GitHub の macOS ランナーと同じ系統)の両方で、色あり/色なしの `test.log` と上記4状態すべてについて実測した形である。
+    ルールの順序は SKIP → 区間を閉じる(`test result:`)→ 区間を開く(`Running` / `Doc-tests`)にする。連結によって1行が複数の役割を持ちうる以上、その行に出た `SKIP` は連結先ではなく**それが出た時点の区間**で数える必要があり、閉じるほうを開くほうより先に置かないと、同じ行で閉じて開く形が「開いてから閉じる」に化ける。
+
+    ESC を awk のプログラム中に直接書かず `-v` で渡すのは、正規表現定数の `\033` の解釈が実装依存だから。この形は gawk 5.4.1 と macOS 同梱の awk(20200816、GitHub の macOS ランナーと同じ系統)で、色あり/色なしの `test.log` と上記4状態すべてについて実測してある。ubuntu ランナーの `awk` は mawk なので手元では独立に検証できていないが、パターンにグループ内の `^` を持たない単純な形にしてあるぶん実装差の面は小さく、ubuntu ジョブの実行そのものが検証になる。
 
   - ワークフローに why コメントを残す: **宣言集合の外のスキップは `SkipBudget` 自身がそのケースの失敗にする(ADR-055)。CI が件数で二重化すると判定が観測結果に依存して循環するので、ここは記録だけを担う。環境前提の検査はステップ2 の非 root アサートが持ち、root で走るコンテナを使うとその前提が崩れるため `container:` は使わない。**
 - **期待スキップ集合(実行前に確定する):** HOOKS.md の「環境で走らなくなりうる行」から予測すると、**ubuntu / macOS は1件、Windows は11件**。Windows で追加的に落ちるのは、`permission_restrictions_effective()` が `cfg(not(unix))` で常に false になることによる権限系10件だけである。

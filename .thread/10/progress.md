@@ -1,6 +1,6 @@
 # 進捗メモ — Issue #10
 
-`.github/workflows/ci.yml` を新規追加し、3ランナーで実行して**全7ジョブが緑**になった（run 31657976822、コミット `af24360`）。steps.md のステップ1〜11 が完了し、ステップ12 の機械確認と、PR 本文・Issue #10・PR #11 への記録も済んでいる。**ただし全緑は `af24360` に対する観測であり、その後に入った `.github/workflows/ci.yml` と `crates/pulsen/src/` の変更はまだ CI を通していない。**
+`.github/workflows/ci.yml` を新規追加し、3ランナーで実行して**全7ジョブが緑**になった（run 31662960664、コミット `9675b2f` = 現在の HEAD）。steps.md のステップ1〜11 が完了し、ステップ12 の機械確認と、PR 本文・Issue #10・PR #11 への記録も済んでいる。
 
 ## CI の実測結果
 
@@ -14,6 +14,19 @@
 - **Windows で初めて build / test / clippy の結果が得られた。** 初回実行では `-p pulsen --lib` の6件が落ち、2回目で全緑。
 - **fmt は初回から緑。** nixpkgs の rustfmt 1.97.1 と CI の現行 stable で整形結果が食い違わなかったため、steps.md ステップ10 の rustfmt 掛け直しは発火していない。
 - **clippy も初回から緑。** `cfg(not(unix))` 側の未 lint コードから新規指摘が出る想定（plan.md の [高] リスク）だったが、実際には出なかった。
+
+## 実測に使った run
+
+AC-2 / AC-6 / AC-8 の出典は最新の run 31662960664（`9675b2f`）で、以下の記述はすべてそこから採っている。それ以前の run も残すのは、どの変更がどの実測に載ったかを PR の記録から辿れるようにするため。
+
+| run | コミット | 結果 | この run で初めて回った変更 |
+|---|---|---|---|
+| 31656955322 | `09e282c` | Windows の stable が赤 | ワークフローの追加のみ（`-p pulsen --lib` の6件で停止） |
+| 31657976822 | `af24360` | 全7ジョブ緑 | フィクスチャの可搬化（ADR-011）と `write_atomic` の再試行（ADR-010・ADR-012） |
+| 31661056619 | `2c99c1b` | 全7ジョブ緑 | 前提検査への `id` 追加 / 非 root アサートの fail-open 解消 / `--no-fail-fast` / 除外件数の表示 / MSRV の `env` 経由 / 読み取りを `read_atomic` に通す（ADR-013） |
+| 31662960664 | `9675b2f` | 全7ジョブ緑 | SKIP の抽出を、進捗行に連結された行にも当たる形に直した |
+
+スキップの集合（unix 1件 / Windows 11件）とテストバイナリの本数は、緑になった3つの run すべてで同一である。
 
 ## 初回実行で落ちた Windows の6件と、その吸収
 
@@ -39,24 +52,17 @@
 
 走ったテストバイナリは3 OS とも15本で同数（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて18）。詳細は `crates/pulsen-conformance/HOOKS.md` の「3ランナーでの実測」節に記録した。
 
-`pulsen-conformance` の lib ユニットテストは `SkipBudget` 自身を架空のケース名で検証するため、実在の適合ケースと区別できない `SKIP` 行を全 OS で3件出す。ジョブサマリーの集計はこの区間を除外している。
+`pulsen-conformance` の lib ユニットテストは `SkipBudget` 自身を架空のケース名で検証するため、実在の適合ケースと区別できない `SKIP` 行を全 OS で3件出す。ジョブサマリーの集計はこの区間を除外しており、除外件数は3 OS とも「3 件」と表示された。
 
 ## 未検証のまま残ること
 
-**この CI が実測したのは `af24360`（Issue #10 の CI とその吸収まで適用した時点）のコードであり、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない。** Issue #10 のクローズは「クロスプラットフォームが検証済み」を意味しない。この事実は PR 本文と [Issue #10 のコメント](https://github.com/tuanemuy/pulsen/issues/10#issuecomment-5275112376) に残してある。
+**この CI が実測したのは `9675b2f`（本 PR の変更をすべて適用した時点）のコードであり、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない。** Issue #10 のクローズは「クロスプラットフォームが検証済み」を意味しない。この事実は PR 本文と [Issue #10 のコメント](https://github.com/tuanemuy/pulsen/issues/10#issuecomment-5275112376) に残してある。
 
 PR #11 へは次の3件を引き継ぐ。[PR #11 のコメント](https://github.com/tuanemuy/pulsen/pull/11#issuecomment-5275112482) で伝えた:
 
 1. HOOKS.md の実測は #11 のマージ前のもので、#11 がスイートと example を足した時点で部分的に古くなる。更新は #11 の責務。
 2. 本 Issue の修正が入った `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` / `crates/pulsen/src/adapter/task_repository.rs` とのコンフリクト解消は #11 側で行う（マージ順は本 Issue 先行）。
 3. #11 の `ProcessController` が Windows で赤になった場合の対応も #11 側。
-
-## 全緑のあとに入った変更（CI 未実行）
-
-run 31657976822 より後に入っており、3ランナーでの結果はまだ無い。次の push で取る。
-
-- `.github/workflows/ci.yml`: 前提検査に `id` を足した / 非 root アサートを `id` 自体の失敗と非数値出力でも落ちる形にした（adr.md の ADR-001・ADR-005）/ `cargo test` に `--no-fail-fast` を足した / サマリーに除外件数を出すようにした / MSRV の版数を `env` 越しに渡すようにした。
-- `crates/pulsen/src/util/atomic.rs`・`crates/pulsen/src/adapter/task_repository.rs`: 読み取りを `read_atomic` に通した（adr.md ADR-013）。上限を `NonZeroU32` にし、打ち切りの回数と分類分岐を観測するユニットテストを足した。
 
 ## 残っている見立て
 

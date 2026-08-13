@@ -154,11 +154,17 @@ jobs:
         # 行頭が空白ではなく ESC になり、行頭一致がまるごと効かなくなる）。ESC を awk の
         # プログラム中に書かず -v で渡すのは、正規表現定数での \033 の解釈が実装依存だから。
         #
-        # 行頭一致だけでは足りない。--nocapture 下の libtest は改行を伴わない進捗行
+        # 行頭一致では足りない。--nocapture 下の libtest は改行を伴わない進捗行
         # 「test <名前> ... 」を先に書き、その改行待ちの行末に別スレッドのテストの stdout が
-        # そのまま載る。SKIP 行も Running 行も進捗行に連結された姿で現れうるので、
-        # 行頭と「... 」の直後の両方を入口として認める。SKIP は本文が行末まで続くため、
-        # 見つけた位置から末尾までを1件の同一性（重複排除と表示）に使う。
+        # そのまま載る。連結の形は「... 」の直後に限らず、判定の綴りに直付いた「okSKIP …」も
+        # 実測で出ている。連結の位置を列挙しても網羅にならないので、行のどこに現れても
+        # 拾う。SKIP は本文が行末まで続くため、見つけた位置から末尾までを1件の同一性
+        # （重複排除と表示）に使う。
+        #
+        # 拾いすぎる側に倒しているのは、この機構が可視化しか持たないから。本文に綴りを含む
+        # メッセージを誤って拾えばサマリーに1行余分に出るだけだが、取りこぼせば黙って消える。
+        # 区間の判定も同じ向きで、Running / Doc-tests / test result: のどれを誤検出しても
+        # 区間が開く（＝列挙される）側にしか倒れない。
         #
         # 区間は Running だけでなく Doc-tests でも切り替え、test result: で閉じる。区間を
         # 開いたままにすると、最後の Running 以降に出た SKIP がすべて除外側へ回る。閉じる側に
@@ -183,19 +189,19 @@ jobs:
             echo "テストステップまで到達していない(test.log が無い)。" | summary
             exit 0
           fi
-          if [ "$(grep -c '^test result:' test.log)" = "0" ]; then
+          if [ "$(grep -c 'test result:' test.log)" = "0" ]; then
             echo "テストバイナリが1つも走っていない(test.log にテスト結果行が無い)。SKIP の有無は判断できない。" | summary
             exit 0
           fi
           awk -v esc="$(printf '\033')" '
             { line = $0; gsub(esc "\\[[0-9;]*m", "", line) }
-            match(line, /(^|\.\.\. )SKIP /) {
-              skip = substr(line, RSTART + RLENGTH - 5)
+            match(line, /SKIP /) {
+              skip = substr(line, RSTART)
               if (drop) { if (!dropped[skip]++) excluded++ }
               else if (!seen[skip]++) kept = kept "- " skip "\n"
             }
-            line ~ /(^|\.\.\. )test result:/ { drop = 0 }
-            match(line, /(^|\.\.\. ) *(Running|Doc-tests) /) {
+            line ~ /test result:/ { drop = 0 }
+            match(line, /(Running|Doc-tests) /) {
               drop = (substr(line, RSTART + RLENGTH) ~ /pulsen_conformance-/)
             }
             END {
