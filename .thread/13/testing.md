@@ -134,7 +134,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   1. 全テストバイナリが緑（`test result: ok`）。
   2. ロック系5件の `SKIP` 行が**0件**。手元が unix であれば `SKIP` 行は `tc_port_clock_005`（実時計を巻き戻せない恒久スキップ）と、`pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身の検証で出す架空の3行（`tc_port_clock_004_…` / `tc_port_clock_0051_…` / `tc_port_clock_005_…`）だけ。架空の3行は走らなかった適合ケースではないので数えない。
   3. `lock_holder`（Windows では `lock_holder.exe`）が存在する。
-- **確認ポイント:** probe が実行時間を目に見えて伸ばしていないこと（コストは1プロセスぶんで、Windows の初回起動スキャンの代金を probe が先に払うぶん本番5件は温まった状態で走る）。ロック系5件が `SKIP` に出た場合、この時点で以降の経路確認に進まない — 基準線が崩れている。
+- **確認ポイント:** probe が実行時間を目に見えて伸ばしていないこと（コストは1プロセスぶん。Windows の初回起動スキャンを probe が先に払う副次効果は見込めるが、本番5件がどれだけ温まった状態で走るかは測っていない）。ロック系5件が `SKIP` に出た場合、この時点で以降の経路確認に進まない — 基準線が崩れている。
 
 ### 6. `SignalTimedOut` 経路 — 5件が `SKIP` として現れ、かつ緑になる
 
@@ -273,11 +273,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   4. `grep -n "SIGNAL_DEADLINE\|holder_capability\|holder_program\|HolderCapability" crates/pulsen-conformance/HOOKS.md`
   5. `grep -n "example がビルドされ" crates/pulsen-conformance/HOOKS.md` で「3ランナーでの実測」の該当箇所を読む
 - **期待結果:**
-  1. 「前提を作れない環境」列が「保持プロセスの合図が期限内に返らない（初回起動のスキャン・高負荷）」の趣旨になっている。「判定」列が「ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか（この適用先では、保持プロセスを1回起動して合図が期限内に返るかで決まる）」の形で、フック水準の書き方を保ったまま適用先での実態を括弧で補っている。3 OS の列は `実行` のまま。
+  1. 「前提を作れない環境」列が「保持プロセスの合図が期限内に返らない」の趣旨になっており、測っていない原因（初回起動のスキャン・高負荷など）の推定が添えられていない。「判定」列が「ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか（この適用先では、保持プロセスを1回起動して合図が期限内に返るかで決まる）」の形で、フック水準の書き方を保ったまま適用先での実態を括弧で補っている。3 OS の列は `実行` のまま。
   2. 前書きが「実行ファイルを要するため」ではなく「保持プロセスの合図が期限内に返らない環境では走らなくなりうる」の趣旨に改まり、実行ファイルが無い場合はスキップではなくケースの失敗になる旨が続いている。
   3. 実行ファイルの不在・起動の失敗が「前提を作れない環境」ではなく**ケースの失敗**であることが、表の直後か該当行の近くに1文で明記されている。旧い述語（不在 → 前提を作れない環境 → スキップ）を述べる文が文書内に1つも残っていない。
   4. **ヒット0件。** 適用側の定数名・関数名・型名が正本の表に入っていない（`crates/pulsen/tests/` の名前を変えるだけで表が古くなる形にしない。「判定」列だけでなく「前提を作れない環境」列にも同じ縛りが掛かる）。
-  5. 区分 B の5件が3 OS で走った理由に「`--workspace` で example がビルドされ」に加えて「合図が期限内に返った」ことも含まれている。実測の値そのもの（run 番号・件数・OS 別の内訳）は書き換わっていない。
+  5. 区分 B の5件が3 OS で走った理由が「`--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能した」のままで、この実測（`e524981` 時点の測定で、example を含まない）に「合図が期限内に返った」という解釈が足されていない。実測の値そのもの（run 番号・件数・OS 別の内訳）も書き換わっていない。
 - **確認ポイント:** 手順4 が0件であることが、この文書を「別実装（in-memory 等）にも適用できるスイートの正本」として保つ条件。`permission_restrictions_effective` が判定列に書かれているのはスイート側（`crates/pulsen-conformance/src/`）にある関数だからで、事情が違う。同節の「測定したのは `e524981`…」と「その更新は #11 の責務とする」の古さは本Issueでは直さない（スコープ外）。
 
 ### 13. CI の why コメントが事実に合わせて改まっている
@@ -335,7 +335,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   - 手順3: 7ジョブすべて `success`。
   - 手順4・5: unix は `tc_port_clock_005` の1件、Windows は11件。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）が**3 OS のいずれにも現れない**。
   - 手順6: MSRV（`1.89`）で新しい enum を含むテストターゲットがコンパイル・リンクできる（`--all-targets` がテストと example も見る）。
-- **実測（run 31681471522）:**
+- **実測（run 31683976608 / コミット `b344401`）:**
   - 手順3: 7ジョブ（fmt 1 + test 3 OS + msrv 3 OS）がすべて `success`。
   - 手順4: ジョブサマリーの `SKIP` 行は、ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件（`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`）を加えた**11件**。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）は3 OS とも現れない。架空の3行は手順1 の宣言どおり数えていない。
   - 手順5: 手順1 の予測（unix 1件 / Windows 11件 / ロック系5件は3 OS とも0件）と**一致**。述語が変わった唯一の行が3 OS とも `Available` に倒れており、宣言と実態が割れていない。一致したので HOOKS.md の3 OS 列は変更なし。
@@ -360,8 +360,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   4. 確認項目5〜9 の各実行後に、`lock_holder` のプロセスが残っていないことを確認する。
 - **期待結果:**
   - 手順1: `kill()` と `wait()` の結果をいずれも捨てる小さなヘルパーが1つある（既に終了している子への `kill()` はエラーになりうるが、目的は「残さないこと」だけで、どちらの結果もこの先の判断に使わない）。
-  - 手順2: 呼び出し元が3経路4箇所 — `start_holder`（`stdout` の取得に失敗した経路・合図が期限内に返らなかった経路）、`probe_holder`（判定後の後始末）、`spawn_holder` の `SignalUnreadable` 腕と `hold` の `!locked` 腕（パニック直前の後始末）。片方の経路だけ `release` のまま残っていない。
-  - 手順2: `release`（stdin を閉じて正常終了を待つ）を使うのは**正常に保持できたプロセスを畳むときだけ**。`probe_holder` からは呼ばれていない。
+  - 手順2: 呼び出し元が4経路5箇所 — `start_holder`（`stdout` の取得に失敗した経路・合図が期限内に返らなかった経路の2箇所）、`probe_holder`（判定後の後始末）、`spawn_holder` の `SignalUnreadable` 腕、`hold` の `!locked` 腕（後ろ2つはパニック直前の後始末）。どの経路も `release` のまま残っていない。
+  - 手順2: `lock.rs` の中に `release`（stdin を閉じて正常終了を待つ）の呼び出しは無く、ヒットするのは定義行だけ。「`release` を使うのは正常に保持できたプロセスを畳むときだけ」という基準が掛かるのは probe と `lock.rs` の失敗経路の2つで、適合ハーネスの `try_acquire_from_other_process` が `locked` の値によらず `release` を呼ぶ経路は `.adr/073` が射程外と明示している。
   - 手順3: `Signaled` と `SignalUnreadable` の両方で `kill_and_wait` してから `HolderCapability::Available` を返している。
 - **確認ポイント:** `release` の `wait()` には期限が無く、しかも probe は `OnceLock::get_or_init` の中なので、子プロセスが終了しない環境では `holder_capability()` を呼ぶ全スレッドがそこで止まる。probe が測っているのは「合図が期限内に返るか」だけで、正常終了できるかは測っていない — 測っていない性質に後始末を依存させないのがこの分けの理由。
 
@@ -410,6 +410,6 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 - **`TC-port-exclusive-lock-006 / 007` への影響:** `separate_home` / `unusable_lock` は保持プロセスを使わないフックなので、能力の判定に影響されない。確認項目6（`SignalTimedOut` に倒した状態）でもこの2件が `SKIP` にならず走ることを見る — 5件だけがスキップになる形が保たれていることの裏付けになる。
 
-- **`release()` の残存利用:** `conformance_lock.rs` の `release_holder` は正常に保持できたプロセスを畳む経路なので `release` のままでよい。`grep -rn "release" crates/pulsen/tests/` で、`release` の呼び出しが正常系だけに残っていること（失敗経路はすべて `kill_and_wait`）を確認する。
+- **`release()` の残存利用:** `conformance_lock.rs` の `release_holder` と `cli_add_error.rs` の正常系は、正常に保持できたプロセスを畳む経路なので `release` のままでよい。`try_acquire_from_other_process` は `locked` の値によらず `release` を呼ぶが、`.adr/073` が射程外と明示した経路である（取得に失敗した保持プロセスは即座に終了するので待ちは返る）。`grep -rn "release" crates/pulsen/tests/` で、`lock.rs` に `release` の呼び出しが無く、その失敗経路がすべて `kill_and_wait` になっていることを確認する。
 
 - **後片付け:** 全項目の実行後に `git diff` が空で（`git status` に意図した変更ファイルだけが並び）、`cargo test --workspace --locked --no-fail-fast -- --nocapture` / `cargo fmt --all --check` / `cargo clippy --workspace --all-targets --locked -- -D warnings` の3つが緑に戻っていること。`target/debug/examples/lock_holder` が存在して実行ビットが戻っており、そのプロセスが残っていないこと。

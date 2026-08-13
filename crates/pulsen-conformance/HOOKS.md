@@ -44,7 +44,7 @@
 
 この表は**スキップを許容する条件**の一覧である。保持プロセスの実行ファイルが無い場合と、実行ファイルはあるが起動できない場合は、ここでいう「前提を作れない環境」には当たらない。前者は原因も回避方法も一意で、後者は理由が起動時のエラーにしか無く、いずれもスキップの宣言だけからは次の一手が定まらない。どちらもスキップにせずケースの失敗にする（`.adr/068-*.md` / `.adr/073-*.md`）。
 
-ログの `SKIP` 行はスイートが書くため、文言もフック水準（`ハーネスが … を提供しない`）になる。適用先で実際に成立しなかった条件は、この表の「判定」列の括弧で読む。
+ログの `SKIP` 行はスイートが書くため、文言もフック水準（`ハーネスが … を提供しない`）になる。適用先で実際に成立しなかった条件を「判定」列の括弧に持つ行は、その括弧で読む（この表では TC-port-exclusive-lock-002 / 003 / 004 / 005 の1行）。
 
 ## 3ランナーでの実測
 
@@ -55,7 +55,7 @@
 - **unix（ubuntu / macOS）で成立しなかったのは TC-port-clock-005 の1件だけ。** これは環境ではなくアダプターの性質による恒久スキップで（`SystemClockHarness` は実時計を巻き戻せないため `rewind` を提供しない）、どの OS でも走らない。
 - **Windows で成立しなかったのは、上の1件に権限系を加えた計11件。** 適合行は表の `permission_restrictions_effective` を判定に持つ8行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041）で、残る2件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021）。
 - **区分 C のうち TC-port-clock-003 / TC-port-exclusive-lock-007 / TC-port-worktree-manager-009 は3 OS すべてで走った。** いずれも判定がハーネス側のフック提供の有無で、実アダプターのハーネスが `observe_wall_clock` / `unusable_lock` / `failing_manager` を提供している。
-- **区分 B の TC-port-worktree-manager-003 と TC-port-exclusive-lock-002 / 003 / 004 / 005 も3 OS すべてで走った。** 前者は一時ディレクトリの置き場が git リポジトリ配下にならず前提が成立したこと、後者は `--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能したことを意味する。
+- **区分 B の TC-port-worktree-manager-003 と TC-port-exclusive-lock-002 / 003 / 004 / 005 も3 OS すべてで走った。** 前者は一時ディレクトリの置き場が git リポジトリ配下にならず前提が成立したこと、後者は `--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能したことを意味する。後者と同じ前提（保持プロセスの合図が期限内に返るか）を共有する CLI 側の受け入れケース TC-task-register-task-017 も、3 OS すべてで走った。この1件は表に行を持たず、`SKIP` 行は `ハーネスが lock::hold を提供しないため…` と出るので、成立しなかった条件は TC-port-exclusive-lock-002 / 003 / 004 / 005 の行の括弧で読む。
 - **適合スイートの外に、Windows では存在しないテストが3件ある。** `crates/pulsen/src/adapter/task_repository.rs` の `#[cfg(all(test, unix))] mod tests`（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことを確認する3件）は Windows でコンパイルされず、**`SKIP` としても現れない**。`pulsen` の lib ユニットテストが Windows 69件・unix 72件になる差はこれである。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この3件はその外側にある Windows のカバレッジ差として記録しておく。
 
 ログには実在の適合ケースと形の区別が付かない `SKIP tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` / `tc_port_clock_005_時刻の巻き戻し` の3行が全 OS で出る。これは `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身を検証するために `record` を直接呼ぶもので、架空のケース名を持つ。上の集計にも CI のジョブサマリーにも含めない — 走らなかった適合ケースとして数えられると、実測が示す内容が変わってしまうため。

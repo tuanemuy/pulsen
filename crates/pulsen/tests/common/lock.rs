@@ -27,11 +27,13 @@ const PROGRAM_MISSING: &str = "ロック保持フィクスチャ(examples/lock_h
 pub enum HolderCapability {
     /// 保持プロセスを起動でき、合図が期限内に返る。
     Available(HolderProgram),
-    /// 起動はできるが、合図が期限内に返らない(環境の遅さ)。
+    /// 起動はできるが、合図が期限内に返らない。この観測は原因を決めず、環境の遅さと
+    /// 保持プロセス側の退行を区別しない(ADR-073)。
     SignalTimedOut,
     /// 実行ファイルが無い(example がビルドされていない)。
     ProgramMissing,
-    /// 実行ファイルはあるが起動できない。値は起動が失敗した理由。
+    /// 実行ファイルはあるが起動できない(起動しても合図の経路を用意できない場合を含む)。
+    /// 値は起動が失敗した理由。
     ProgramUnusable(io::Error),
 }
 
@@ -52,11 +54,12 @@ enum Started {
     /// 期限内に子が応答した(合図を書いたか、書かずに終了したか)。`locked` は合図が
     /// `LOCKED` だったか。
     Signaled { holder: Child, locked: bool },
-    /// 期限内に応答はあったが、合図を読み取れなかった。
+    /// 合図を読み取れなかった(子が読めない出力を返した場合と、読み取りが結果を返さずに
+    /// 終わった場合)。
     SignalUnreadable { holder: Child, error: io::Error },
     /// 合図も終了も期限内に返らなかった(保持プロセスは終了させてある)。
     SignalTimedOut,
-    /// 起動できなかった。
+    /// 起動できなかった(起動したが `stdout` を取得できなかった場合を含む)。
     SpawnFailed(io::Error),
 }
 
@@ -92,7 +95,9 @@ fn probe_holder() -> HolderCapability {
     let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
     match start_holder(&program, &dir.path().join("lock")) {
         // probe が測るのは合図が期限内に返るかだけで、読み取れたかどうかは能力の判定に
-        // 入れない(読み取りの異常はケース側で失敗として扱う)。
+        // 入れない(読み取りの異常はケース側で失敗として扱う)。読み取りが結果を返さずに
+        // 終わった場合も同じ腕に入り、合図を観測しないまま Available に数える。倒れる向きは
+        // 失敗側で、後続のケースは spawn_holder でパニックするため、静かな緑にはならない。
         Started::Signaled { holder, locked: _ }
         | Started::SignalUnreadable { holder, error: _ } => {
             kill_and_wait(holder);
@@ -138,7 +143,7 @@ fn start_holder(program: &Path, lock_path: &Path) -> Started {
             kill_and_wait(holder);
             Started::SignalTimedOut
         }
-        // 期限を1ミリ秒も測っていないので、環境の能力(＝スキップを許容する側)には倒さない。
+        // 期限の超過を観測していないので、環境の能力(＝スキップを許容する側)には倒さない。
         Err(mpsc::RecvTimeoutError::Disconnected) => Started::SignalUnreadable {
             holder,
             error: io::Error::other("合図の読み取りが結果を返さずに終了した"),

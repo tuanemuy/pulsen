@@ -43,6 +43,9 @@ fn allowed_skips() -> Vec<&'static str> {
     if !pulsen_conformance::permission_restrictions_effective() {
         allowed.extend(PERMISSION_CASES);
     }
+    // 許容するのは、スキップの宣言だけで「なぜ走らなかったか」と「次に何をすればよいか」が
+    // 定まる能力に限る(ADR-073)。実行ファイルが無い場合と起動できない場合は定まらないので、
+    // 緑にせずケースの失敗にする。
     match lock::holder_capability() {
         lock::HolderCapability::SignalTimedOut => allowed.extend(LOCK_HOLDER_CASES),
         lock::HolderCapability::Available(_)

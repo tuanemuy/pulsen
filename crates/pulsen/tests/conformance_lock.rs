@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
-use common::lock::{HolderCapability, release, spawn_holder};
+use common::lock::{HolderCapability, hold, holder_capability, release, spawn_holder};
 use pulsen::adapter::lock::FileExclusiveLock;
 use pulsen_conformance::ExclusiveLockHarness;
 use tempfile::TempDir;
@@ -60,10 +60,13 @@ impl ExclusiveLockHarness for FileExclusiveLockHarness {
     }
 
     fn hold_from_other_process(&self) -> Option<Self::Holder> {
-        common::lock::hold(&self.lock_path())
+        hold(&self.lock_path())
     }
 
     fn kill_holder(&self, mut holder: Self::Holder) -> Option<()> {
+        // ここの `None` は `kill` / `wait` の失敗であって、フックの契約が言う「別プロセスを
+        // 扱えない実装」ではない。保持プロセスを起動できた環境では許容集合が空なので、
+        // 静かなスキップにはならずケースの失敗として現れる。
         holder.kill().ok()?;
         // 待たないと解放が観測できる保証がない(終了処理の完了を待つ)。
         holder.wait().ok()?;
@@ -105,7 +108,7 @@ const LOCK_HOLDER_CASES: [&str; 4] = [
 /// (HOOKS.md / ADR-068 / ADR-073)。同じ判定を CLI 側の受け入れテスト
 /// (TC-task-register-task-017)も使うため、両者で扱いが揃う(ADR-055)。
 fn allowed_skips() -> Vec<&'static str> {
-    match common::lock::holder_capability() {
+    match holder_capability() {
         HolderCapability::SignalTimedOut => LOCK_HOLDER_CASES.to_vec(),
         HolderCapability::Available(_)
         | HolderCapability::ProgramMissing
