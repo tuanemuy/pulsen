@@ -75,7 +75,8 @@ impl GitCliWorktreeManager {
             .map_err(|message| TargetError::Failed { message })
     }
 
-    /// worktree 操作の `git -C <repo> <args...>`。非0終了も失敗として畳む。
+    /// worktree 操作の `git -C <repo> <args...>`。起動自体の失敗を `WorktreeError` に写す。
+    /// 非0終了は呼び出し側が判断する。
     fn run_worktree<Args, Arg>(&self, repo: &RepoPath, args: Args) -> Result<Output, WorktreeError>
     where
         Args: IntoIterator<Item = Arg>,

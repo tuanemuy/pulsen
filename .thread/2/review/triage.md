@@ -76,3 +76,7 @@ R4: 新規 2 / fix 1 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方�
 | `steps.md:ラッパーの合成/ADR-068との食い違い` | R5 | fix-editorial | `wire::process_controller()` で組むと書いたまま。実装は `without_self_exe` を使う | 0 |
 
 R5: 新規 4 / fix 2 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 全件 fix 系で独立。TC-027 の扱いはメインが「宣言を弱めずテストを足す」と裁定）
+| `execution/launching.rs:classify/猶予超過×pidありの象限` | R6 | fix | pid があれば猶予超過でも `ConfirmRunning` になる性質がテストで固定されておらず、判定順序を入れ替えても全緑のまま通る | 0 |
+| `adapter/worktree.rs:run_worktree/docの食い違い` | R6 | fix-editorial | 「非0終了も失敗として畳む」が実装と違う（畳むのは起動失敗だけ。非0は `require_success` が見る） | 0 |
+
+R6: 新規 2 / fix 1 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 新規2件・独立・すべて fix 系）

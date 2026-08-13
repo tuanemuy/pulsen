@@ -128,23 +128,26 @@ mod tests {
     }
 
     #[test]
-    fn pidとstarttimeが揃っていれば同定情報つきで起動確認になる() {
-        let decision = LaunchingClassifier::classify(
-            &recorded_at(),
-            &after(1),
-            Some(pid_file()),
-            Some(starttime()),
-        )
-        .expect("矛盾しない観測");
+    fn pidとstarttimeが揃っていれば猶予の内外によらず同定情報つきで起動確認になる() {
+        for elapsed in [1, 31] {
+            let decision = LaunchingClassifier::classify(
+                &recorded_at(),
+                &after(elapsed),
+                Some(pid_file()),
+                Some(starttime()),
+            )
+            .expect("矛盾しない観測");
 
-        assert_eq!(
-            decision,
-            LaunchingDecision::ConfirmRunning(ProcessIdent::new(
-                Pid::new(4242),
-                KillIdent::parse("-4242".to_owned()).expect("受理される"),
-                starttime(),
-            ))
-        );
+            assert_eq!(
+                decision,
+                LaunchingDecision::ConfirmRunning(ProcessIdent::new(
+                    Pid::new(4242),
+                    KillIdent::parse("-4242".to_owned()).expect("受理される"),
+                    starttime(),
+                )),
+                "{elapsed}秒"
+            );
+        }
     }
 
     #[test]
