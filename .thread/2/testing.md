@@ -253,7 +253,7 @@ EOF
   4. `ls "$SETUP_HOME/worktrees/" "$SETUP_HOME/state/runs/" 2>/dev/null; echo $?`
   5. `pulsen tick --home "$SETUP_HOME"; echo $?`（2回目。冪等性）
 - **期待結果:** 手順2・5 とも exit code 0 で、「処理対象がない」旨が表示される。手順3 で `state/tasks/` が空（またはロック取得の副産物として `state/` と `state/lock` だけがある）。手順4 で `worktrees/` も `state/runs/` も作られていない。
-- **確認ポイント:** サマリーに `launched` / `frozen` / `errors` などの空フィールドが並ばず、「対象なし」だけが読めること（ADR-073: 値の入っていないフィールドは表示しない）。2回目の実行で表示が変わらないこと。
+- **確認ポイント:** サマリーに `launched` / `frozen` / `errors` などの空フィールドが並ばず、「対象なし」だけが読めること（ADR-101: 値の入っていないフィールドは表示しない）。2回目の実行で表示が変わらないこと。
 
 ### 2. 起動フェーズ — worktree・ブランチ・launching 記録・runディレクトリ
 
@@ -492,7 +492,7 @@ EOF
   4. `md5 -q "$PULSEN_HOME/state/tasks/"*.json > /tmp/pulsen-test/after.md5 2>/dev/null || md5sum "$PULSEN_HOME/state/tasks/"*.json > /tmp/pulsen-test/after.md5; diff /tmp/pulsen-test/before.md5 /tmp/pulsen-test/after.md5; echo $?`
   5. `ls -l "$PULSEN_HOME/state/tasks/"`（`updated_at` の変化を伴う mtime 更新が無いこと）
 - **期待結果:** 手順2・3 とも exit code 0。手順4 の `diff` が差分なし（exit 0）で、`running` のタスクにも `launching`（猶予内）のタスクにも書き込みが発生しない。
-- **確認ポイント:** `running` のタスクに対して tick が「未実装」等の報告を出さないこと（ADR-073: 未配線のアームは報告もしない）。サマリーの `errors` が空であること。
+- **確認ポイント:** `running` のタスクに対して tick が「未実装」等の報告を出さないこと（ADR-101: 未配線のアームは報告もしない）。サマリーの `errors` が空であること。
 
 ## エッジケース・異常系
 
@@ -518,7 +518,7 @@ EOF
   - 手順3: exit code 0。サマリーに T12 の失敗が報告される。
   - 手順4: `execution` が `{"state":"failed"}`、`counters.attempt_count` が 1（= 上限 1。**等号では凍結しない**）、`last_failure.kind` が `worktree_create` でメッセージが記録されている。`workspace` は `null` のまま。`state/runs/<T12>/` と `worktrees/<T12>` は作られていない。
   - 手順6: `attempt_count` が 2 > 1 のため `execution` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":null}` になり、tick サマリーの `frozen` に1件記録される。
-  - 手順7: 以降の tick は T12 に何もしない（`updated_at` が変わらない。ADR-073 で `Stopped` のアームは未配線）。
+  - 手順7: 以降の tick は T12 に何もしない（`updated_at` が変わらない。ADR-101 で `Stopped` のアームは未配線）。
   - 手順8: T12 の通知行は無い（notify は Issue #3。ADR-074）。
 - **確認ポイント:** `notified_at` が `null` のまま永続化されていること（Issue #3 がマージされた後の最初の tick が catch-up するための at-least-once の前提。ADR-074）。失敗しても runディレクトリが作られないこと（採番は worktree 確保の**後**）。
 
@@ -560,7 +560,7 @@ EOF
 ### 3. パース不能なタスクファイルの混在と他タスクの続行
 
 - **対応する受け入れ基準:** AC-12
-- **前提:** フィクスチャA（config 復元済み）。`task-execution.md` TC-20 手順1〜4。plan.md の読み替えにより、手順1 に `pipeline` のタスク（T20p）を1件追加する — `draft.yaml` の T20h は Pending × Cleanup で、`Cleanup` のアームは本スライスで配線しないため（ADR-073）「他タスクへの影響なし」を裏付ける対象にならない。
+- **前提:** フィクスチャA（config 復元済み）。`task-execution.md` TC-20 手順1〜4。plan.md の読み替えにより、手順1 に `pipeline` のタスク（T20p）を1件追加する — `draft.yaml` の T20h は Pending × Cleanup で、`Cleanup` のアームは本スライスで配線しないため（ADR-101）「他タスクへの影響なし」を裏付ける対象にならない。
 - **目的:** 読めないタスクファイルが**報告のみ**でスキップされ、書き込み・stopped 化が起きないこと、同一 tick の他タスクが通常どおり起動されることを確認する。
 - **手順:**
   1. `pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo; echo $?` → `export T20=<task-id>`
@@ -576,7 +576,7 @@ EOF
 - **期待結果:**
   - 手順5: exit code **0**。サマリーの「スキップ(1件):」に `<パス>: タスクファイルを読めません(<原因>)` として **T20 のファイルパス**が報告される。
   - 手順6: 内容は `broken` のまま（破損ファイルへの書き込みは行われない）。
-  - 手順7: T20H は `pending` のまま何も起きない（`Cleanup` のアームが未配線。ADR-073。TC-20 の「アーカイブされる」は Issue #6 に読み替え）。
+  - 手順7: T20H は `pending` のまま何も起きない（`Cleanup` のアームが未配線。ADR-101。TC-20 の「アーカイブされる」は Issue #6 に読み替え）。
   - 手順8: T20P は破損ファイルと**同一 tick で起動され**、`launching`・`worktrees/<T20P>`・`state/runs/<T20P>/attempt-1/` が作られる。
   - 手順9: T20 に関する通知は無い。
 - **確認ポイント:** スキップの行から「どのファイルが読めなかったか」がパスで特定できること（修復の入口。`ls` が無い本スライスではこれが唯一の報告経路）。破損ファイルの mtime が変わっていないこと。

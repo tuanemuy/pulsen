@@ -85,7 +85,7 @@ exit=1  （1件もヒットなし）
   exit=0
   ```
 
-- **期待との差:** なし。tick が作ったのは `state/` と `state/lock` だけで `state/tasks/` は空、`worktrees/` と `state/runs/` は未作成。表示は「処理対象のタスクはありませんでした。」の1行のみで `launched` / `frozen` / `errors` の空フィールドは並ばない（ADR-073）。2回目も同一表示・exit 0。
+- **期待との差:** なし。tick が作ったのは `state/` と `state/lock` だけで `state/tasks/` は空、`worktrees/` と `state/runs/` は未作成。表示は「処理対象のタスクはありませんでした。」の1行のみで `launched` / `frozen` / `errors` の空フィールドは並ばない（ADR-101）。2回目も同一表示・exit 0。
 
 ### 2. 起動フェーズ — worktree・ブランチ・launching 記録・runディレクトリ
 
@@ -515,7 +515,7 @@ exit=1  （1件もヒットなし）
   === after ===  mtime 3件とも before と完全一致
   ```
 
-- **期待との差:** なし。`running` の3タスクに対して tick は何も書かず、「未実装」等の報告も出さない（ADR-073: 未配線のアームは報告もしない）。`errors` は空。
+- **期待との差:** なし。`running` の3タスクに対して tick は何も書かず、「未実装」等の報告も出さない（ADR-101: 未配線のアームは報告もしない）。`errors` は空。
 
 ## エッジケース・異常系
 

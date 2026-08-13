@@ -158,7 +158,7 @@ pub enum TickIssue {
 ///
 /// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` を足した形
 /// (ADR-094)。本スライスで値が入るのは、配線した手続きが埋める `launched` /
-/// `confirmed_running` / `frozen` / `errors` だけになる(ADR-073)。
+/// `confirmed_running` / `frozen` / `errors` だけになる(ADR-101)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。

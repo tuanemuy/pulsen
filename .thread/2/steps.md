@@ -149,7 +149,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 ```
 
 - `Ok(None)` のロック競合は `TickOutcome::Skipped`(CLI が 0 で終える)。`Err(LockError::Failed)` と `list_active` の Io は `TickError`(非0・状態は変更しない)。
-- 分岐は網羅 `match`。本スライスで配線するのは `Corrupt` / `SnapshotUnreadable` / Pending・Failed × (Wait | AgentRun) / `Launching` の4系統で、残りのアームには引き取り先のスライスを why コメントとして残す(adr.md ADR-073)。
+- 分岐は網羅 `match`。本スライスで配線するのは `Corrupt` / `SnapshotUnreadable` / Pending・Failed × (Wait | AgentRun) / `Launching` の4系統で、残りのアームには引き取り先のスライスを why コメントとして残す(adr.md ADR-101)。
 - サマリー DTO は spec の9フィールドに `confirmed_running` を加えた10フィールドを持ち(adr.md ADR-094)、本スライスで値が入るのは `launched` / `confirmed_running` / `frozen` / `errors`。`errors` は構造化した `TickIssue`(adr.md ADR-081)。
 - 上限超過で `Stopped` を書いた直後の処理を private な `freeze` 相当に集約し、`frozen` に記録する。notify の呼び出しは #3 がここに足す(adr.md ADR-074)。
 
@@ -217,7 +217,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 
 **既に実装のあるトレイトにメソッドを足すステップは、その時点の全実装(アダプターとテストダブル)を同じステップで追う。** 宣言だけを先行させるとワークスペースがビルドできない状態が後続ステップまで続き、「各ステップはテストが通る状態で終える」が成立しない。`WorktreeManager::create` が該当し(`GitCliWorktreeManager` と `ScriptedWorktreeManager` に既存の impl がある)、宣言・git 実装・ダブルの更新・適合7件をステップ7 にまとめる。`RunStore` / `ProcessController` は新規トレイトなので、宣言(ステップ5)と実装(ステップ6 / 8)が分かれても他をビルド不能にしない。
 
-計画時点で `.thread/2/adr.md` に起票した14件のうち、プロジェクト全体に効くもの(ADR-073〜086 の多く)は片付けフェーズで `.adr/` への昇格を判定する。
+計画時点で `.thread/2/adr.md` に起票した14件のうち、プロジェクト全体に効くもの(ADR-074〜086 と ADR-101 の多く)は片付けフェーズで `.adr/` への昇格を判定する。
 
 ### 1. execution ドメイン: 値オブジェクトと runディレクトリのファイル配置語彙
 
@@ -306,7 +306,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 ### 13. Tick: 走査と分岐の骨格・サマリー
 
 - **対象ファイル:** `crates/pulsen/src/application/{mod.rs,tick/mod.rs}`、`crates/pulsen/tests/tick_scan.rs`
-- **変更内容:** `Tick` の構造体・`TickOutcome` / `TickSummary` / `TickIssue` / `TickError` を定義し、処理フロー 1〜2・9 と分岐の網羅 `match` を実装する(adr.md ADR-073 / ADR-081)。本スライスで配線しないアームには引き取り先のスライスを why コメントとして残す。上限超過後の `frozen` 記録を private な集約点に置く(adr.md ADR-074)。ダブルに対するユースケーステストで、ロック競合の `Skipped`・`LockError::Failed` の `TickError`・`list_active` の Io で状態を変更せず `TickError`・`Corrupt` の報告のみ(書き込まない)・`SnapshotUnreadable` のスキップと報告・Wait ステータスの pending / failed で何も起きない・タスク0件・複数タスクの集約・1タスクの失敗で残りが続行することを検証する。
+- **変更内容:** `Tick` の構造体・`TickOutcome` / `TickSummary` / `TickIssue` / `TickError` を定義し、処理フロー 1〜2・9 と分岐の網羅 `match` を実装する(adr.md ADR-101 / ADR-081)。本スライスで配線しないアームには引き取り先のスライスを why コメントとして残す。上限超過後の `frozen` 記録を private な集約点に置く(adr.md ADR-074)。ダブルに対するユースケーステストで、ロック競合の `Skipped`・`LockError::Failed` の `TickError`・`list_active` の Io で状態を変更せず `TickError`・`Corrupt` の報告のみ(書き込まない)・`SnapshotUnreadable` のスキップと報告・Wait ステータスの pending / failed で何も起きない・タスク0件・複数タスクの集約・1タスクの失敗で残りが続行することを検証する。
 - **理由:** 走査と分岐は tick の骨格であり、後続スライスがアームを埋める土台になる。ここで exit code 規約(競合だけが 0)を確定させる。
 - **消化するチェックリスト:** UC-execution-002(骨格と配線した4アーム)、PAGE-tick-002, 006、TC-exec-tick-002, 006, 012, 013, 015〜019, 027
 
