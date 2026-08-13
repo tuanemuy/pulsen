@@ -1,6 +1,6 @@
 # ADR — Issue #2: tick によるエージェント実行の起動
 
-採番は `.adr/` の続き番号(既存の最大番号は 064 なので 065 から)。`.adr/` への昇格判定は片付けフェーズで行い、昇格しても番号は変わらない。
+採番は `.adr/` の続き番号(既存の最大番号は 064 なので 065 から)。`.adr/` への昇格判定は片付けフェーズで行い、昇格しても番号は変わらない。Status の直下に `.adr/` のファイル名を持つエントリが昇格済み。ADR-065 / 066 / 075 / 076 / 079 / 080 は本スライス限りの作業判断か他のエントリに吸収される派生であり、昇格しない — `.adr/` 側ではこの6番が欠番になる。
 
 ## ADR-065: tick の分岐は全実行状態を網羅する `match` で書き、本スライス外の手続きは配線しない
 
@@ -77,6 +77,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ `.adr/067-process-controller-without-unsafe.md` に昇格
 
 ### Context
 
@@ -180,6 +182,8 @@ Windows だけ PATH の安定性への依存が残る。この非対称は既知
 
 Proposed
 
+→ `.adr/068-process-controller-injects-self-exe-and-identity-source.md` に昇格
+
 ### Context
 
 requirements §4.1 はラッパーを「ツール自身のバイナリをラッパーモードで再実行する方式」と定める。アダプターが `std::env::current_exe()` を直接読むと、適合テスト(テストハーネスのバイナリが実行主体)が**テストバイナリ自身**をラッパーとして再実行してしまい、`TC-port-process-controller-001 / 002` が成立しない。加えて `TC-003`(ラッパーの起動自体が不可能)を再現する手段が無くなる。
@@ -223,6 +227,8 @@ requirements §4.1 はラッパーを「ツール自身のバイナリをラッ�
 
 Proposed
 
+→ `.adr/069-wrapper-is-a-hidden-subcommand.md` に昇格
+
 ### Context
 
 pages は `wrapper` を「ツール自身のバイナリをラッパーモードで再実行するための内部サブコマンド。利用者向けのインターフェースではない(ヘルプの一覧にも表示しない)」と定める。選択肢: (a) 別の bin ターゲット、(b) `examples/` のプログラム(`lock_holder` の先例)、(c) `#[command(hide = true)]` のサブコマンド。
@@ -248,6 +254,8 @@ pages は `wrapper` を「ツール自身のバイナリをラッパーモード
 ### Status
 
 Proposed
+
+→ `.adr/070-wrapper-restores-state-root-from-run-dir.md` に昇格
 
 ### Context
 
@@ -276,6 +284,8 @@ Proposed
 
 Proposed
 
+→ `.adr/071-command-line-rehydrate-across-process-boundary.md` に昇格
+
 ### Context
 
 `WrapperLaunchSpec.agent_cmd` は `CommandLine`(`DOM-definition-023`: 「`CommandTemplate::expand` の結果としてのみ生成される1トークン以上のトークン列」)。tick はこれを argv に直列化し、ラッパーは argv から復元して `run_agent` に渡す。しかし `CommandLine` には公開コンストラクタが無く、`definition` モジュールの外では作れない。
@@ -300,6 +310,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ `.adr/072-run-dir-files-are-json-and-markers-are-empty.md` に昇格
 
 ### Context
 
@@ -335,6 +347,8 @@ pid / starttime / exit の内容表現は spec が定めていない(ファイ�
 
 Proposed
 
+→ `.adr/073-tick-errors-are-structured-values.md` に昇格
+
 ### Context
 
 `UC-execution-002` の出力 DTO は `errors: Vec<{ task_id: Option<TaskId>, path: Option<PathBuf>, message: String }>` と書かれている。素直に読むと `message: String` はユースケースが文言を組み立てることを意味するが、Issue #1 で確立した規約(`RegisterTask` はエラーを構造で返し、文言の組み立ては `cli::render`)と食い違う。
@@ -357,6 +371,8 @@ spec の `message: String` は「報告に足る情報が載ること」を要�
 ### Status
 
 Proposed
+
+→ `.adr/074-agent-and-spawn-probes-as-examples.md` に昇格
 
 ### Context
 
@@ -451,6 +467,8 @@ Proposed
 
 Proposed
 
+→ `.adr/077-worktree-identified-by-physical-path.md` に昇格
+
 ### Context
 
 `WorktreeManager::create` の冪等性は「`ws.path` に `ws.branch` の worktree がある」場合だけが達成済み、という境界の上に立つ。この判定を `git worktree list --porcelain` の出力と `ws.path` の**文字列比較**で行うと成立しない。実測(git 2.55、macOS):
@@ -499,6 +517,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ `.adr/078-port-mechanism-failure-is-single-io-error.md` に昇格
 
 ### Context
 
@@ -573,6 +593,8 @@ Proposed
 
 Proposed
 
+→ `.adr/081-wrapper-exit-code-reports-its-own-duty.md` に昇格
+
 ### Context
 
 spec は `wrapper` の出力DTOを「なし(結果はすべてrunディレクトリのファイルとして現れる)」と定め、終了コードを規定しているのは「引数の不正 → 非0」の1行だけである。残る3つの結末 — エージェントを実行した(`Ran`)・マーカーがあり起動しなかった(`Suppressed`)・同定情報を残せず何も書かずに終えた(`Silent`)— の終了コードは spec に無い。
@@ -603,6 +625,8 @@ spec は `wrapper` の出力DTOを「なし(結果はすべてrunディレクト
 
 Proposed
 
+→ `.adr/082-persisted-explanations-come-from-domain-describe.md` に昇格
+
 ### Context
 
 手続きAの展開失敗は `record_spawn_failure_in_place(message, ...)` で**タスクファイルに残る**。この `message` はポートが返す不透明な文字列ではなく、ドメインのエラー型(`AgentDefError` / `TemplateError` / `ExpansionError`)から組み立てるしかない。
@@ -628,6 +652,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ `.adr/083-tick-branch-decision-as-value.md` に昇格
 
 ### Context
 
@@ -657,6 +683,8 @@ ADR-065 は tick の分岐を全実行状態の網羅 `match` として書くと
 
 Proposed
 
+→ `.adr/084-empty-summary-means-nothing-to-process.md` に昇格
+
 ### Context
 
 pages は「処理対象がなければその旨を表示して 0」と定めるが、「処理対象」がタスク0件を指すのか、何のアクションも起きなかったことを指すのかは書かれていない。走査は待機ステータスのタスクや猶予内の launching タスクを列挙するが、それらには書き込みも報告も発生しない。
@@ -685,6 +713,8 @@ pages は「処理対象がなければその旨を表示して 0」と定める
 
 Proposed
 
+→ `.adr/085-usecase-and-acceptance-fixtures-are-separated.md` に昇格
+
 ### Context
 
 tick のテストは2種類ある — ポートをテストダブルに差し替えるユースケーステスト(`tick_scan` / `tick_launch` / `tick_confirm_spawn`)と、実バイナリ・実ファイルシステム・実プロセスを使う受け入れテスト(`cli_tick`)。前者は `Task` / `WorkflowSnapshot` / `GlobalConfig` の組み立てを、後者は一時ホーム・git リポジトリ・待ち合わせを必要とする。既存の共有フィクスチャ `tests/common/` は後者のためのもので、tempfile と実 git の起動を含む。
@@ -708,6 +738,8 @@ tick のテストは2種類ある — ポートをテストダブルに差し替
 ### Status
 
 Proposed
+
+→ `.adr/086-confirmed-running-field-and-recorded-failures-in-errors.md` に昇格
 
 ### Context
 
@@ -747,6 +779,8 @@ launching → running の取込にだけ、フィールド `confirmed_running: V
 
 Proposed
 
+→ `.adr/087-record-tool-failure-takes-tool-failure-kind.md` に昇格
+
 ### Context
 
 `spec/domains/task.md` の遷移表は `record_tool_failure` の引数を `kind` とだけ書き、実装は `FailureKind`(`WorktreeCreate | WorktreeRemove | ArchiveMove | SpawnFail | JudgeFail`)をそのまま受け取っていた。しかし後ろの2値は専用の遷移(`record_spawn_failure` / `record_spawn_failure_in_place` / #3 の `record_judge_failure`)が `spawn_fail_count` / `judge_attempt_count` を進めながら記録するものである。
@@ -772,6 +806,8 @@ spec の表記から逸脱するが、CLAUDE.md の「不正な状態を型で�
 ### Status
 
 Proposed
+
+→ `.adr/088-transition-error-holds-classification-only.md` に昇格
 
 ### Context
 
@@ -807,6 +843,8 @@ Proposed
 
 Proposed
 
+→ `.adr/089-freeze-is-passed-by-the-caller-of-the-transition.md` に昇格
+
 ### Context
 
 `commit` は「保存した結果の実行状態が `Stopped` であること」で `frozen` への集計を決めていた。`frozen` の語義は spec の出力DTO のとおり「このtickで凍結した」である。
@@ -832,6 +870,8 @@ ADR-066 は「#3 は共通手続き notify の呼び出しをこの関数の中�
 ### Status
 
 Proposed
+
+→ `.adr/090-spawn-not-observed-classification-and-error-headings.md` に昇格
 
 ### Context
 
@@ -862,6 +902,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ `.adr/091-compose-resolves-only-home-and-config.md` に昇格
 
 ### Context
 
