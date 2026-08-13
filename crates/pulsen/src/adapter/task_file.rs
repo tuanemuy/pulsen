@@ -668,6 +668,28 @@ mod tests {
         StatusName::parse(name.to_owned()).expect("受理される")
     }
 
+    /// プラットフォームで絶対になるパスを組み立てる。
+    fn absolute(segments: &[&str]) -> PathBuf {
+        let mut path = if std::path::MAIN_SEPARATOR == '\\' {
+            PathBuf::from("C:\\")
+        } else {
+            PathBuf::from("/")
+        };
+        for segment in segments {
+            path.push(segment);
+        }
+        path
+    }
+
+    fn repo() -> RepoPath {
+        RepoPath::parse(absolute(&["abs", "path"])).expect("受理される")
+    }
+
+    /// タスクファイルに現れる `repo` の綴り(JSON 文字列としての符号化を含む)。
+    fn encoded_repo() -> String {
+        serde_json::to_string(repo().as_path()).expect("直列化できる")
+    }
+
     fn snapshot() -> WorkflowSnapshot {
         let definition = WorkflowDefinition::new(
             Some(AgentName::parse("shell".to_owned()).expect("受理される")),
@@ -700,7 +722,7 @@ mod tests {
             TaskId::parse("20260811t091530-k3f9qa1b".to_owned()).expect("受理される"),
             WorkflowName::parse("implement".to_owned()).expect("受理される"),
             Target::new(
-                RepoPath::parse(PathBuf::from("/abs/path")).expect("受理される"),
+                repo(),
                 BranchName::parse("main".to_owned()).expect("受理される"),
             ),
             snapshot(),
@@ -714,13 +736,13 @@ mod tests {
 
     #[test]
     fn 登録直後のタスクは整形されたjsonとして書かれる() {
-        assert_eq!(
-            encoded(&registered()),
-            r#"{
+        // 絶対パスの綴りだけはプラットフォームで変わる。検査したいのは整形のほうなので、
+        // 綴りは差し込みにして期待値から追い出す。
+        let expected = r#"{
   "task_id": "20260811t091530-k3f9qa1b",
   "workflow_name": "implement",
   "target": {
-    "repo": "/abs/path",
+    "repo": <repo>,
     "base_branch": "main"
   },
   "task_status": "queued",
@@ -760,7 +782,9 @@ mod tests {
   }
 }
 "#
-        );
+        .replace("<repo>", &encoded_repo());
+
+        assert_eq!(encoded(&registered()), expected);
     }
 
     #[test]

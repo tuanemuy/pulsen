@@ -5,10 +5,18 @@
 
 use std::io::{self, Write};
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use tempfile::NamedTempFile;
 
 use super::fsdir::ensure_dir;
+
+/// 置換・移動を試みる回数の上限。
+const MAX_ATTEMPTS: u32 = 10;
+
+/// 最初の再試行までの待ち時間。試行ごとに倍にする。
+const FIRST_RETRY_WAIT: Duration = Duration::from_millis(1);
 
 /// 内容全体を書き、対象パスをアトミックに置き換える。
 ///
@@ -29,7 +37,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut temp = NamedTempFile::new_in(dir)?;
     temp.write_all(bytes)?;
     temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|failed| failed.error)?;
+    persist_with_retry(temp, path, transiently_denied)?;
 
     sync_dir(dir);
     Ok(())
@@ -44,7 +52,7 @@ pub fn rename_atomic(from: &Path, to: &Path) -> io::Result<()> {
     let dir = parent_of(to)?;
     ensure_dir(dir)?;
 
-    std::fs::rename(from, to)?;
+    rename_with_retry(from, to, transiently_denied)?;
 
     sync_dir(dir);
     // 別ディレクトリへの移動は2つのディレクトリエントリを変える。移動先だけを永続化すると
@@ -53,6 +61,91 @@ pub fn rename_atomic(from: &Path, to: &Path) -> io::Result<()> {
         sync_dir(source);
     }
     Ok(())
+}
+
+/// 一時ファイルを対象へ置き換える。`is_transient` が真とするエラーに限って再試行する。
+fn persist_with_retry(
+    temp: NamedTempFile,
+    path: &Path,
+    is_transient: impl Fn(&io::Error) -> bool,
+) -> io::Result<()> {
+    retry_while_transient(
+        temp,
+        |temp| match temp.persist(path) {
+            Ok(_) => Ok(()),
+            Err(failed) => Err((failed.error, failed.file)),
+        },
+        is_transient,
+    )
+}
+
+/// ファイルを移動先へ移す。`is_transient` が真とするエラーに限って再試行する。
+fn rename_with_retry(
+    from: &Path,
+    to: &Path,
+    is_transient: impl Fn(&io::Error) -> bool,
+) -> io::Result<()> {
+    retry_while_transient(
+        (),
+        |()| std::fs::rename(from, to).map_err(|error| (error, ())),
+        is_transient,
+    )
+}
+
+/// `is_transient` が真とするエラーに限り、上限内で `attempt` を繰り返す。
+///
+/// 置換も移動も Windows では同じ拒否(他のハンドルが対象を開いている)で失敗するため、
+/// 分類と上限を1つに集約する。`attempt` が失敗時に状態を返すのは、`NamedTempFile::persist`
+/// が一時ファイルを消費し、失敗したときだけ返してくるため。
+///
+/// 分類を引数に取るのは、再試行の打ち切り方(上限に達したら元のエラーを返す)を、
+/// エラーがどう分類されるかと独立に検証できるようにするため。
+fn retry_while_transient<S, T>(
+    mut state: S,
+    mut attempt: impl FnMut(S) -> Result<T, (io::Error, S)>,
+    is_transient: impl Fn(&io::Error) -> bool,
+) -> io::Result<T> {
+    let mut remaining = MAX_ATTEMPTS - 1;
+    let mut wait = FIRST_RETRY_WAIT;
+    loop {
+        let error = match attempt(state) {
+            Ok(value) => return Ok(value),
+            Err((error, returned)) => {
+                state = returned;
+                error
+            }
+        };
+        if remaining == 0 || !is_transient(&error) {
+            return Err(error);
+        }
+        remaining -= 1;
+        thread::sleep(wait);
+        wait *= 2;
+    }
+}
+
+/// 置換・移動が一時的に拒まれたことを表すエラーか。
+///
+/// Windows では、対象を他のハンドル(ロックを取らない読み手・ウイルス対策のスキャン)が
+/// 開いている間、置換と移動が `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` で拒まれる。
+/// 「読み手はロックなしで常に一貫した内容を見る」は永続化ポートの契約なので、読み手を
+/// 待たせるのではなく書き手が吸収する。時間で解けない失敗(権限そのものの不足・容量の
+/// 不足)を再試行で遅らせないため、分類はこの2つに限る。
+#[cfg(windows)]
+fn transiently_denied(error: &io::Error) -> bool {
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+
+    matches!(
+        error.raw_os_error(),
+        Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
+    )
+}
+
+/// unix の `rename` は開いているハンドルに影響されないため、待って解ける拒否が無い。
+#[cfg(not(windows))]
+fn transiently_denied(_error: &io::Error) -> bool {
+    false
 }
 
 fn parent_of(path: &Path) -> io::Result<&Path> {
@@ -130,6 +223,38 @@ mod tests {
     }
 
     #[test]
+    fn 置換が一時的に拒まれても上限内なら置き換わる() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let target = base.path().join("task.json");
+        fs::create_dir(&target).expect("置換を拒ませるものを置ける");
+        let temp = NamedTempFile::new_in(base.path()).expect("一時ファイルを作れる");
+
+        persist_with_retry(temp, &target, |_| {
+            // 拒否が続かない状況を作る。次の試行では置き換えられる。
+            let _ = fs::remove_dir(&target);
+            true
+        })
+        .expect("最終的に置き換わる");
+
+        assert!(target.is_file());
+        assert_eq!(entry_names(base.path()), vec!["task.json".to_owned()]);
+    }
+
+    #[test]
+    fn 一時的な拒否が続けば上限で打ち切って元のエラーを返す() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let occupied = base.path().join("task.json");
+        fs::create_dir(&occupied).expect("置換を拒ませるものを置ける");
+        let temp = NamedTempFile::new_in(base.path()).expect("一時ファイルを作れる");
+
+        let error = persist_with_retry(temp, &occupied, |_| true).expect_err("置き換わらない");
+
+        // 打ち切りを表す独自のエラーに差し替えず、OS が返した拒否をそのまま渡す。
+        assert!(error.raw_os_error().is_some(), "{error}");
+        assert_eq!(entry_names(base.path()), vec!["task.json".to_owned()]);
+    }
+
+    #[test]
     fn 読み手は旧内容か新内容のどちらかだけを観測する() {
         let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let target = base.path().join("task.json");
@@ -195,6 +320,36 @@ mod tests {
         let result = rename_atomic(&from, &to);
 
         assert!(result.is_err());
+        assert!(!to.exists());
+    }
+
+    #[test]
+    fn 移動が一時的に拒まれても上限内なら移動する() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let from = base.path().join("task.json");
+        let to = base.path().join("archived.json");
+
+        rename_with_retry(&from, &to, |_| {
+            // 拒否が続かない状況を作る。次の試行では移動できる。
+            let _ = fs::write(&from, b"content");
+            true
+        })
+        .expect("最終的に移動する");
+
+        assert!(!from.exists());
+        assert_eq!(fs::read(&to).expect("読める"), b"content");
+    }
+
+    #[test]
+    fn 移動の一時的な拒否が続けば上限で打ち切って元のエラーを返す() {
+        let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let from = base.path().join("task.json");
+        let to = base.path().join("archived.json");
+
+        let error = rename_with_retry(&from, &to, |_| true).expect_err("移動できない");
+
+        // 打ち切りを表す独自のエラーに差し替えず、OS が返した拒否をそのまま渡す。
+        assert!(error.raw_os_error().is_some(), "{error}");
         assert!(!to.exists());
     }
 
