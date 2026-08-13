@@ -25,18 +25,33 @@
 
 **何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する8行だけで、区分 C の残る4行はそれぞれ別の能力を要求する。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
 
-| ID | 区分 | 前提を作れない環境 | 判定 |
-|---|---|---|---|
-| TC-port-config-store-023 | C | 読み取れないファイルを作れない（root 実行・非 POSIX・権限を持たないファイルシステム） | `permission_restrictions_effective` |
-| TC-port-workflow-store-030 | C | 同上 | `permission_restrictions_effective` |
-| TC-port-task-repository-005 / 011 / 012 / 035 | C | 書き込めないディレクトリを作れない（同上） | `permission_restrictions_effective` |
-| TC-port-task-repository-019 / 041 | C | 読み取れないディレクトリを作れない（同上） | `permission_restrictions_effective` |
-| TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか |
-| TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか |
-| TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか |
-| TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか |
-| TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか |
-| TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 別プロセスにロックを保持させる実行ファイルが無い（単一テストターゲットを指定した実行では example がビルドされない） | ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか |
+右3列は3ランナーでの実測（下記「3ランナーでの実測」を参照）。`実行` は前提が成立してケースが走ったこと、`スキップ` は成立せず `SKIP` 行が出たことを指す。
+
+| ID | 区分 | 前提を作れない環境 | 判定 | ubuntu | macOS | Windows |
+|---|---|---|---|---|---|---|
+| TC-port-config-store-023 | C | 読み取れないファイルを作れない（root 実行・非 POSIX・権限を持たないファイルシステム） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-workflow-store-030 | C | 同上 | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-task-repository-005 / 011 / 012 / 035 | C | 書き込めないディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-task-repository-019 / 041 | C | 読み取れないディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか | 実行 | 実行 | 実行 |
+| TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか | スキップ | スキップ | スキップ |
+| TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか | 実行 | 実行 | 実行 |
+| TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか | 実行 | 実行 | 実行 |
+| TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか | 実行 | 実行 | 実行 |
+| TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 別プロセスにロックを保持させる実行ファイルが無い（単一テストターゲットを指定した実行では example がビルドされない） | ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか | 実行 | 実行 | 実行 |
+
+## 3ランナーでの実測
+
+出典は GitHub Actions の run 31657976822（全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked -- --nocapture` を実行し、`SKIP ` 行を採取したもの。**`origin/main` 時点のコードに対する測定**で、テストバイナリ数は3 OS とも19で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
+
+- **unix（ubuntu / macOS）で成立しなかったのは TC-port-clock-005 の1件だけ。** これは環境ではなくアダプターの性質による恒久スキップで（`SystemClockHarness` は実時計を巻き戻せないため `rewind` を提供しない）、どの OS でも走らない。
+- **Windows で成立しなかったのは、上の1件に権限系を加えた計11件。** 適合行は表の `permission_restrictions_effective` を判定に持つ8行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041）で、残る2件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021）。
+- **区分 C のうち TC-port-clock-003 / TC-port-exclusive-lock-007 / TC-port-worktree-manager-009 は3 OS すべてで走った。** いずれも判定がハーネス側のフック提供の有無で、実アダプターのハーネスが `observe_wall_clock` / `unusable_lock` / `failing_manager` を提供している。
+- **区分 B の TC-port-worktree-manager-003 と TC-port-exclusive-lock-002 / 003 / 004 / 005 も3 OS すべてで走った。** 前者は一時ディレクトリの置き場が git リポジトリ配下にならず前提が成立したこと、後者は `--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能したことを意味する。
+
+ログには実在の適合ケースと形の区別が付かない `SKIP tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` / `tc_port_clock_005_時刻の巻き戻し` の3行が全 OS で出る。これは `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身を検証するために `record` を直接呼ぶもので、架空のケース名を持つ。上の集計にも CI のジョブサマリーにも含めない — 走らなかった適合ケースとして数えられると、実測が示す内容が変わってしまうため。
+
+この実測は PR #11 がスイートと example を足した時点で部分的に古くなる。その更新は #11 の責務とする。
 
 ## 適用範囲
 

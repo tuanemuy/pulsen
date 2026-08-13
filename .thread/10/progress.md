@@ -1,37 +1,57 @@
 # 進捗メモ — Issue #10
 
-`.github/workflows/ci.yml` を新規追加した。steps.md のステップ1〜4（無条件のワークフロー作成）が完了で、ステップ5 以降は CI の実行を要するため未着手。
+`.github/workflows/ci.yml` を新規追加し、3ランナーで実行して**全7ジョブが緑**になった（run 31657976822）。steps.md のステップ1〜12 がすべて完了。
 
-## 完了
+## CI の実測結果
 
-| ステップ | 内容 |
-|---|---|
-| 1 | ワークフローの骨格（トリガー・`permissions`・`concurrency`・`env`・`defaults.run.shell`）と fmt ジョブ |
-| 2 | stable マトリクスジョブ（前提の検査 → 非 root アサート → build → test → clippy）。ジョブ名は steps.md の設計ブロックに合わせて `test` |
-| 3 | スキップ報告ステップ。期待スキップ集合は steps.md ステップ3 の表に実行前から確定済み（unix 1件 / Windows 11件） |
-| 4 | MSRV マトリクスジョブ。版数は `cargo metadata` の全メンバー `rust_version` から読み出す |
+| ジョブ | ubuntu | macOS | Windows |
+|---|---|---|---|
+| `fmt` | 緑 | — | — |
+| `test`（build / test / clippy） | 緑 | 緑 | 緑 |
+| `msrv`（`cargo build --all-targets`） | 緑 | 緑 | 緑 |
 
-why コメントは steps.md が指示した5点（`concurrency` を PR 限定にする理由、`RUST_BACKTRACE` を置かない理由と意図的なパニック2件、`--workspace` を保つ理由、スキップの判定主体を CI に持たせない理由、版数をハードコードしない理由）をワークフローに残した。
+- **MSRV 1.89 は宣言だけの状態を脱した。** `Cargo.toml` の `workspace.package.rust-version` を読み出した toolchain で、3 OS すべてがリンクまで通る。
+- **Windows で初めて build / test / clippy の結果が得られた。** 初回実行では `-p pulsen --lib` の6件が落ち、2回目で全緑。
+- **fmt は初回から緑。** nixpkgs の rustfmt 1.97.1 と CI の現行 stable で整形結果が食い違わなかったため、steps.md ステップ10 の rustfmt 掛け直しは発火していない。
+- **clippy も初回から緑。** `cfg(not(unix))` 側の未 lint コードから新規指摘が出る想定（plan.md の [高] リスク）だったが、実際には出なかった。
 
-## 未着手
+## 初回実行で落ちた Windows の6件と、その吸収
 
-- **ステップ5**（CI の初回実行と結果採取）: `workflow_dispatch` は既定ブランチに到達するまで使えず、`push` は main 限定なので、実行手段は PR 一択。
-- **ステップ6〜10**（条件付き修正）: CI を回すまで何が落ちるか確定しない。机上推定での先回り修正は入れていない。
-- **ステップ11**（HOOKS.md への実測記録）: 3ランナーでの実測が前提。
-- **ステップ12**（最終確認）: CI の実測を要する項目が残る。
+いずれも ADR-008 の「本 Issue で扱う」側に収まり、別 Issue への切り出し・撤退条件の適用はしていない。
 
-## ローカルで確認したこと
+| 失敗 | 原因 | 吸収 |
+|---|---|---|
+| `adapter::task_file::tests` 5件 | フィクスチャが `/abs/path` を絶対パスとして渡していた。Windows では絶対パスではないので、ドメインの `RepoPath` 検証が正しく `NotAbsolute` を返していた | フィクスチャを `MAIN_SEPARATOR` から組む既存の書き方（ADR-037）に揃えた。ドメイン側は無変更 |
+| `util::atomic::tests::読み手は旧内容か新内容のどちらかだけを観測する` 1件 | 読み手がハンドルを開いている間の置換を Windows が `ERROR_ACCESS_DENIED`(5) で拒む | `write_atomic` に共有違反限定・上限付きの再試行を入れた（ADR-010） |
 
-push できないぶん、ワークフローの静的な確認とシェル断片の実行をローカルで行った。
+あわせて **`rename_atomic`（`archive` の経路、TC-port-task-repository-044）にも同じ再試行を掛けた**（ADR-012）。Windows は最初の失敗ターゲットで cargo が停止していたため 044 は「赤でない」のではなく「未観測」で、plan.md のリスク欄が 042 と 044 を同一原因の対として挙げていた。分類と上限は1つのループに集約してある。
 
-- YAML が Psych でパースでき、トップレベルキーが `name` / `on` / `permissions` / `concurrency` / `env` / `defaults` / `jobs`。
-- ジョブは fmt 1・test 3・msrv 3 の計7（AC-1）。`test` / `msrv` は `fail-fast: false`。
-- スキップ報告スクリプトを `bash --noprofile --norc -eo pipefail` で4状態すべて実行し、いずれも exit 0 で意図した文言を出す（`test.log` 不在 / テストが走っていない / SKIP 0件 / SKIP あり）。`pulsen-conformance` の lib ユニットテストの区間が落ち、色あり・色なしの両方で結果が変わらないことを gawk 5.4.1 と macOS 同梱 awk（20200816）で確認した。
-- MSRV 読み出しコマンドが `1.89` を返す。0件・値が割れた場合はいずれも exit 1。
-- `grep` を使うステップは該当なしでもステップを落とさない（`|| true` と `case` の被検査式で `-e` から切り離してある）。
-- `sort` / 版数のハードコード / 第三者製 Action / ステップ単位の `shell:` 指定がいずれも 0 件。
-- `cargo build` / `cargo test` / `cargo clippy --all-targets -- -D warnings` / `cargo fmt --all --check` が引き続き緑（macOS・rustc 1.97.1）。
+## スキップの実測（AC-6(d)）
 
-## CI が実測する範囲
+**3 OS とも steps.md ステップ3 の期待集合と完全に一致した。期待値の事後更新は発生していない。**
 
-**この CI が実測するのは `origin/main`（9d54376）時点のコードであり、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない。** Issue #10 のクローズは「クロスプラットフォームが検証済み」を意味しない。この1行は PR 本文と Issue #10 のコメントにも残す（steps.md ステップ12）。
+| OS | 実在のスキップ | 内訳 |
+|---|---|---|
+| ubuntu / macOS | 1件 | `tc_port_clock_005`（ハーネスが `rewind` を提供しない恒久スキップ） |
+| Windows | 11件 | 上記 + 権限系10件（適合行8 + CLI 受け入れ2） |
+
+走ったテストバイナリは3 OS とも19個で同数。詳細は `crates/pulsen-conformance/HOOKS.md` の「3ランナーでの実測」節に記録した。
+
+`pulsen-conformance` の lib ユニットテストは `SkipBudget` 自身を架空のケース名で検証するため、実在の適合ケースと区別できない `SKIP` 行を全 OS で3件出す。ジョブサマリーの集計はこの区間を除外している。
+
+## 未検証のまま残ること
+
+**この CI が実測したのは `origin/main`（9d54376）時点のコードであり、PR #11 が追加するプロセス同定・デタッチ起動の Windows 挙動は含まれない。** Issue #10 のクローズは「クロスプラットフォームが検証済み」を意味しない。この事実は PR 本文と Issue #10 のコメントにも残してある。
+
+PR #11 へは次の3件を引き継ぐ（#11 にコメントで伝える）:
+
+1. HOOKS.md の実測は `origin/main` 時点のもので、#11 がスイートと example を足した時点で部分的に古くなる。更新は #11 の責務。
+2. 本 Issue の修正が入った `crates/pulsen/src/adapter/task_file.rs` / `crates/pulsen/src/util/atomic.rs` とのコンフリクト解消は #11 側で行う（マージ順は本 Issue 先行）。
+3. #11 の `ProcessController` が Windows で赤になった場合の対応も #11 側。
+
+## 残っている見立て
+
+CI が緑になった今も、次は環境の揺らぎで赤くなりうる。撤退条件（ADR-008）は適用していないので、これらは通常の CI の赤として扱う。
+
+- `spawn_holder` は `SIGNAL_DEADLINE`(10秒) 超過でも `None` を返すが、`SkipBudget` の許容集合は `holder_program().is_some()` だけを見る。Windows で Defender のスキャンにより初回起動が遅れると、ロック適合4件が「スキップ」ではなく**失敗**として現れる。今回の実行では踏んでいない。
+- `rustup update stable` で常に現行 stable を使うため、新しい clippy lint / rustfmt の整形変更が入った日に、コードを変えていなくても赤くなりうる（ADR-004 が意図的に受け入れたトレードオフ）。受け皿は steps.md ステップ10。
