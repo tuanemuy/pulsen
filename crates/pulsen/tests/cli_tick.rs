@@ -13,8 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use common::{
-    Home, Repo, Run, Untouched, add, agent_probe, git, probe_config, run_cli, scratch, tick,
-    wait_until,
+    Home, Repo, Run, Untouched, add, agent_probe, git, probe_config, scratch, tick, wait_until,
 };
 use serde_json::{Value, json};
 
@@ -481,12 +480,4 @@ fn 同一リポジトリの複数タスクは別々のworktreeとブランチで
     for id in &ids {
         wait_for_exit(&home, id, 1);
     }
-}
-
-#[test]
-fn tickはヘルプに現れる利用者向けのコマンドである() {
-    let run = run_cli(&["tick", "--help"]);
-
-    run.assert_succeeded();
-    assert!(!run.stdout.is_empty());
 }

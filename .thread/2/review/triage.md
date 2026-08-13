@@ -70,3 +70,9 @@ R3 は Key が完全一致する既出指摘が無く、8件すべて新規。�
 | `steps.md:設計/実装との食い違い` | R4 | fix-editorial | `InconsistentRunFiles` / `TransitionError` / `TickIssue` / サマリーのフィールド一覧が ADR-073・086・088 の実装と食い違ったまま残っている | 0 |
 
 R4: 新規 2 / fix 1 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 新規2件・独立・すべて fix 系）
+| `tick/confirm_spawn.rs:read_run_files/読み取り順のwhy` | R5 | fix-editorial | pid→starttime の順が偽の `InconsistentRunFiles` を防いでいる理由が doc に無い | 0 |
+| `tests/cli_tick.rs:ヘルプに現れる/主張の空虚さ` | R5 | fix | アサーションが名前の主張を裏付けていない（同じ主張は `cli_usage.rs` が厳密に持つ） | 0 |
+| `tests/TC-exec-run-wrapper-027/消化範囲との食い違い` | R5 | fix | 「ラッパーごと kill された attempt に exit が残らない」を直接主張するテストが無い | 0 |
+| `steps.md:ラッパーの合成/ADR-068との食い違い` | R5 | fix-editorial | `wire::process_controller()` で組むと書いたまま。実装は `without_self_exe` を使う | 0 |
+
+R5: 新規 4 / fix 2 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 全件 fix 系で独立。TC-027 の扱いはメインが「宣言を弱めずテストを足す」と裁定）

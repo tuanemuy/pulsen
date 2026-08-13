@@ -11,7 +11,7 @@
 //! | `check-cwd <期待パス>` | 作業ディレクトリが一致すれば 0、しなければ 1 |
 //! | `echo-args <トークン...>` | 受け取ったトークンを1行ずつ標準出力へ書いて 0 で終了する |
 //! | `sleep <ミリ秒>` | その時間だけ実行を続けてから 0 で終了する |
-//! | `wait-for <パス> <上限ミリ秒>` | そのパスにファイルが現れるまで実行を続けて 0 で終了する |
+//! | `wait-for <パス> <上限ミリ秒>` | 滞留の合図を標準出力へ書き、そのパスにファイルが現れるまで実行を続け、解放の合図を書いて 0 で終了する |
 //! | `abort` | exit code を持たない終了(シグナル死)をする |
 
 use std::io::Write;
@@ -27,6 +27,19 @@ const NOT_RELEASED: i32 = 65;
 
 /// 解放を待つポーリングの間隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// 滞留に入ったことを告げる合図。
+///
+/// 呼び出し側は標準出力(ラッパー経由ならログ)への出現をもって「エージェントが実行中で
+/// ある」ことを観測できる。ラッパーが作るログの存在だけでは、エージェントの起動が済んだ
+/// かどうかまでは決まらない。
+const WAITING: &str = "waiting";
+
+/// 解放を観測して終わることを告げる合図。
+///
+/// ラッパーが先に死んだ場合、このプロセスの終わりを告げるものは他に無い。呼び出し側は
+/// この合図で、一時ディレクトリを消す前に滞留が解けたことを確かめられる。
+const RELEASED: &str = "released";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -122,6 +135,8 @@ fn wait_for(rest: &[String]) -> ! {
     let Some(limit) = limit.parse::<u64>().ok().map(Duration::from_millis) else {
         misuse("wait-for の上限を解釈できない");
     };
+    let mut stdout = std::io::stdout();
+    signal(&mut stdout, WAITING);
     let path = Path::new(path);
     let deadline = Instant::now() + limit;
     while !path.exists() {
@@ -134,7 +149,18 @@ fn wait_for(rest: &[String]) -> ! {
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+    signal(&mut stdout, RELEASED);
     exit(0)
+}
+
+/// 合図を1行書いて送り出す。
+fn signal(stdout: &mut std::io::Stdout, text: &str) {
+    if writeln!(stdout, "{text}")
+        .and_then(|()| stdout.flush())
+        .is_err()
+    {
+        exit(MISUSE);
+    }
 }
 
 /// 終了コードとして解釈する。

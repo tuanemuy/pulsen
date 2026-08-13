@@ -6,7 +6,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -681,6 +681,33 @@ impl Wrapper {
 
     /// 実バイナリを起動して結果を集める。
     pub fn run(self) -> Run {
+        let (mut command, sandbox) = self.command();
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+
+    /// 実バイナリを起動し、終了を待たずに実行中のラッパーを返す。
+    ///
+    /// エージェントの実行中に外からラッパーを終わらせる観測に使う。`run()` は終了を
+    /// 待つため、その状況を作れない。
+    pub fn start(self) -> RunningWrapper {
+        let (mut command, sandbox) = self.command();
+
+        let child = command.spawn().expect("pulsen を起動できる");
+        RunningWrapper {
+            child,
+            _sandbox: sandbox,
+        }
+    }
+
+    /// 起動する実バイナリと、起動が終わるまで保持する一時ホーム。
+    fn command(self) -> (Command, TempDir) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
         let sandbox = detached_home(&mut command);
         if let Some(home) = self.home_env {
@@ -694,14 +721,25 @@ impl Wrapper {
             .arg(self.workspace)
             .arg(process::COMMAND_SEPARATOR)
             .args(self.agent_cmd);
+        (command, sandbox)
+    }
+}
 
-        let output = command.output().expect("pulsen を起動できる");
-        drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+/// 実行中のラッパー。
+pub struct RunningWrapper {
+    child: Child,
+    /// ホーム解決を切り離す一時ホーム。プロセスが終わるまで保持する。
+    _sandbox: TempDir,
+}
+
+impl RunningWrapper {
+    /// ラッパーを即座に終了させ、終了を待ち取る。
+    ///
+    /// 猶予を与えない終了なので、ラッパーは自身の後始末を挟めない。エージェントは
+    /// ラッパーの子であり、この終了では道連れにならずに残る。
+    pub fn kill(mut self) {
+        self.child.kill().expect("ラッパーを終了させられる");
+        self.child.wait().expect("終了を待ち取れる");
     }
 }
 

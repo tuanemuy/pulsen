@@ -9,12 +9,25 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use common::{Home, agent_probe, scratch, wrapper};
+use common::{Home, agent_probe, scratch, wait_until, wrapper};
 use serde_json::Value;
 use tempfile::TempDir;
 
 /// タスクIDの形を満たす値。run ディレクトリの復元は `derive` との一致で決まる。
 const TASK_ID: &str = "20260811t091530-k3f9qa1b";
+
+/// 滞留したエージェントの解放が来ないときの上限(ミリ秒)。
+///
+/// 滞留はラッパーの終了をエージェントの実行中に起こすためのもので、終わりはテストが置く
+/// 解放ファイルが決める。この上限は解放し損ねたエージェントを残さないための歯止めであって、
+/// 生存の窓の長さではない。
+const HOLD_LIMIT_MILLIS: &str = "120000";
+
+/// `agent_probe wait-for` が滞留に入るときに標準出力へ書く合図。
+const WAITING: &str = "waiting";
+
+/// `agent_probe wait-for` が解放を観測して終わるときに標準出力へ書く合図。
+const RELEASED: &str = "released";
 
 /// tick が用意する run ディレクトリと worktree を模した置き場。
 struct Launch {
@@ -76,6 +89,12 @@ impl Launch {
 /// 不在はスキップにしない — 作り忘れが緑にならないようにする(ADR-074 と同じ扱い)。
 fn probe_program() -> PathBuf {
     agent_probe().expect("examples/agent_probe がビルドされている")
+}
+
+/// エージェントの標準出力のログに合図が現れているか。
+fn log_has(run_dir: &Path, signal: &str) -> bool {
+    fs::read_to_string(run_dir.join("stdout.log"))
+        .is_ok_and(|log| log.lines().any(|line| line == signal))
 }
 
 /// テスト用エージェントを起動するトークン列。
@@ -168,6 +187,51 @@ fn シグナルで死んだエージェントは非ゼロの符号化値とし�
     assert_ne!(code, 0, "非0で符号化される");
     #[cfg(unix)]
     assert_eq!(code, 128 + 6, "SIGABRT で死んだ");
+}
+
+/// エージェント実行中にラッパーが死ぬと、attempt に結末が残らない(TC-exec-run-wrapper-027)。
+/// 次の tick はこの不在(exit なし・プロセス死亡)から failed を導く。
+#[test]
+fn エージェントの実行中にラッパーが終了させられるとexitは書かれない() {
+    let program = probe_program();
+    let release_dir = scratch();
+    let release = release_dir.path().join("release");
+    let launch = Launch::new();
+
+    let running = wrapper(launch.run_dir(), launch.workspace())
+        .agent_cmd(probe(
+            &program,
+            &[
+                "wait-for",
+                &release.display().to_string(),
+                HOLD_LIMIT_MILLIS,
+            ],
+        ))
+        .start();
+
+    // 滞留の合図を待つ。ログの存在だけではエージェントの起動が済んだことまで決まらない。
+    // 合図を待てば、終了させる時点が「エージェント実行中・exit 書き込み前」であることが
+    // 実行環境の速さに依存しない。
+    let run_dir = launch.run_dir();
+    wait_until("エージェントの滞留の合図", &run_dir, || {
+        log_has(&run_dir, WAITING)
+    });
+
+    running.kill();
+
+    // 解放と、それを観測したエージェントの終わりまでを先に済ませる。exit を書きうる
+    // 唯一のプロセスは終了済みなので主張は変わらず、主張が落ちた場合でも一時ディレクトリ
+    // の削除と競合するプロセスが残らない。
+    fs::write(&release, "").expect("解放ファイルを置ける");
+    wait_until("エージェントの解放の合図", &run_dir, || {
+        log_has(&run_dir, RELEASED)
+    });
+
+    assert_eq!(
+        launch.run_files(),
+        vec!["pid", "starttime", "stderr.log", "stdout.log"],
+        "同定情報とログは残り、exit だけが現れない"
+    );
 }
 
 #[test]
