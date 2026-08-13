@@ -59,12 +59,12 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **対応する受け入れ基準:** AC-1
 - **目的:** 4つの区別（`Available` / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable`）を持つ能力の型と、それを1度だけ評価する probe が、`crates/pulsen/tests/common/lock.rs` に**1組だけ**存在することを確認する。同じ判断を別の場所で作り直していれば、宣言と挙動が割れる余地が残る。
 - **手順:**
-  1. `grep -n "enum HolderCapability" -A 10 crates/pulsen/tests/common/lock.rs`
+  1. `grep -n "enum HolderCapability" -A 20 crates/pulsen/tests/common/lock.rs`
   2. `grep -n "OnceLock" crates/pulsen/tests/common/lock.rs`
   3. `grep -rn "OnceLock\|LazyLock" crates/pulsen/tests/`
   4. `grep -n "enum Started" -A 10 crates/pulsen/tests/common/lock.rs`
 - **期待結果:**
-  1. `HolderCapability` が1件ヒットし、変種が `Available(HolderProgram)` / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable(io::Error)` の**4つちょうど**。`Available` は解決済みの実行ファイルを、`ProgramUnusable` は probe の起動時に `spawn` が返したエラーをそのまま持つ。`HolderProgram` のフィールドが非公開で、実行ファイルのパスが `lock.rs` の外へ出ない。
+  1. `HolderCapability` が1件ヒットし、変種が `Available(HolderProgram)` / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable(io::Error)` の**4つちょうど**。`Available` は解決済みの実行ファイルを、`ProgramUnusable` は probe が起動を試みたときに観測した失敗の理由を `io::Error` のまま持つ。`HolderProgram` のフィールドが非公開で、実行ファイルのパスが `lock.rs` の外へ出ない。
   2. `OnceLock` の宣言が `holder_capability()` の中の1件だけ（`static CAPABILITY: OnceLock<HolderCapability>`）。
   3. ヒットは**6行**で、3つの `use` 行（`common/git.rs` / `common/lock.rs` / `common/mod.rs`）と3つの `static` 宣言だけ。`static` の内訳は `common/lock.rs` の `CAPABILITY: OnceLock<HolderCapability>`（ロック能力。`crates/pulsen/tests/` 全体でこの1件だけ）、`common/mod.rs` の `SKIPS: LazyLock<SkipBudget>`（許容集合のキャッシュ。この中から `holder_capability()` を呼ぶ）、`common/git.rs` の `OUTSIDE: OnceLock<bool>`（`tmpdir_outside_repository()` が使う別の probe のキャッシュ）で、説明の付かないヒットは無い。
   4. `Started` が private（`pub` が付いていない）で、変種が `Signaled { holder, locked }` / `SignalUnreadable { holder, error }` / `SignalTimedOut` / `SpawnFailed(io::Error)` の4つ。`SignalUnreadable` は読み取りが失敗した理由（`io::Error`）を運ぶ。
@@ -84,7 +84,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **期待結果:**
   1. `fn holder_program(` に `pub` が付いていない。
   2. ヒットが `crates/pulsen/tests/common/lock.rs` の中だけ（定義と `probe_holder` からの1呼び出し）。`conformance_lock.rs` / `common/mod.rs` からは消えている。
-  3. `common/lock.rs`（定義）・`conformance_lock.rs` の `allowed_skips()`・`common/mod.rs` の `allowed_skips()` の3箇所。`spawn_holder` からの呼び出しを加えて、判断の源はこの1関数に集まっている。
+  3. ヒットは**5行**。内訳は定義1（`common/lock.rs`）・`use` 1（`conformance_lock.rs` が `common::lock::{…, holder_capability, …}` で取り込む行）・呼び出し3（`conformance_lock.rs` の `allowed_skips()`・`common/mod.rs` の `allowed_skips()`・`common/lock.rs` の `spawn_holder`）で、説明の付かないヒットは無い。判断の源はこの1関数に集まっている。
   4. 本文が `spawn_holder` を呼ぶ形のまま。`locked == false` を失敗に倒していない（TC-port-exclusive-lock-004 が「ドロップで解放され、別プロセスが取得できる」を判定する経路で、`bool` は正当な観測結果）。
   5. 差分なし。**変更不要であることの確認でこの基準の一部を満たす**（probe の結果は `spawn_holder` 経由で同じ1点を見ている）。
   6. コンパイルが通る（private 化で壊れる呼び出し側が残っていない）。
@@ -103,10 +103,10 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **期待結果:**
   1. `spawn_holder` の中で `None` を返すのは `HolderCapability::SignalTimedOut` の腕**1箇所だけ**。残る3つの腕（`Available` / `ProgramMissing` / `ProgramUnusable`）は、それぞれ処理の続行と2種のパニックになっている。`Started::SignalUnreadable` / `SignalTimedOut` / `SpawnFailed` はいずれもパニックで、`None` に落ちない。
   2. `hold` は `spawn_holder(lock_path)?` の伝播のみで `None` を作り、`!locked` は `kill_and_wait` + パニックになっている（`return None` が無い）。
-  3. `hold_from_other_process` は `common::lock::hold(&self.lock_path())` の1行に委ねられている（`!locked` の判断が `hold` の中の1箇所だけになる）。
+  3. `hold_from_other_process` は `hold(&self.lock_path())` の1行に委ねられている（`hold` は `conformance_lock.rs` 冒頭の `use common::lock::{…}` で取り込んだ短縮形。このファイルに `common::lock::` のフルパス呼び出しは残っていない）。`!locked` の判断が `hold` の中の1箇所だけになる。
   4. `?` 演算子と `SignalTimedOut` 腕以外に `None` を生む箇所が無い。
   5. `recv_timeout` の失敗が `RecvTimeoutError::Timeout` と `Disconnected` に分かれており、`Err(_)` の形が無い。`Disconnected`（読み取りスレッドが結果を返さずに消えた）は `Started::SignalUnreadable`＝失敗側に寄っていて、許容集合に入る `SignalTimedOut` に落ちない。
-- **確認ポイント:** `spawn_holder` の doc コメントが `None` の意味を1つに明記し、実行ファイルの不在・起動の失敗・合図の読み取り失敗・probe 成立後のタイムアウトを**スキップに逃がさない**と書いてあること。`hold` の `!locked` のメッセージが「取得の合図が返らなかった」であって「取得できなかった」と断定していないこと（`stderr(Stdio::null())` で子の標準エラーを捨てている以上、原因を断定する材料をフィクスチャは持たない）。
+- **確認ポイント:** `spawn_holder` の doc コメントが `None` の意味を1つに明記し、実行ファイルの不在・起動の失敗・合図の読み取り失敗・probe 成立後のタイムアウトを**スキップに逃がさない**と書いてあること。`hold` の `!locked` のメッセージが、取得の合図が返らなかったことを述べるにとどまり「取得できなかった」と断定していないこと（`stderr(Stdio::null())` で子の標準エラーを捨てている以上、原因を断定する材料をフィクスチャは持たない）。
 
 ### 4. 許容集合が `SignalTimedOut` のときだけ広がる（宣言のコード）
 
@@ -117,7 +117,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   2. `grep -n "fn allowed_skips" -A 22 crates/pulsen/tests/common/mod.rs`
   3. `grep -n "LOCK_HOLDER_CASES" -B 4 crates/pulsen/tests/conformance_lock.rs crates/pulsen/tests/common/mod.rs`
 - **期待結果:**
-  1. `match common::lock::holder_capability()` の腕が `SignalTimedOut => LOCK_HOLDER_CASES.to_vec()` と、`Available(_) | ProgramMissing | ProgramUnusable(_) => Vec::new()` の形になっており、`_` が無い。
+  1. `match holder_capability()`（`conformance_lock.rs` は `use` で取り込んだ短縮形で呼ぶ）の腕が `SignalTimedOut => LOCK_HOLDER_CASES.to_vec()` と、`Available(_) | ProgramMissing | ProgramUnusable(_) => Vec::new()` の形になっており、`_` が無い。
   2. 同じ形のロック分岐になっている（`SignalTimedOut` のときだけ `allowed.extend(LOCK_HOLDER_CASES)`、残る3つは何もしない）。権限系（`permission_restrictions_effective`）と git 系（`tmpdir_outside_repository`）の分岐は変わっていない。
   3. 両ファイルの `LOCK_HOLDER_CASES` の doc コメントが「別プロセスにロックを保持させられない環境」ではなく「保持プロセスの合図が期限内に返らない環境」と同じ言葉で揃っている。件数は `conformance_lock.rs` が4件（`tc_port_exclusive_lock_002` / `003` / `004` / `005`）、`common/mod.rs` が1件（`tc_task_register_task_017`）。
 - **確認ポイント:** 2箇所の `match` が同じ4区別を同じ側へ振り分けていること。片方だけ `ProgramUnusable` をスキップ側に倒すと、同じフィクスチャを使う適合スイートと CLI 側で扱いが割れる。`conformance_lock.rs` の `allowed_skips()` の doc コメントから `HOOKS.md` / ADR-068 / ADR-073 が辿れること（確認項目14 で新番号の併記を見る）。
@@ -217,7 +217,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   8. `grep -n "ProgramUnusable" -B 2 -A 4 crates/pulsen/tests/common/lock.rs`
   9. `grep -n "SpawnFailed" -B 2 -A 4 crates/pulsen/tests/common/lock.rs`
   10. `grep -n "fn start_holder" -A 25 crates/pulsen/tests/common/lock.rs` で `spawn()` の `Err` と `stdout` 取得失敗が `Started::SpawnFailed` に振り分けられていることを読む
-  11. `grep -n "fn probe_holder" -A 16 crates/pulsen/tests/common/lock.rs`
+  11. `grep -n "fn probe_holder" -A 20 crates/pulsen/tests/common/lock.rs`
 - **期待結果:**
   - 手順4: **赤**。`tc_port_exclusive_lock_002` / `003` / `004` / `005` の**4件**が失敗し、`SKIP` 行としては現れない。
   - 手順5: メッセージが `ロック保持フィクスチャ(examples/lock_holder)を起動できなかった(probe の起動時に観測した理由): Permission denied (os error 13)` の形で、`spawn` が返したエラーの内容がそのまま載っている。probe の時点で観測した理由であることが読め、`Started::SpawnFailed` の腕（今この場の起動の失敗）と読み分けられる。
@@ -242,7 +242,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **期待結果:**
   1. 一時的な差し込み（カウンタ・`from_nanos`）が1件も残っていない。
   2. `SIGNAL_DEADLINE` の値は変わらず、変わっているのは doc コメントだけ。
-  3. doc コメントが、期限超過の意味が2つに分かれたこと（probe では能力の判定、probe 成立後は異常）を述べており、待ち続けない理由（フィクスチャのハングはテストの失敗より診断が難しい。ADR-060）が残っている。
+  3. doc コメントが、期限超過の意味を probe とその成立後で分けて述べている — probe ではその超過が「この環境は合図を期限内に返せない」という能力の判定になり、probe が成立したあとの超過は、同じ手順が一度は期限内に返っている以上その超過を能力の宣言としては読めないので失敗になる（繰り返し起きるなら期限そのものの見直しに回す旨まで書かれている。ADR-073）。いずれの場合も待ち続けない理由（フィクスチャのハングはテストの失敗より診断が難しい。ADR-060）も残っている。
   4. ヒット0件。
   5. `lock_holder` が存在し（確認項目8 で消したものが `--workspace` の実行で作り直されている）、実行ビットが戻っている（確認項目9 の `chmod 000` が残っていない）。
   6. 緑。
@@ -277,7 +277,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   2. 前書きが「実行ファイルを要するため」ではなく「保持プロセスの合図が期限内に返らない環境では走らなくなりうる」の趣旨に改まり、実行ファイルが無い場合はスキップではなくケースの失敗になる旨が続いている。
   3. 実行ファイルの不在・起動の失敗が「前提を作れない環境」ではなく**ケースの失敗**であることが、表の直後か該当行の近くに1文で明記されている。旧い述語（不在 → 前提を作れない環境 → スキップ）を述べる文が文書内に1つも残っていない。
   4. **ヒット0件。** 適用側の定数名・関数名・型名が正本の表に入っていない（`crates/pulsen/tests/` の名前を変えるだけで表が古くなる形にしない。「判定」列だけでなく「前提を作れない環境」列にも同じ縛りが掛かる）。
-  5. 区分 B の5件が3 OS で走った理由が「`--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能した」のままで、この実測（`e524981` 時点の測定で、example を含まない）に「合図が期限内に返った」という解釈が足されていない。実測の値そのもの（run 番号・件数・OS 別の内訳）も書き換わっていない。
+  5. ヒットは1行（区分 B の bullet）。5件が3 OS で走った理由は「`--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能した」のままで、そこに「合図が期限内に返った」という解釈が足されていない（この run が採ったのは `SKIP` 行の集合＝走ったかどうかで、合図が期限内に返ったかは測っていない）。同じ bullet に続く TC-task-register-task-017 の記述は、その受け入れケースが同じ前提（保持プロセスの合図が期限内に返るか）を共有し3 OS すべてで走ったという観測と、この1件の `SKIP` 行（`ハーネスが lock::hold を提供しないため…`）を TC-port-exclusive-lock-002 / 003 / 004 / 005 の行の括弧で読む旨を述べる形になっている。実測の値そのもの（run 番号・件数・OS 別の内訳）は書き換わっていない。
 - **確認ポイント:** 手順4 が0件であることが、この文書を「別実装（in-memory 等）にも適用できるスイートの正本」として保つ条件。`permission_restrictions_effective` が判定列に書かれているのはスイート側（`crates/pulsen-conformance/src/`）にある関数だからで、事情が違う。同節の「測定したのは `e524981`…」と「その更新は #11 の責務とする」の古さは本Issueでは直さない（スコープ外）。
 
 ### 13. CI の why コメントが事実に合わせて改まっている
@@ -290,7 +290,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   3. `grep -n -- "--test " .github/workflows/ci.yml`
   4. `git diff origin/main -- .github/workflows/ci.yml`
 - **期待結果:**
-  1. **ヒット0件。** 「4件＋1件が『宣言済みスキップ』に化ける」が「4件＋1件が**失敗する**（実行ファイルの不在は環境の能力ではないので、`SkipBudget` の許容集合には入れない）」の趣旨に改まっている。
+  1. **ヒットは1件だけ**で、それは「非 root で走っていることを確認する」ステップの why コメント（`権限系10件が「宣言済みスキップ」として静かに緑になる`）。これは権限系の probe についての記述で本Issueの対象外。テストステップの why コメント塊（手順2 で読む範囲）には1件も無く、そこでは「4件＋1件が『宣言済みスキップ』に化ける」が「4件＋1件が**失敗する**（実行ファイルの不在は環境の能力ではないので、`SkipBudget` の許容集合には入れない）」の趣旨に改まっている。
   2. 成立条件が1文添えられている — 単一のテストターゲットを指定した実行は example をビルドしないだけで過去の成果物を消しはしないため、失敗するのは `target/` にその成果物が残っていない場合である旨。`--workspace` のままにする理由は残っている。
   3. **ヒット0件。** 書き加えた文に単一ターゲット指定のコマンドの綴りが入っていない（日本語の言い換え「単一のテストターゲットを指定した実行」で通している）。
   4. 差分がこのコメント塊だけで、`run:` の実行内容（`cargo test --workspace --locked --no-fail-fast -- --nocapture 2>&1 | tee test.log` 等）が変わっていない。
@@ -356,7 +356,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **手順:**
   1. `grep -n "fn kill_and_wait" -A 5 crates/pulsen/tests/common/lock.rs`
   2. `grep -n "kill_and_wait\|release(" crates/pulsen/tests/common/lock.rs`
-  3. `grep -n "fn probe_holder" -A 16 crates/pulsen/tests/common/lock.rs`
+  3. `grep -n "fn probe_holder" -A 20 crates/pulsen/tests/common/lock.rs`
   4. 確認項目5〜9 の各実行後に、`lock_holder` のプロセスが残っていないことを確認する。
 - **期待結果:**
   - 手順1: `kill()` と `wait()` の結果をいずれも捨てる小さなヘルパーが1つある（既に終了している子への `kill()` はエラーになりうるが、目的は「残さないこと」だけで、どちらの結果もこの先の判断に使わない）。
