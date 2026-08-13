@@ -66,3 +66,7 @@ R3 は Key が完全一致する既出指摘が無く、8件すべて新規。�
 （`cli/render.rs:tick_summary/スキップ見出し` → 分割の切り口が書き込みの有無とずれた、
 `tick/mod.rs:commit/frozenの導出` → 導出は直ったが規則を張るテストが無い、
 `tests/cli_tick.rs/滞留エージェントの空虚合格` → 滞留を伸ばした結果が実時間依存になった）。
+| `cli/wire.rs:compose/使わない資源の検証` | R4 | fix | `tick` が自身の動作に不要な `current_dir()` と ID発行の初期化の失敗で非0終了しうる。pages 縮退規則1 と ADR-068 の判断に対して非対称 | 0 |
+| `steps.md:設計/実装との食い違い` | R4 | fix-editorial | `InconsistentRunFiles` / `TransitionError` / `TickIssue` / サマリーのフィールド一覧が ADR-073・086・088 の実装と食い違ったまま残っている | 0 |
+
+R4: 新規 2 / fix 1 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 新規2件・独立・すべて fix 系）

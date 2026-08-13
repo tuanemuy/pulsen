@@ -54,7 +54,7 @@ crates/pulsen/tests/
 
 - `ExitCode(i32)` — `is_success()` は 0 か否か。ラッパーが書く符号化値(exit code / 128+シグナル番号 / 127 / 126)をそのまま保持し、意味づけはしない。
 - `PidFileContent { pid: Pid, kill_ident: KillIdent }` — pid ファイルの内容。この出現が「同定情報一式が揃った」というシグナルになる(starttime → pid の書き込み順序が前提)。
-- `LaunchingDecision = ConfirmRunning(ProcessIdent) | KeepWaiting | SuspectSpawnFailure`、`LaunchingRecheck = ConfirmRunning(ProcessIdent) | SpawnFailed`、`InconsistentRunFiles { message: String }`。
+- `LaunchingDecision = ConfirmRunning(ProcessIdent) | KeepWaiting | SuspectSpawnFailure`、`LaunchingRecheck = ConfirmRunning(ProcessIdent) | SpawnFailed`、`InconsistentRunFiles = MissingStartTime`(破れの種別だけを持ち、利用者に見せる言葉は `cli::render` が決める。adr.md ADR-073 / ADR-086)。
 - `LaunchingClassifier`(依存ポートなしの純粋サービス)
   - `const GRACE_PERIOD: DurationSpec`(30秒。`DurationSpec::from_secs_unchecked` は `pub(crate)` なので同一クレートから書ける)
   - `classify(recorded_at, now, pid, starttime) -> Result<LaunchingDecision, InconsistentRunFiles>`
@@ -67,11 +67,11 @@ crates/pulsen/tests/
 - `RunDirPath` に6つの導出関数(`pid_file` / `starttime_file` / `exit_file` / `stdout_log` / `stderr_log` / `marker_file`)。ファイル名は `pid` / `starttime` / `exit` / `stdout.log` / `stderr.log` / `invalidated` の定数。
 - `RunDirPath::state_root(&self) -> Option<StateRoot>` — `derive` の逆写像(adr.md ADR-070)。`derive` の直下に置き、レイアウト知識を1箇所に保つ。
 - `WorkspacePlanner::derive(worktree_root, id) -> Workspace` — `path = <worktree_root>/<task-id>`、`branch = pulsen/<task-id>`。`TaskId` の文字集合制約により常に有効な値になるので**全域関数**とし、`parse` の失敗は不変条件違反として `expect` で落とす(CLAUDE.md「パニックは不変条件違反にのみ使う」。既存のプロパティ的テスト `タスクidから導出したブランチ名は常に受理される` が裏付け)。
-- `TransitionError = InvalidState { expected, actual } | WorkspaceAlreadySet | WorkspaceNotSet | NotAgentRunStatus { status } | InvariantViolated { message }`。
+- `TransitionError = InvalidState { expected: &'static [ExecutionStateKind], actual: ExecutionStateKind } | WorkspaceAlreadySet | WorkspaceNotSet | NotAgentRunStatus { status } | MissingCurrentAttempt`(分類だけを持ち、文言は `cli::render` が組み立てる。adr.md ADR-088)。
 - `Task` の遷移6種はいずれも `self` を消費し `now: Timestamp` で `updated_at` を更新する。
   - `confirm_workspace(self, ws, now)` — `workspace = None` が前提。Some なら `WorkspaceAlreadySet`。
   - `record_launching(self, state_root, now) -> Result<(Task, RunDirPath), TransitionError>` — 前提は `Pending | Failed` × AgentRun × workspace 確定済み。`next_attempt_number()` で採番し、`RunDirPath::derive` で導出した run_dir を `AttemptRef`(`process: None`)に載せて `Launching { recorded_at: now }` にする。**番号とパスの食い違いを構成で排除する**ため、`AttemptRef` の採番コンストラクタは番号と run_dir を同時に受け取り `task` モジュール内に閉じる。
-  - `confirm_running(self, process, now)` — 前提 `Launching`。`current_attempt` が None なら `InvariantViolated`。`process` を取り込み `spawn_fail_count` **だけ**を 0 にする。
+  - `confirm_running(self, process, now)` — 前提 `Launching`。`current_attempt` が None なら `MissingCurrentAttempt`。`process` を取り込み `spawn_fail_count` **だけ**を 0 にする。
   - `record_spawn_failure(self, message, spawn_fail_limit, now)` — 前提 `Launching`。`spawn_fail_count += 1`。超過なら `Stopped { SpawnFailLimitExceeded, notified_at: None }`、でなければ `Pending`。`last_failure = SpawnFail`。
   - `record_spawn_failure_in_place(self, message, spawn_fail_limit, now)` — 前提 `Pending | Failed`。`spawn_fail_count += 1`。超過なら `Stopped`、でなければ**実行状態を変えない**。attempt 採番なし。
   - `record_tool_failure(self, kind, message, retry_limit, now)` — 前提 `Pending | Failed`。`attempt_count += 1`。超過なら `Stopped { RetryLimitExceeded }`、でなければ `Failed`。
@@ -150,7 +150,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 
 - `Ok(None)` のロック競合は `TickOutcome::Skipped`(CLI が 0 で終える)。`Err(LockError::Failed)` と `list_active` の Io は `TickError`(非0・状態は変更しない)。
 - 分岐は網羅 `match`。本スライスで配線するのは `Corrupt` / `SnapshotUnreadable` / Pending・Failed × (Wait | AgentRun) / `Launching` の4系統で、残りのアームには引き取り先のスライスを why コメントとして残す(adr.md ADR-065)。
-- サマリー DTO は spec の9フィールドを持つが、本スライスで値が入るのは `launched` / `frozen` / `errors`。`errors` は構造化した `TickIssue`(adr.md ADR-073)。
+- サマリー DTO は spec の9フィールドに `confirmed_running` を加えた10フィールドを持ち(adr.md ADR-086)、本スライスで値が入るのは `launched` / `confirmed_running` / `frozen` / `errors`。`errors` は構造化した `TickIssue`(adr.md ADR-073)。
 - 上限超過で `Stopped` を書いた直後の処理を private な `freeze` 相当に集約し、`frozen` に記録する。notify の呼び出しは #3 がここに足す(adr.md ADR-066)。
 
 **手続きA**(`tick/launch.rs`)— spec の順序どおり。
@@ -168,7 +168,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 
 **手続きC**(`tick/confirm_spawn.rs`)
 
-0. `current_attempt` が None → `TickIssue::InvariantViolated` を報告してスキップ
+0. `current_attempt` が None → `TickIssue::MissingCurrentAttempt` を報告してスキップ
 1. `read_pid_file` / `read_starttime`(`RunFileError` は報告してスキップ・書き込まない)
 2. `LaunchingClassifier::classify`
    - `ConfirmRunning(ident)` → `confirm_running` → `save`
@@ -202,7 +202,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 
 ハーネスの `worktree_root` を**シンボリックリンク経由のパス**として組み立てれば全ケースが正規化の下で走る(macOS の一時ディレクトリでは自然にそうなるが、プラットフォームによらず固定する)。復旧の2分岐は別々のケースで通す — `TC-port-worktree-manager-013`(ブランチのみ存在)の前提は台帳の字義どおり**登録なし・ブランチのみ存在(コミットが積まれている)**として作り、手順4 の `-f` なしの張り直しを通す。`prunable` 登録の張り直し(手順2)は台帳に無い ADR-077 由来の要求なので、worktree を作ってから実体だけを消すフックによる**追加ケース**を1件置く。`TC-013` を prunable 側に寄せると手順4 の分岐がどのケースからも実行されず、実装ごと落ちても適合スイートが緑になる。
 
-**`cli::wire`** — `Runtime` に `runs: FsRunStore` と `state_root()` / `worktree_root()` のアクセサを足す(ADR-061 の「必要になったスライスで理由つきで戻す」に該当。why をコードに添える)。`SystemProcessController` の構築(= `std::env::current_exe()` の読み取り、失敗は `WireError::SelfExeUnavailable`。取得元は `IdentitySource::platform_default()`)は `compose` に載せず、`wire::process_controller() -> Result<SystemProcessController, WireError>` として `tick` と `wrapper` の経路でだけ呼ぶ(adr.md ADR-068)。ラッパー用には**ホームも config も読まない** `compose_wrapper(run_dir) -> Result<WrapperRuntime, WireError>` を別に置く(adr.md ADR-070)。
+**`cli::wire`** — `Runtime` に `runs: FsRunStore` と `state_root()` / `worktree_root()` のアクセサを足す(ADR-061 の「必要になったスライスで理由つきで戻す」に該当。why をコードに添える)。`SystemProcessController` の構築(= `std::env::current_exe()` の読み取り、失敗は `WireError::SelfExeUnavailable`。取得元は `IdentitySource::platform_default()`)は `compose` に載せず、`wire::process_controller() -> Result<SystemProcessController, WireError>` として `tick` と `wrapper` の経路でだけ呼ぶ(adr.md ADR-068)。同じ規則で `Runtime::workflow_store()`(カレントディレクトリの取得)と `wire::id_generator()`(乱数の初期化)も `compose` から外し、`add` の経路でだけ呼ぶ(adr.md ADR-091)。ラッパー用には**ホームも config も読まない** `compose_wrapper(run_dir) -> Result<WrapperRuntime, WireError>` を別に置く(adr.md ADR-070)。
 
 ### CLI / プレゼンテーション
 

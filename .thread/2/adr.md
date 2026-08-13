@@ -854,3 +854,38 @@ Proposed
 - 良い点: 同一タスクが「起動」と「起動の結果が未確定」に並んでも、運用者は「起動は試みたが結末は次の tick が決める」と読める。「起動」と「スキップ」の同時掲示のような矛盾した読み方が生まれない。
 - トレードオフ: spec の `errors` の分類が1つ増える。spec 追従の提起に積む。
 - トレードオフ: 見出しが3つになる。どれも空なら見出しごと出さないので、通常運用の行数は変わらない。
+
+---
+
+## ADR-091: `tick` が使わないカレントディレクトリと乱数の解決を `compose` から切り出す
+
+### Status
+
+Proposed
+
+### Context
+
+`compose()` は `add` と `tick` が共有する合成ルートで、ホームの解決とグローバル設定の読み込み(pages ※1 の全コマンド共通)のほかに、`env::current_dir()` と `DefaultTaskIdGenerator::new`(`getrandom` による初期化)を無条件に行っていた。前者は `FsWorkflowStore` の `base_dir` — `--workflow` に与えた相対パスの解決基準にしか使われず、後者はタスクIDの発行にしか使われない。どちらも `tick` の動作には要らない資源だが、失敗すれば `WireError::CurrentDirUnavailable` / `WireError::IdGenerator` として `tick` が非0で終わる。
+
+pages「縮退状態の共通規則1」(各コマンドは自身の動作に必要なリソースだけを検証する)を根拠に `current_exe()` を `compose()` から `wire::process_controller()` へ切り出したのが ADR-068 で、同じ規則をラッパーの中でもう一段適用したのが `without_self_exe` の判断だった。同じ規則が同じ合成ルートの中で `current_dir` と乱数にだけ適用されていない。AC-12 は「tick は任意の作業ディレクトリから起動しても同じ結果になる」を掲げており、帳簿がすべて絶対パスで閉じているのに結線だけが作業ディレクトリを要求する形は、規則の非対称であると同時に AC-12 の主張を結線の側から裏切る。
+
+### Decision
+
+ADR-068 と同じ形で切り出す。`compose()` に残すのはホームの解決とグローバル設定の読み込みだけにする。
+
+- `Runtime` は `FsWorkflowStore` ではなく `workflows_dir: PathBuf` を持ち、`Runtime::workflow_store() -> Result<FsWorkflowStore, WireError>` が呼ばれた時点でカレントディレクトリを読む。ワークフローの置き場は解決済みのホームから決まるので、`Runtime` のメソッドにする。
+- `wire::id_generator() -> Result<DefaultTaskIdGenerator<SystemClock>, WireError>` は `process_controller()` と同じ自由関数にする。ID の発行はホームから何も受け取らない。
+- `cli/add.rs` が両方を呼ぶ。`tick` / `wrapper` の経路からは消える。
+
+`WireError` の2変種と `cli::render` の文言はそのまま残す — `add` から到達する失敗であることは変わらない。
+
+`Runtime` に `OnceCell` を持たせて遅延構築を隠す案を採らない理由: 内部可変性が入る。構築が要るのは `add` の1経路で高々1回、`compose` の呼び出し元は各コマンドの `execute` 1箇所しかないので、呼び名で構築だと分かる形のほうが読める。
+
+`add` 用と `tick` 用に `Runtime` を型で分ける案を採らない理由: 共有する項目(config・state_root・worktrees・clock・tasks・lock)が大半で、コマンドが増えるたびに組み合わせの型が増える。ラッパーだけを `WrapperRuntime` として分けたのは、ホームも config も読まないという**構成そのものの違い**があるから(ADR-070)で、ここにはその違いが無い。
+
+### Consequences
+
+- 良い点: `tick` の非0終了は `tick` が実際に使う資源の失敗だけに閉じる。AC-12 が結線の形としても読めるようになり、規則の適用が `current_exe` / `current_dir` / 乱数で揃う。
+- 良い点: `compose()` に残るのがホームと config だけになり、「全コマンド共通の起動時処理」という宣言と中身が一致する。
+- トレードオフ: `Runtime` のメソッドに、参照を返すアクセサと構築して `Result` を返すものが混ざる。`workflow_store` / `id_generator` という呼び名を `process_controller` に揃えて、構築であることを名前で示す。
+- トレードオフ: `add` の失敗の検出点が `compose` より1段後ろへ動く。いずれもタスクを作る前で状態は変わらない(pages 規則4)ので、利用者から見える挙動は文言も終了コードも変わらない。

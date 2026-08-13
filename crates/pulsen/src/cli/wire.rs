@@ -81,9 +81,8 @@ pub struct Runtime {
     config: GlobalConfig,
     state_root: StateRoot,
     worktree_root: WorktreeRoot,
-    workflows: FsWorkflowStore,
+    workflows_dir: PathBuf,
     worktrees: GitCliWorktreeManager,
-    ids: DefaultTaskIdGenerator<SystemClock>,
     clock: SystemClock,
     tasks: FsTaskRepository,
     runs: FsRunStore,
@@ -111,19 +110,21 @@ impl Runtime {
         &self.worktree_root
     }
 
-    /// ワークフロー定義のストア。
-    pub fn workflows(&self) -> &FsWorkflowStore {
-        &self.workflows
+    /// ワークフロー定義のストアを組む。
+    ///
+    /// `compose` では組まない — 名前とパスからワークフローを解決するのは `add` だけで、
+    /// 相対パスの解決基準になるカレントディレクトリを要するのもこのストアだけである
+    /// (ADR-091)。
+    pub fn workflow_store(&self) -> Result<FsWorkflowStore, WireError> {
+        let base_dir = env::current_dir().map_err(|error| WireError::CurrentDirUnavailable {
+            message: error.to_string(),
+        })?;
+        Ok(FsWorkflowStore::new(self.workflows_dir.clone(), base_dir))
     }
 
     /// 対象の検証。
     pub fn worktrees(&self) -> &GitCliWorktreeManager {
         &self.worktrees
-    }
-
-    /// タスクIDの発行。
-    pub fn ids(&self) -> &DefaultTaskIdGenerator<SystemClock> {
-        &self.ids
     }
 
     /// 時刻。
@@ -162,25 +163,15 @@ impl Runtime {
 /// 起動時のグローバル設定の読み込みは全コマンド共通(pages ※1)なので、ここで行う。
 pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
     let home = resolve_home(home_flag)?;
-    let base_dir = env::current_dir().map_err(|error| WireError::CurrentDirUnavailable {
-        message: error.to_string(),
-    })?;
 
     let config_path = home.config_path();
     let config = FsConfigStore::new(config_path.clone(), home.path().to_path_buf())
         .load()
         .map_err(|error| WireError::Config { config_path, error })?;
 
-    let ids = DefaultTaskIdGenerator::new(SystemClock::new()).map_err(|error| {
-        WireError::IdGenerator {
-            message: id_generator_cause(&error),
-        }
-    })?;
-
     Ok(Runtime {
-        workflows: FsWorkflowStore::new(home.workflows_dir(), base_dir),
+        workflows_dir: home.workflows_dir(),
         worktrees: GitCliWorktreeManager::new(PathBuf::from(DEFAULT_GIT_PROGRAM)),
-        ids,
         clock: SystemClock::new(),
         tasks: FsTaskRepository::new(home.state_root().clone()),
         runs: FsRunStore::new(home.state_root().clone()),
@@ -250,6 +241,16 @@ pub fn process_controller() -> Result<SystemProcessController, WireError> {
         IdentitySource::platform_default(),
         SystemClock::new(),
     ))
+}
+
+/// 乱数を初期化してタスクIDの発行を組む。
+///
+/// `compose` には載せない — IDを発行するのはタスクを登録する経路だけで、乱数を取れない
+/// ことで `tick` が落ちるのは筋が通らない(ADR-091)。
+pub fn id_generator() -> Result<DefaultTaskIdGenerator<SystemClock>, WireError> {
+    DefaultTaskIdGenerator::new(SystemClock::new()).map_err(|error| WireError::IdGenerator {
+        message: id_generator_cause(&error),
+    })
 }
 
 /// タスクID発行の初期化に失敗した原因。
