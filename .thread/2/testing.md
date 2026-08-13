@@ -286,14 +286,34 @@ EOF
 - **前提:** 確認項目2 の直後（T3 が `launching`）。`task-execution.md` TC-03 手順4。
 - **目的:** 手続きCが pid + starttime の出現をもって `running` へ取り込むこと、猶予時間内（30秒以内）に pid がまだ無い場合は書き込みを一切起こさずに `launching` のまま待つことを確認する。
 - **手順:**
-  1. 確認項目2 の手順3 の直後（1秒以内）にもう一度 `pulsen tick; echo $?` を打ち、`cat "$PULSEN_HOME/state/tasks/$T3.json"` と `stat` でタスクファイルの更新時刻を確認する（猶予内経路。pid がまだ書かれていない場合にだけ意味を持つ手順なので、pid が既にあれば「観測できず」と記録して次へ進む）
+  1. 確認項目2 の手順3 の直後（1秒以内）にもう一度 `pulsen tick; echo $?` を打ち、`cat "$PULSEN_HOME/state/tasks/$T3.json"` と `stat` でタスクファイルの更新時刻を確認する（ラッパーは1秒以内に `pid` を書き終えるため、この手順で猶予内経路を踏めるとは限らない。pid が既にあれば「観測できず」と記録して次へ進み、猶予内経路は手順5 で確かめる）
   2. 2〜3秒あけて `pulsen tick; echo $?`
   3. `cat "$PULSEN_HOME/state/tasks/$T3.json"`
   4. `ls "$PULSEN_HOME/state/runs/$T3/attempt-1/"`（`invalidated` が無いこと）
+  5. 猶予内経路（`KeepWaiting`）は、`launching` かつ run ディレクトリが空（pid 未出現）の状態を作って確かめる。`recorded_at` を現在時刻にするのは猶予（30秒）の内側に置くため:
+
+      ```sh
+      S="$PULSEN_HOME/state/tasks/$T3.json"
+      cp "$S" /tmp/pulsen-test/t3-grace.bak
+      mkdir -p "$PULSEN_HOME/state/runs/$T3/attempt-3"
+      jq --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+         --arg dir "$PULSEN_HOME/state/runs/$T3/attempt-3" \
+         '.execution = {"state":"launching","recorded_at":$now}
+          | .current_attempt = {"number":3,"run_dir":$dir,"process":null}' \
+        "$S" > /tmp/pulsen-test/t3.new && mv /tmp/pulsen-test/t3.new "$S"
+      md5 -q "$S" 2>/dev/null || md5sum "$S"
+      pulsen tick; echo $?
+      md5 -q "$S" 2>/dev/null || md5sum "$S"
+      ls -a "$PULSEN_HOME/state/runs/$T3/attempt-3/"
+      cp /tmp/pulsen-test/t3-grace.bak "$S"                      # 復元（後続項目の前提）
+      rmdir "$PULSEN_HOME/state/runs/$T3/attempt-3"
+      ```
+
 - **期待結果:**
   - 手順1: exit code 0。タスクファイルの内容も `updated_at` も変わらない（`KeepWaiting` は書き込みを一切発生させない）。
   - 手順2・3: `execution` が `{"state":"running"}` になり、`current_attempt.process` に `pid` / `kill_ident` / `starttime`（`ident` と `wall`）が入る。`counters.spawn_fail_count` は 0。`task_status` は `queued` のまま。
   - 手順4: `invalidated`（無効化マーカー）が作られていない（猶予超過していないため）。
+  - 手順5: exit code 0 で「処理対象のタスクはありませんでした。」が表示され、tick の前後でタスクファイルのチェックサムが一致する。`attempt-3/` は空のまま（`invalidated` も作られない）。
 - **確認ポイント:** `current_attempt.process.starttime.ident` が `attempt-1/starttime` ファイルの `ident` と**完全に一致**すること — ラッパーが記録した値がそのまま帳簿へ移ることが、Issue #3 の生存判定の前提になる（ADR-067）。取り込み後も `attempt_count` が 0 のままであること（起動は attempt_count を消費しない）。
 
 ### 4. ラッパーの成果物とスナップショットの有効性
@@ -406,17 +426,34 @@ EOF
 - **目的:** tick が対象リポジトリの外・cron のような最小環境から起動されても同じ結果になること（帳簿がすべて絶対パスで閉じていること）を確認する。
 - **手順:**
   1. `which pulsen`（絶対パスを控える。`$PWD/target/debug/pulsen` になる）
-  2. `crontab -e` で以下の1行を登録する（`<pulsen>` は手順1、`<home>` は `$SETUP_HOME` の絶対パス）:
+  2. cron に以下の1行を登録する（`<pulsen>` は手順1、`<home>` は `$SETUP_HOME` の絶対パス）:
 
       ```
       * * * * * <pulsen> tick --home <home> >> <home>/cron.log 2>&1
+      ```
+
+      対話的に行う場合は `crontab -e` でこの行を加える。非対話で行う場合は既存の crontab に足して読み込ませる:
+
+      ```sh
+      crontab -l > "$SETUP_WORK/crontab.bak" 2>/dev/null; echo "crontab_before=$?"   # 1 なら登録なし
+      { cat "$SETUP_WORK/crontab.bak" 2>/dev/null
+        printf '* * * * * %s tick --home %s >> %s/cron.log 2>&1\n' \
+          "$(which pulsen)" "$SETUP_HOME" "$SETUP_HOME"
+      } | crontab -
+      crontab -l
       ```
 
   3. `pulsen add --workflow implement --repo "$SETUP_REPO" --home "$SETUP_HOME"; echo $?` → `export T6=<task-id>`
   4. 3〜4分待ってから `cat "$SETUP_HOME/cron.log"`
   5. `cat "$SETUP_HOME/state/tasks/$T6.json"`
   6. `ls "$SETUP_HOME/worktrees/"; git -C "$SETUP_REPO" branch --list 'pulsen/*'; ls -R "$SETUP_HOME/state/runs/$T6/"`
-  7. `crontab -e` で手順2 の行を削除する
+  7. 手順2 の行を削除して cron を元の状態に戻す。対話的に行う場合は `crontab -e` でその行を消す。非対話で行う場合は手順2 の控えに戻す:
+
+      ```sh
+      if [ -s "$SETUP_WORK/crontab.bak" ]; then crontab "$SETUP_WORK/crontab.bak"; else crontab -r; fi
+      crontab -l; echo $?
+      ```
+
   8. cron を使えない環境（macOS でフルディスクアクセスが許可できない等）では手順2・4 を次で代替し、cron 分をスキップとして記録する:
 
       ```sh
@@ -461,6 +498,8 @@ EOF
 
 すべてのケースで、**tick 自体の exit code が 0 であること**（tick は1タスクの失敗で全体を落とさない。ロック機構の異常と走査の Io だけが非0）と、**該当タスク以外の状態が変わっていないこと**を共通の確認手段とする。
 
+タスク単位の報告は、結末別に「失敗を記録(<n>件):」（カウンタを消費した）／「起動の結果が未確定(<n>件):」／「スキップ(<n>件):」（タスクファイルへの書き込み無し）の3見出しで表示される。`errors` という見出しは画面には出ない。
+
 ### 1. worktree 作成失敗（登録後のリポジトリ消失）とリトライ上限超過
 
 - **対応する受け入れ基準:** AC-13
@@ -496,24 +535,26 @@ EOF
   5. `pulsen tick; pulsen tick; cat "$PULSEN_HOME/state/tasks/$T16.json"`
   6. `pulsen tick; echo $?; cat "$PULSEN_HOME/state/tasks/$T16.json"`
   7. `cat /tmp/pulsen-test/notify.log`
-  8. `TC-exec-tick-055`（config 修正が次の tick で反映される）は上限に達していない**別タスク**で裏付ける:
+  8. `TC-exec-tick-055`（config 修正が次の tick で反映される）は上限に達していない**別タスク**で裏付ける。`add` は登録時にワークフローが参照するエージェントを config に照合するため、登録は config が健全な状態で行う:
 
       ```sh
+      cp /tmp/pulsen-test/config.bak /tmp/pulsen-test/home/config.yaml       # 登録のために戻す
       pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo; echo $?   # → T16b
-      pulsen tick                      # spawn_fail_count 1
+      sed -i.bak3 's/^  shell:/  shellx:/' /tmp/pulsen-test/home/config.yaml
+      pulsen tick; echo $?             # spawn_fail_count 1
       cat "$PULSEN_HOME/state/tasks/<T16b>.json"
       cp /tmp/pulsen-test/config.bak /tmp/pulsen-test/home/config.yaml       # 復元（後続項目のためにも必須）
       pulsen tick; echo $?
       cat "$PULSEN_HOME/state/tasks/<T16b>.json"
       ```
 
-  9. 片付け: `rm -f /tmp/pulsen-test/home/config.yaml.bak2 && grep -n 'shell:' /tmp/pulsen-test/home/config.yaml`
+  9. 片付け: `rm -f /tmp/pulsen-test/home/config.yaml.bak2 /tmp/pulsen-test/home/config.yaml.bak3 && grep -n 'shell:' /tmp/pulsen-test/home/config.yaml`
 - **期待結果:**
   - 手順4: exit code 0。`execution` は `{"state":"pending"}` の**まま**、`current_attempt` は `null` の**まま**（採番されない）、`counters.spawn_fail_count` が 1、`last_failure.kind` が `spawn_fail`。`worktrees/<T16>` は**作成される**（worktree 確保はテンプレート展開より前）。`state/runs/<T16>/` は作られない。
   - 手順5: `spawn_fail_count` が 2 → 3（3 = 上限。等号では凍結しない）。実行状態は `pending` のまま。
   - 手順6: `spawn_fail_count` 4 > 3 で `execution` が `{"state":"stopped","reason":"spawn_fail_limit_exceeded","notified_at":null}`。サマリーの `frozen` に1件。
   - 手順7: T16 の通知行は無い（Issue #3）。
-  - 手順8: config 復元後の tick で T16b が `launching` になり、`worktrees/<T16b>` と `state/runs/<T16b>/attempt-1/` が作られる。
+  - 手順8: config を壊した状態の tick で T16b の `spawn_fail_count` が 1 になり `execution` は `pending` のまま。config 復元後の tick で T16b が `launching` になり、`worktrees/<T16b>` と `state/runs/<T16b>/attempt-1/` が作られる（`spawn_fail_count` は 1 のまま。起動の成功はカウンタを戻さない）。
 - **確認ポイント:** 手順4 で「worktree は作られるが runディレクトリは作られない」という非対称が成り立つこと（手続きAの段階の順序がそのまま観測される）。`attempt_count` が一度も増えないこと（spawn 失敗と実行失敗はカウンタが別）。**手順8 の config 復元は後続項目の前提なので必ず実行する**（`shellx` のままだと以降のすべての起動が spawn 失敗になる）。
 
 ### 3. パース不能なタスクファイルの混在と他タスクの続行
@@ -533,12 +574,12 @@ EOF
   9. `cat /tmp/pulsen-test/notify.log`
   10. 復元: `cp /tmp/pulsen-test/t20.bak "$PULSEN_HOME/state/tasks/$T20.json"`
 - **期待結果:**
-  - 手順5: exit code **0**。サマリーの `errors` に「読めないタスクファイル」として **T20 のファイルパス**が報告される。
+  - 手順5: exit code **0**。サマリーの「スキップ(1件):」に `<パス>: タスクファイルを読めません(<原因>)` として **T20 のファイルパス**が報告される。
   - 手順6: 内容は `broken` のまま（破損ファイルへの書き込みは行われない）。
   - 手順7: T20H は `pending` のまま何も起きない（`Cleanup` のアームが未配線。ADR-065。TC-20 の「アーカイブされる」は Issue #6 に読み替え）。
   - 手順8: T20P は破損ファイルと**同一 tick で起動され**、`launching`・`worktrees/<T20P>`・`state/runs/<T20P>/attempt-1/` が作られる。
   - 手順9: T20 に関する通知は無い。
-- **確認ポイント:** `errors` の行から「どのファイルが読めなかったか」がパスで特定できること（修復の入口。`ls` が無い本スライスではこれが唯一の報告経路）。破損ファイルの mtime が変わっていないこと。
+- **確認ポイント:** スキップの行から「どのファイルが読めなかったか」がパスで特定できること（修復の入口。`ls` が無い本スライスではこれが唯一の報告経路）。破損ファイルの mtime が変わっていないこと。
 
 ### 4. スナップショットのみ破損したタスクのスキップと報告
 
@@ -562,7 +603,7 @@ EOF
   7. `ls "$PULSEN_HOME/state/runs/$T25/" 2>/dev/null; echo $?; ls "$PULSEN_HOME/worktrees/" `
   8. `cat /tmp/pulsen-test/notify.log`
   9. 復元: `cp /tmp/pulsen-test/t25.bak "$PULSEN_HOME/state/tasks/$T25.json"`
-- **期待結果:** 手順5 は exit code 0 で、サマリーの `errors` に T25 の**タスクID**とスナップショット読み取り不能によるスキップが報告される。手順6 でファイル内容が変わっていない。手順7 で `state/runs/<T25>/` も `worktrees/<T25>` も作られていない。手順8 で T25 に関する通知は無い。
+- **期待結果:** 手順5 は exit code 0 で、サマリーの「スキップ(1件):」に `<タスクID>: 埋め込まれたワークフロー定義を読めません(<原因>)` として T25 の**タスクID**が報告される。手順6 でファイル内容が変わっていない。手順7 で `state/runs/<T25>/` も `worktrees/<T25>` も作られていない。手順8 で T25 に関する通知は無い。
 - **確認ポイント:** 破損したタスクファイル（エッジケース3）と違い、**タスクIDが報告に出る**こと（属性は読めているため）。`stopped` にされていないこと — 縮退状態は利用者が直せる状態であり、ツールが凍結させてよい状態ではない。
 
 ### 5. ロック競合 — tick は 0 でスキップ、add は非0で拒否
@@ -572,17 +613,28 @@ EOF
 - **目的:** tick と状態変更系 CLI が同一の排他ロックを使い、競合した tick は状態を変更せず exit code **0** でスキップし（cron 運用でアラートにしないための唯一の例外）、競合した `add` は非0で終了してタスクを作らないことを確認する。
 - **手順:**
   1. `pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo; echo $?` → `export T24=<task-id>`
-  2. 別端末（`PULSEN_HOME` を同様に設定）でロックを保持する。`locked` の出力がロック取得の合図。**標準入力を開いたまま**にする:
+  2. ロックを保持する。`locked` の出力がロック取得の合図で、`lock_holder` は**標準入力が閉じるまで**保持し続ける。
+
+      別端末で対話的に保持する場合（`PULSEN_HOME` を同様に設定し、その端末を開いたままにする）:
 
       ```sh
       /Users/hikaru/github.com/tuanemuy/pulsen/target/debug/examples/lock_holder /tmp/pulsen-test/home/state/lock
+      ```
+
+      同じ端末から非対話で保持する場合は、名前付きパイプ（fifo）の書き込み端を fd で開いたままにする:
+
+      ```sh
+      mkfifo /tmp/pulsen-test/holder.fifo
+      /Users/hikaru/github.com/tuanemuy/pulsen/target/debug/examples/lock_holder \
+        /tmp/pulsen-test/home/state/lock < /tmp/pulsen-test/holder.fifo &
+      exec 9> /tmp/pulsen-test/holder.fifo
       ```
 
   3. 保持中の端末で `ls -l "$PULSEN_HOME/state/tasks/" > /tmp/pulsen-test/lock-before.txt`
   4. `pulsen tick; echo $?`
   5. `pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo; echo $?`
   6. `ls -l "$PULSEN_HOME/state/tasks/" | diff /tmp/pulsen-test/lock-before.txt -; echo $?`
-  7. 手順2 のプロセスの標準入力を閉じる（Ctrl-D）
+  7. 手順2 のプロセスの標準入力を閉じる（対話的に保持している場合は Ctrl-D、fifo で保持している場合は `exec 9>&-`）
   8. `pulsen tick; echo $?`
 - **期待結果:** 手順4 は「別の操作が実行中のためスキップした」旨を表示して exit code **0**（待ちに入らず即座に返る）。手順5 は「別の操作が実行中」として非0。手順6 で差分なし（タスクファイルは増えても変わってもいない）。手順8 は解放後に通常どおり exit code 0 で処理が進み、T24 が起動される。
 - **確認ポイント:** 手順4 の表示が「エラー」ではなく「スキップ」として読めること（cron のログに毎分エラーが出ないことが exit 0 規約の目的）。手順4・5 のどちらもブロックしないこと。手順2 のプロセスを `kill -9` で強制終了した場合でも手順8 が成功すること（保持プロセスの異常終了でロックが残らない）。
@@ -631,7 +683,7 @@ EOF
   5. `pulsen tick; echo $?`
   6. `cat "$PULSEN_HOME/state/tasks/$T27.json"`
   7. `until [ -f "$PULSEN_HOME/state/runs/$T27/attempt-2/exit" ]; do sleep 1; done; cat "$PULSEN_HOME/state/runs/$T27/attempt-2/exit"; echo; ls "$PULSEN_HOME/state/runs/$T27/attempt-2/"`
-- **期待結果:** 手順5 は exit code 0 で通常どおり起動が記録される（サマリーに worktree 作成に関する失敗は出ない）。手順6 で `execution` が `launching`、`current_attempt.number` が 2。手順7 で `attempt-2/exit` が **非0**（cwd に到達できないため 126）で、`stdout.log` は空。
+- **期待結果:** 手順5 は exit code 0 で通常どおり起動が記録される（サマリーに worktree 作成に関する失敗は出ない）。手順6 で `execution` が `launching`、`current_attempt.number` が 2。手順7 で `attempt-2/exit` が **非0**（cwd に到達できないため 126）で、`attempt-2/` に残るのは `starttime` / `pid` / `exit` の3ファイル — `stdout.log` / `stderr.log` は**作られない**（ラッパーは cwd の到達性を確かめてから リダイレクト先を開くため、この経路ではログファイル自体が現れない）。
 - **確認ポイント:** tick 側に新しい分岐が生じないこと — この失敗は帳簿上「エージェント実行が非0で終わった」ことと区別できず、判定（Issue #3）が既存の failed 経路で扱う。`exit` が書かれること自体が重要（書かれないと Issue #3 が「exit なし・プロセス死亡」という別経路で扱うことになる）。
 
 ### 8. ブランチのみ残存した状態からの worktree 張り直し
@@ -697,7 +749,7 @@ EOF
 - **後片付け:**
 
     ```sh
-    crontab -l | grep -v 'pulsen tick' | crontab -   # 確認項目8 の行が残っていないこと
+    crontab -l 2>/dev/null | grep -c 'pulsen tick'   # 確認項目8 の行が残っていないこと（0件）
     ps -ef | grep -i 'pulsen wrapper\|lock_holder' | grep -v grep   # 残留プロセスが無いこと
     git -C /tmp/pulsen-test/repo worktree list
     rm -rf /tmp/pulsen-test "$HOME/pulsen-manual-test" "$HOME/pulsen-manual-work" "$HOME/pulsen-test-repo"
