@@ -195,7 +195,7 @@ pub fn execute(&self) -> Result<TickOutcome, TickError>
 **`GitCliWorktreeManager::create`**(`adapter/worktree.rs` に追加)— 既存の private `run()`(env を落とした `git -C <repo>`)を再利用する。判定は問い合わせコマンドの組み合わせで導く(ADR-024 の方針)。
 
 1. 同定用の鍵を作る private 関数を1つ置く — `physical_key(p) = std::fs::canonicalize(p.parent()) . join(p.file_name())`(adr.md ADR-077)。`ws.path` の親(worktree_root)は事前に `ensure_dir` する。パス自体を canonicalize しないのは、実体が消えている場合に失敗して比較そのものが成立しないため
-2. `git -C <repo> worktree list --porcelain` の各エントリの `worktree` 行を**同じ `physical_key` に通して**から `ws.path` の鍵と突き合わせる(**正規化は両側に対称に適用する**。生のパスの文字列比較は禁じる。片側だけの正規化は Windows の拡張長パスで必ず外れる)。鍵に変換できないエントリは不一致として扱う。一致するエントリが `ws.branch` を指し、かつ `prunable` が付いていなければ達成済みとして `Ok`(内容に触れない)。別ブランチなら `Failed`。一致し、`ws.branch` を指すが `prunable` が付いている(登録は残っているが実体が消えている)なら `worktree add -f <path> <branch>` で張り直して `Ok`
+2. `git -C <repo> worktree list --porcelain` の各エントリの `worktree` 行を**同じ `physical_key` に通して**から `ws.path` の鍵と突き合わせる(**正規化は両側に対称に適用する**。生のパスの文字列比較は禁じる。片側だけの正規化は Windows の拡張長パスで必ず外れる)。鍵に変換できないエントリは不一致として扱う。一致するエントリが `ws.branch` を指し、`ws.path` が実体として存在し(`try_exists`)、かつ `prunable` が付いていなければ達成済みとして `Ok`(内容に触れない)。別ブランチなら `Failed`。一致し、`ws.branch` を指すが実体が無いか `prunable` が付いている(登録は残っているが実体が消えている)なら `worktree add -f <path> <branch>` で張り直して `Ok`
 3. 登録が無く、`ws.path` が実体として存在するなら `Failed`(自動修復しない)
 4. `show-ref --verify --quiet refs/heads/<ws.branch>` で既存ブランチを判定 — 存在すれば `worktree add <path> <branch>`(**`-f` なし**。先端を変えない)、しなければ `worktree add -b <branch> <path> <base>`
 5. 非0終了・起動失敗はすべて `WorktreeError::Failed { message }`(分類には使わない不透明な message)

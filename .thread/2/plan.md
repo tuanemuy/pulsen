@@ -64,7 +64,7 @@ Issue #1 で確立した基準をそのまま使う。**チェックを付ける
 | `UC-execution-003` | 手続きAの順序・worktree確保・展開失敗の5経路・launching記録・`prepare_attempt`・spawn・上限超過での `Stopped` 保存と `frozen` 記録 | `Stopped` 保存直後の notify(台帳 PASS が手続きの途中の必須ステップとして書いている) | #3 |
 | `UC-execution-005` | 手続きCの全分岐とマーカー順序・上限超過での `Stopped` 保存と `frozen` 記録 | 同上 | #3 |
 | `PAGE-tick-002` | 全タスクファイルの走査と、起動・launching分類 | 観測・判定・遷移・クリーンアップ・通知 | #3 / #6 |
-| `PAGE-tick-004` | `launched` / `frozen` / `errors` の表示 | `transitioned` / `skipped_back` / `notified` / `archived` / `gc_deleted` の表示 | #3 / #6 |
+| `PAGE-tick-004` | 全フィールドの表示と、値の入る `launched` / `confirmed_running` / `frozen` / `errors` が実際に表示されること | `transitioned` / `skipped_back` / `notified` / `archived` / `gc_deleted` / `gc_errors` は値の入る経路が無く、表示される様子を確認できない | #3 / #6 |
 | `PAGE-tick-009` | 進行中の worktree 消失をエージェント実行の失敗として既存経路に落とすこと | クリーンアップでの削除済み扱いの続行 | #6 |
 | `UC-flow-002`(F2) | attempt 採番 → runディレクトリ作成 → spawn → starttime/pid/マーカー/実行/exit → 次tickの running 取込 | exit 観測・判定・終端(completed / skipped / failed)確定・abort による中断 | #3 / #5 |
 | `UC-flow-004`(F4) | 作成と、全ステータスで同一 worktree を使うこと(リトライ間で内容が引き継がれる) | 削除(手続きB)と終端の `remove` | #6 |
@@ -74,6 +74,8 @@ Issue #1 で確立した基準をそのまま使う。**チェックを付ける
 | `TC-exec-tick-038` | stopped の保存と `frozen` 記録 | 直後の notify 実行 | #3 |
 | `TC-exec-tick-045` | 同上 | 同上 | #3 |
 | `TC-exec-tick-076` | 同上 | 同上 | #3 |
+
+`PAGE-tick-004` の表示は10フィールド分をまとめて実装する。サマリー DTO が spec の9フィールドと `confirmed_running` を持つ(adr.md ADR-086)以上、表示だけを本スライスで値の入る4つに絞ると、並びの規則が確定せず #3 / #6 が同じ表示を足し直すことになる。値の入る経路が本スライスに無いフィールドは、表示が実際に現れるところまでは #3 / #6 でしか確かめられないので、行は未チェックのままにする。`RunDirPath::attempt_dir_name` が `pub` なのは、run ディレクトリの値を持たない断片(タスクIDと attempt 番号)から名前を組む gc の表示(`gc_deleted` / `gc_errors`)がここに含まれるため。
 
 これとは別に、**実行環境が前提を作れないとスキップで終わる行**がある。スキップで終わった行にはチェックを付けず、スキップした理由と確認した環境(OS・root か否か・TMPDIR の位置)を Issue のコメントに残す。
 

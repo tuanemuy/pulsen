@@ -432,10 +432,7 @@ fn 別の操作がロックを保持していればスキップして0で終わ�
     let repo = Repo::with_commit();
     let id = register(&home, &repo);
 
-    let Some(holder) = common::lock::hold(&home.lock_path()) else {
-        common::skipped("tc_exec_tick_015", "lock::hold");
-        return;
-    };
+    let holder = common::lock::hold(&home.lock_path()).expect("ロックを別プロセスに保持させられる");
 
     let run = run_tick(&home);
 

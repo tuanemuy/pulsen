@@ -36,7 +36,7 @@ const PERMISSION_CASES: [&str; 4] = [
 ];
 
 /// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
-const LOCK_HOLDER_CASES: [&str; 2] = ["tc_task_register_task_017", "tc_exec_tick_015"];
+const LOCK_HOLDER_CASES: [&str; 1] = ["tc_task_register_task_017"];
 
 /// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_task_register_task_036"];

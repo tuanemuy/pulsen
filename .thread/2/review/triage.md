@@ -89,3 +89,11 @@ R6: 新規 2 / fix 1 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方�
 | `conformance_worktree.rs:worktree_root/symlink失敗の握り潰し` | R7 | fix | 正規化の分岐を通す前提が報告なしに消える（スキップ規律の外の縮退） | 0 |
 
 R7: 新規 6 / fix 4 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 全件 fix 系で見送り判定ゼロ、いずれも別ファイルで独立）
+| `cli/render.rs:サマリー表示/部分消化表との食い違い` | R8 | fix-editorial | 本スライスで値の入らないフィールドまで表示を実装しており、plan.md の「残る部分」の記述と合わない（実装を残し記述を実態に合わせる） | 0 |
+| `adr.md:ADR-077/復旧分岐の条件` | R8 | fix-editorial | 決定文が `prunable` 注記だけで書かれ、実装の `try_exists()` 併用と食い違う（昇格時に決定記録が誤ったまま `.adr/` に入る） | 0 |
+| `adapter/process.rs:モジュールdocの主語` | R8 | fix-editorial | 「OS 依存の分岐はこのファイルだけ」が事実に反する（`util/atomic.rs` にもある） | 0 |
+| `conformance_worktree.rs:prunable前提の移植性` | R8 | fix | フィクスチャが `prunable` 注記を前提にしており、注記を出さない git では適合スイートだけが落ちる | 0 |
+| `tests/cli_wrapper.rs:TC-026/ログが空の主張` | R8 | fix | 「何も出力しないエージェントのログは空」を誰も主張していない | 0 |
+| `tests/cli_tick.rs:tc_exec_tick_015/効かないスキップ宣言` | R8 | fix | 先に `agent_probe` の `expect` で落ちるため到達せず、plan.md のスキップ表にも無い | 0 |
+
+R8: 新規 6 / fix 3 / fix-editorial 3 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 全件 fix 系で見送り判定ゼロ。サマリー表示の扱いはメインが「実装を残し記述を実態に合わせる」と裁定）

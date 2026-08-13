@@ -76,6 +76,14 @@ impl Launch {
         serde_json::from_slice(&bytes).expect("JSON である")
     }
 
+    /// ログファイルの内容。
+    fn log(&self, name: &str) -> String {
+        let path = self.run_dir().join(name);
+        fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("{}: 読めない: {error}", path.display());
+        })
+    }
+
     /// exit ファイルに記録された符号化値。
     fn exit_code(&self) -> i64 {
         self.read_json("exit")["code"]
@@ -120,6 +128,10 @@ fn 起動引数どおりのエージェントが実行され終了結果がrun�
         vec!["exit", "pid", "starttime", "stderr.log", "stdout.log"]
     );
     assert_eq!(launch.exit_code(), 0);
+    // エージェントが何も書かなければログは空のまま。ラッパー自身の診断がログへ混じると、
+    // 利用者はエージェントの出力とラッパーの出力を区別できなくなる。
+    assert_eq!(launch.log("stdout.log"), "");
+    assert_eq!(launch.log("stderr.log"), "");
 }
 
 #[test]

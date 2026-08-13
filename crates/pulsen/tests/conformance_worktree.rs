@@ -281,10 +281,13 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
             HEAD_BRANCH,
         )?;
         common::git::commit_file(workspace.path().as_path(), MARKER_FILE, "消える前の成果物")?;
-        // 実体だけを消すと登録が残り、git は `prunable` として列挙する。
+        // 実体だけを消すと登録が残る。前提が成立したかは「登録が在る」かつ「実体が無い」で
+        // 見る — `prunable` の注記は git のバージョンで出力されないことがあり、注記を条件に
+        // すると、同じ状態を作れているのに前提を作れなかったことになってしまう。
         fs::remove_dir_all(workspace.path().as_path()).ok()?;
-        let registration = common::git::worktree_registration(&repo, workspace.path().as_path())?;
-        registration.prunable.then_some(())?;
+        common::git::worktree_registration(&repo, workspace.path().as_path())?;
+        let present = workspace.path().as_path().try_exists().ok()?;
+        (!present).then_some(())?;
         Some((workspace, "消える前の成果物".to_owned()))
     }
 
