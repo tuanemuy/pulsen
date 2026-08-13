@@ -908,6 +908,30 @@ mod tests {
     }
 
     #[test]
+    fn 起動記録はリトライのカウンタをリセットしない() {
+        let counters = RetryCounters::rehydrate(1, 2, 3);
+        for (execution, current) in [
+            (ExecutionState::Pending, None),
+            (ExecutionState::Failed, Some(attempt(1))),
+        ] {
+            let kind = execution.kind();
+            let task = task_of(TaskFields {
+                execution,
+                workspace: Some(workspace()),
+                current_attempt: current,
+                counters,
+                ..fields()
+            });
+
+            let (recorded, _) = task
+                .record_launching(&state_root(), later())
+                .expect("前提を満たす");
+
+            assert_eq!(recorded.counters(), counters, "{kind:?}");
+        }
+    }
+
+    #[test]
     fn 起動記録は起動待ちと失敗確定からのみ行える() {
         for execution in every_execution_state() {
             let kind = execution.kind();
@@ -1153,6 +1177,7 @@ mod tests {
                 recorded.last_failure().map(FailureNote::kind),
                 Some(FailureKind::SpawnFail)
             );
+            assert_eq!(recorded.updated_at(), later());
         }
     }
 
@@ -1236,6 +1261,7 @@ mod tests {
             failed.last_failure().map(FailureNote::message),
             Some("git worktree add に失敗")
         );
+        assert_eq!(failed.updated_at(), later());
     }
 
     #[test]

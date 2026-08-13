@@ -170,7 +170,7 @@ Windows だけ PATH の安定性への依存が残る。この非対称は既知
 - **`process_group(0)` はセッションを分けない**(`setsid` 相当ではない)。適合契約(呼び出し側プロセスの終了後も完走する)は満たすが、ラッパーは同一セッションに残って制御端末を保持し続けるため、端末セッションの強制終了(vhangup 等)では SIGHUP が届きうる — `nohup` 相当の耐性は無い。cron 運用が主経路なので実害は小さいが、`setsid(1)` に依存しない判断とセットで残す。
 - **Windows の `KillIdent`(pid 文字列)は POSIX の実行単位に相当しない**。requirements §4.3 は Windows のkill同定子として「タスクID・attempt番号から決定的に導出する名前付きジョブオブジェクト名」を例示し、`TC-port-process-controller-014`(ラッパーのみ死亡し、エージェントが実行単位に属したまま生存)は `try_kill_remnants` で `Killed` を要求する。pid 文字列 + プロセスツリー終了ではラッパー死亡時点で辿る根が無く、この契約を満たせない。`KillIdent` は pidファイルとタスクファイルに**永続化される**値なので、後から形式を変えると既存の帳簿が無効になる。`unsafe` 禁止のままジョブオブジェクトを扱う手段が無い以上、#3 / #10 で依存追加か lint 緩和の判断が要りうる申し送りとして残す。
 - トレードオフ: 既定の取得元の性質がプラットフォームで揃わない(POSIX は絶対パス、Windows は PATH 解決)。requirements §4.3 の「記録と照合は同一の取得手段」が Windows でだけ PATH の安定性に依存したまま残る。
-- `#[cfg(unix)]` / `#[cfg(windows)]` の出現箇所が `adapter/process.rs` に増える(既存は `util/atomic.rs` のみ)。AC-1 の grep の期待値を更新する。
+- `#[cfg(unix)]` / `#[cfg(windows)]` の出現箇所が `adapter/process.rs` に増える(既存は `util/atomic.rs` のみ)。AC-1 の grep の期待値を更新する — 述語を4つに広げた検査は `adapter/task_repository.rs` の `#[cfg(all(test, unix))]` も拾うため、`crates/pulsen/src/` 側は3ファイルになる(このヒットはテストモジュールで、本番の実行経路には乗らない)。`cfg(all(test,` を除外する規則は足さない。除外すると「test 限定」を装う本番分岐が検査を素通りする。
 
 ---
 
@@ -843,11 +843,14 @@ Proposed
 
 猶予超過で確定した spawn 失敗を `TickIssue::SpawnNotObserved` として分ける。`TickIssue::SpawnFailed` は同期エラー専用にする。ADR-086 は記録した失敗を `errors` に載せることを決めただけで、1つの変種に畳むことまでは根拠づけていない。
 
-表示では `errors` を「タスクファイルへの記録を伴うか」で2つの見出しに分ける — `WorktreeCreateFailed` / `CommandExpansionFailed` / `SpawnNotObserved` は「失敗を記録(N件)」、それ以外は「スキップ(N件)」。判別は `cli::render` の網羅 `match` に置き、分類が増えたときに振り分け先を決めないと通らないようにする。
+表示では `errors` を「タスクファイルに何を残したか」で3つの見出しに分ける。`WorktreeCreateFailed` / `CommandExpansionFailed` / `SpawnNotObserved` は失敗を記録しカウンタを消費するので「失敗を記録(N件)」。`PrepareAttemptFailed` / `SpawnFailed` は launching の記録を保存した**後**の報告で、状態は `Launching` のまま次の tick が猶予経路で分類するので「起動の結果が未確定(N件)」。残りはタスクファイルへの書き込みが無く次の tick がそのまま再試行するので「スキップ(N件)」。判別は `cli::render` の網羅 `match` に置き、分類が増えたときに振り分け先を決めないと通らないようにする。
+
+「起動の結果が未確定」を独立させるのは、`PrepareAttemptFailed` の後も spawn を続ける(手続きAの順序)ため、同一タスクが `launched` と `errors` の両方に載りうるからである。この2つを「スキップ」に束ねると、書き込んで attempt 番号も消費した tick が「何も起きなかった」と読める。ADR-084 が「書き込んだ tick が処理対象なしと表示される」ことを構成として潰したのと同じ理由で、見出しの語義も書き込みの有無と食い違わせない。
 
 ### Consequences
 
 - 良い点: 分類だけで「カウンタを消費したか」が読め、同期エラー側で `record_spawn_failure` を呼ぶような取り違えをテストが検出する。
 - 良い点: 唯一の出力窓で「記録された失敗」と「次tickでそのまま再試行されるスキップ」が読み分けられる。
+- 良い点: 同一タスクが「起動」と「起動の結果が未確定」に並んでも、運用者は「起動は試みたが結末は次の tick が決める」と読める。「起動」と「スキップ」の同時掲示のような矛盾した読み方が生まれない。
 - トレードオフ: spec の `errors` の分類が1つ増える。spec 追従の提起に積む。
-- トレードオフ: 見出しが2つになるぶん、両方が埋まるtickの出力が長くなる。どちらも空なら見出しごと出さないので、通常運用では従来と同じ行数になる。
+- トレードオフ: 見出しが3つになる。どれも空なら見出しごと出さないので、通常運用の行数は変わらない。

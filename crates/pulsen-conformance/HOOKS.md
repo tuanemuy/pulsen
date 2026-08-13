@@ -303,4 +303,4 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 
 対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager`）はフックではなく、すべてのケースが使う。
 
-この一覧と `.adr/027-port-conformance-suite-and-harness-hooks.md` のフック表は同じものを指す。フックを足すときは両方を更新する。
+フックの一覧はこのファイルが正本。`.adr/027-port-conformance-suite-and-harness-hooks.md` のフック表は決定時点の記録なので、フックを足すときに更新するのはこのファイルだけでよい。

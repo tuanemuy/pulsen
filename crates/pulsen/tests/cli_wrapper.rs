@@ -184,6 +184,108 @@ fn 起動できないエージェントはコマンド不在として符号化�
 }
 
 #[test]
+fn 実行できない実体を指すエージェントは起動不能として符号化される() {
+    let launch = Launch::new();
+    let agent = launch.dir.path().join("not-executable");
+    fs::write(&agent, "エージェントではない実体").expect("実体を置ける");
+    if deny_execute(&agent).is_none() {
+        common::skipped("tc_exec_run_wrapper_014", "deny_execute");
+        return;
+    }
+
+    wrapper(launch.run_dir(), launch.workspace())
+        .agent_cmd([agent.into_os_string()])
+        .run()
+        .assert_succeeded();
+
+    assert_eq!(
+        launch.exit_code(),
+        126,
+        "実体はあるので、コマンド不在(127)とは別の符号化値になる"
+    );
+}
+
+#[test]
+fn ログを開けなければエージェントを起動せず起動不能として符号化される() {
+    /// 先置きするログの内容。エージェントが起動されればこの内容は残らない。
+    const PLACED: &str = "先に置いた内容";
+
+    let program = probe_program();
+    let launch = Launch::new();
+    fs::create_dir_all(launch.run_dir()).expect("run ディレクトリを作れる");
+    let stdout_log = launch.run_dir().join("stdout.log");
+    fs::write(&stdout_log, PLACED).expect("ログを先置きできる");
+    if deny_write(&stdout_log).is_none() {
+        common::skipped("tc_exec_run_wrapper_016", "deny_write");
+        return;
+    }
+
+    wrapper(launch.run_dir(), launch.workspace())
+        .agent_cmd(probe(&program, &["print", "出力", ""]))
+        .run()
+        .assert_succeeded();
+
+    assert_eq!(launch.exit_code(), 126, "起動不能として符号化される");
+    assert_eq!(
+        fs::read_to_string(&stdout_log).ok().as_deref(),
+        Some(PLACED),
+        "エージェントは起動されない"
+    );
+    for name in ["starttime", "pid"] {
+        assert!(
+            launch.run_dir().join(name).is_file(),
+            "{name} の書き込みは通る"
+        );
+    }
+}
+
+/// 実行できない実体にする。実際に起動できないことを確かめてから `Some` を返す(ADR-027)。
+#[cfg(unix)]
+fn deny_execute(path: &Path) -> Option<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path).ok()?.permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(path, permissions).ok()?;
+
+    std::process::Command::new(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+        .then_some(())
+}
+
+#[cfg(not(unix))]
+fn deny_execute(_path: &Path) -> Option<()> {
+    None
+}
+
+/// 書き込み用に開けないファイルにする。制限が実際に効いたことを確かめてから `Some` を返す。
+///
+/// 確認は非破壊の開き方で行う — `File::create` は成功したときに先置きした内容を失う。
+#[cfg(unix)]
+fn deny_write(path: &Path) -> Option<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path).ok()?.permissions();
+    permissions.set_mode(0o444);
+    fs::set_permissions(path, permissions).ok()?;
+
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .is_err()
+        .then_some(())
+}
+
+#[cfg(not(unix))]
+fn deny_write(_path: &Path) -> Option<()> {
+    None
+}
+
+#[test]
 fn worktreeが存在しなければエージェントを起動せず非ゼロが記録される() {
     let program = probe_program();
     let launch = Launch::new();

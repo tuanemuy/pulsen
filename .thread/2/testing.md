@@ -50,7 +50,7 @@ AC-1 の「OS 依存分岐がアダプター層に隔離されている」こと
 grep -rnE 'cfg\([^)]*\b(unix|windows|target_os|target_family)\b' crates/*/src/
 ```
 
-`crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs` と `adapter/process.rs` の2ファイルだけであること。`crates/pulsen-conformance/src/lib.rs` のヒットは適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない（Issue #1 と同じ扱い）。
+`crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs` と `adapter/process.rs` と `adapter/task_repository.rs` の3ファイルだけであること。`adapter/task_repository.rs` のヒットは `#[cfg(all(test, unix))]` のテストモジュールで、本番の実行経路には乗らない。`crates/pulsen-conformance/src/lib.rs` のヒットは適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない（Issue #1 と同じ扱い）。
 
 AC-6 の「未実装メソッドの宣言・スタブが1つも無い」ことの機械的確認:
 
@@ -688,7 +688,7 @@ EOF
 
 - **`pulsen --help` の表示:** サブコマンドとして `add` / `tick` / `help` が並び、`wrapper` が現れないこと（ADR-069）。`pulsen tick --help` に引数が無いこと（`--home` は global フラグとして現れる）。引数の使い方の誤りが clap 既定の exit code 2 になること。
 
-- **AC-1 の grep 期待値の更新:** Issue #1 の testing.md は `crates/pulsen/src/` 側のヒットを `util/atomic.rs` だけとしていた。本スライスで `adapter/process.rs` が加わるため、期待値は2ファイルになる（ADR-067 Consequences）。`crates/pulsen-domain/` が0件であることは変わらない。この期待値の変更は Issue #1 の testing.md 側には反映しない（各 Issue の testing.md はその時点の期待を書く）。
+- **AC-1 の grep 期待値の更新:** Issue #1 の testing.md は `crates/pulsen/src/` 側のヒットを `util/atomic.rs` だけとしていた。本スライスで `adapter/process.rs` が加わり、さらに述語を4つに広げたことで `adapter/task_repository.rs` の `#[cfg(all(test, unix))]` も拾うため、期待値は3ファイルになる（ADR-067 Consequences）。`crates/pulsen-domain/` が0件であることは変わらない。この期待値の変更は Issue #1 の testing.md 側には反映しない（各 Issue の testing.md はその時点の期待を書く）。
 
 - **`state/` のレイアウトへの追加:** 本スライスで `state/runs/` と `worktrees/` が初めて作られる。Issue #1 の「`add` は `worktrees/` も `state/runs/` も作らない」という期待（`.thread/1/testing.md` 確認項目4 手順5）が引き続き成り立つこと — 作るのは tick だけであること。
 

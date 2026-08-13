@@ -547,7 +547,7 @@ fn 起動確認の保存に失敗すれば報告して次のタスクへ進む()
         [TickIssue::SaveFailed { .. }]
     ));
     assert!(
-        summary.frozen.is_empty(),
-        "永続化できていない凍結は数えない"
+        summary.confirmed_running.is_empty(),
+        "永続化できていない取り込みは数えない"
     );
 }

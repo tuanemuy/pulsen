@@ -21,11 +21,12 @@ use serde_json::{Value, json};
 /// エージェントが 0 で終わる既定のモード(標準出力に入力、標準エラーは空)。
 const PRINT_INPUT: [&str; 3] = ["print", "{input}", ""];
 
-/// 起動されたエージェントを滞留させるモード。
+/// 滞留したエージェントの解放が来ないときの上限(ミリ秒)。
 ///
-/// 滞留は「次の tick を打つ間ラッパーが生きている」状況を作るためのもの。生きていたこと
-/// 自体は `exit` の未出現で主張するので、この長さは余裕であって主張の根拠ではない。
-const SLEEP: [&str; 2] = ["sleep", "5000"];
+/// 滞留は「次の tick を打つ間ラッパーが生きている」状況を作るためのもので、終わりは
+/// テストが置く解放ファイルが決める。この上限は解放し損ねた孫プロセスを残さないための
+/// 歯止めであって、生存の窓の長さではない。
+const HOLD_LIMIT_MILLIS: &str = "120000";
 
 /// `probe` エージェントとワークフローを備えたホーム。
 fn probe_home(mode: &[&str]) -> Home {
@@ -165,7 +166,10 @@ fn アーカイブ済みのタスクは走査対象に含まれない() {
 
 #[test]
 fn 滞留するエージェントを起動したままでも次のtickは競合しない() {
-    let home = probe_home(&SLEEP);
+    let release_dir = scratch();
+    let release = release_dir.path().join("release");
+    let release_arg = release.display().to_string();
+    let home = probe_home(&["wait-for", &release_arg, HOLD_LIMIT_MILLIS]);
     let repo = Repo::with_commit();
     let id = register(&home, &repo);
 
@@ -176,7 +180,7 @@ fn 滞留するエージェントを起動したままでも次のtickは競合�
     let run = run_tick(&home);
 
     // ラッパーが既に終わっていればロックは解放済みで、継承していても競合は起きない。
-    // 主張が空虚に成立しないよう、生存を成果物で確かめてから結果を読む。
+    // エージェントは解放するまで終わらないので、この主張は環境の速さに左右されない。
     assert!(
         !run_dir.join("exit").is_file(),
         "2回目の tick はラッパーの生存中に走る"
@@ -189,7 +193,12 @@ fn 滞留するエージェントを起動したままでも次のtickは競合�
     );
     assert_eq!(home.task(&id)["execution"]["state"], json!("running"));
 
-    wait_for_exit(&home, &id, 1);
+    fs::write(&release, "").expect("解放ファイルを置ける");
+    assert_eq!(
+        wait_for_exit(&home, &id, 1),
+        json!({"code": 0}),
+        "滞留は解放で終わる(上限で打ち切られてはいない)"
+    );
 }
 
 #[test]

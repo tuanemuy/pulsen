@@ -47,7 +47,22 @@
 | `tests/cli_tick.rs/F6の主張` | R2 | fix | 「base から作られたブランチが存在する」という名前に対し、主張が存在の有無まで | 0 |
 | `conformance/HOOKS.md:環境依存表` | R2 | fix-editorial | 28行目の但し書き（003 は表に現れない）と41行目の列挙（003 を含む）が矛盾する | 0 |
 | `steps.md:ステップ19/ADR件数` | R2 | fix-editorial | 「adr.md の14件」とあるが ADR-065〜086 の22件。選別対象が漏れる | 0 |
+| `cli/render.rs:recorded_failure/スキップの語義` | R3 | fix | `PrepareAttemptFailed` / `SpawnFailed` は launching を保存した後の報告なのに「何も記録しないスキップ」に束ねられ、同一タスクが「起動」と「スキップ」に同時に出る | 0 |
+| `plan.md:AC-1/cfg grepの期待値` | R3 | fix-editorial | 述語を4つに広げた grep は3ファイルにヒットする。期待値が2ファイルのままでは AC-1 の確認が成立しない（統合元: Architecture / Adapter の同一指摘） | 0 |
+| `task/task.rs:record_launching/カウンタ保持` | R3 | fix | 事後条件「カウンタを保持する」が未主張。リセットを入れても全緑で、`SpawnFailLimitExceeded` の凍結経路が死ぬ退行を検出できない | 0 |
+| `task/task.rs:record_tool_failure,record_spawn_failure_in_place/updated_at` | R3 | fix | 6遷移中この2つだけ `updated_at` 更新の主張が無く、`..self` で古い時刻が残る退行を誰も検知しない | 0 |
+| `tick/mod.rs:commit/保存できた遷移だけを積む規則` | R3 | fix | 保存前に `frozen` を積むミューテーションで全緑。凍結を伴う save 失敗の経路が1件も無く、既存の主張は空虚に成立している | 0 |
+| `tests/cli_wrapper.rs/TC-014,016のスキップ記録` | R3 | fix | 126 の裏付けが権限依存の適合行だけにあり、権限制限が効かない環境でチェックの根拠が消えるのにスキップ表に載らない | 0 |
+| `tests/cli_tick.rs/滞留の実時間依存` | R3 | fix | 「ラッパー生存中に2回目の tick が走る」前提が実時間5秒に依存し、崩れるとスキップではなく赤で現れる | 0 |
+| `conformance/HOOKS.md:.adr/027との二重管理` | R3 | fix-editorial | HOOKS.md が「`.adr/027` のフック表と同一」と宣言するが、本 PR で 125行7ポート対169行9ポートに割れた | 0 |
 
 R1: 新規 24 / fix 20 / fix-editorial 4 / wont-fix 0 / defer 0 / 継承 0
 
 R2: 新規 21 / fix 15 / fix-editorial 6 / wont-fix 0 / defer 0 / 継承 2
+
+R3: 新規 8 / fix 6 / fix-editorial 2 / wont-fix 0 / defer 0 / 継承 0
+
+R3 は Key が完全一致する既出指摘が無く、8件すべて新規。うち3件は前ラウンドの修正が残した取りこぼし
+（`cli/render.rs:tick_summary/スキップ見出し` → 分割の切り口が書き込みの有無とずれた、
+`tick/mod.rs:commit/frozenの導出` → 導出は直ったが規則を張るテストが無い、
+`tests/cli_tick.rs/滞留エージェントの空虚合格` → 滞留を伸ばした結果が実時間依存になった）。

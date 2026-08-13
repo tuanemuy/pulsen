@@ -511,6 +511,40 @@ fn 起動記録の保存に失敗すればrunディレクトリを用意せず�
     assert!(summary.launched.is_empty());
 }
 
+/// 凍結は上限超過の遷移だけが生むため、「保存できた遷移だけを積む」規則は凍結を伴う
+/// 保存が失敗する経路でしか主張できない。
+#[test]
+fn 凍結を伴う遷移を保存できなければ凍結にも失敗の記録にも数えない() {
+    let snapshot = snapshot_with(
+        Some("claude"),
+        None,
+        agent_run(AgentRunSpec {
+            retries: Some(0),
+            ..AgentRunSpec::default()
+        }),
+    );
+    let harness = Harness {
+        tasks: repository_failing_save(vec![task(TASK).snapshot(snapshot).entry()]),
+        worktrees: ScriptedWorktreeManager::new().with_create([Err(WorktreeError::Failed {
+            message: "対象リポジトリが無い".to_owned(),
+        })]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert!(
+        summary.frozen.is_empty(),
+        "永続化できていない凍結は数えない: {:?}",
+        summary.frozen
+    );
+    assert!(
+        matches!(summary.errors.as_slice(), [TickIssue::SaveFailed { .. }]),
+        "永続化できていない失敗の記録も数えない: {:?}",
+        summary.errors
+    );
+}
+
 #[test]
 fn worktree作成の直後にクラッシュしても同じワークスペースが再導出される() {
     let harness = Harness {

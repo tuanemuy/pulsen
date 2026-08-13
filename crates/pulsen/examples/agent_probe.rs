@@ -11,14 +11,22 @@
 //! | `check-cwd <期待パス>` | 作業ディレクトリが一致すれば 0、しなければ 1 |
 //! | `echo-args <トークン...>` | 受け取ったトークンを1行ずつ標準出力へ書いて 0 で終了する |
 //! | `sleep <ミリ秒>` | その時間だけ実行を続けてから 0 で終了する |
+//! | `wait-for <パス> <上限ミリ秒>` | そのパスにファイルが現れるまで実行を続けて 0 で終了する |
 //! | `abort` | exit code を持たない終了(シグナル死)をする |
 
 use std::io::Write;
 use std::path::Path;
 use std::process::exit;
+use std::time::{Duration, Instant};
 
 /// 使い方が満たされないときの終了コード。エージェントの符号化値(126 / 127)と紛れない値。
 const MISUSE: i32 = 64;
+
+/// 解放されないまま上限に達したときの終了コード。使い方の誤りとも符号化値とも紛れない値。
+const NOT_RELEASED: i32 = 65;
+
+/// 解放を待つポーリングの間隔。
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -32,6 +40,7 @@ fn main() {
         "check-cwd" => exit(check_cwd(rest.first())),
         "echo-args" => echo_args(rest),
         "sleep" => sleep(rest.first()),
+        "wait-for" => wait_for(rest),
         "abort" => std::process::abort(),
         other => misuse(&format!("知らないモード: {other}")),
     }
@@ -97,7 +106,34 @@ fn sleep(millis: Option<&String>) -> ! {
     let Some(millis) = millis.and_then(|value| value.parse::<u64>().ok()) else {
         misuse("sleep はミリ秒を取る");
     };
-    std::thread::sleep(std::time::Duration::from_millis(millis));
+    std::thread::sleep(Duration::from_millis(millis));
+    exit(0)
+}
+
+/// 指定パスにファイルが現れるまで実行を続ける。
+///
+/// 滞留の終わりを呼び出し側が決めるので、「このプロセスが生きている間に別の処理が走る」
+/// という前提が実行環境の速さに左右されない。上限は、解放が来ないときにこのプロセスが
+/// 残り続けないための歯止めであって、前提の根拠ではない。
+fn wait_for(rest: &[String]) -> ! {
+    let [path, limit, ..] = rest else {
+        misuse("wait-for は待つパスと上限ミリ秒の2つを取る");
+    };
+    let Some(limit) = limit.parse::<u64>().ok().map(Duration::from_millis) else {
+        misuse("wait-for の上限を解釈できない");
+    };
+    let path = Path::new(path);
+    let deadline = Instant::now() + limit;
+    while !path.exists() {
+        if Instant::now() >= deadline {
+            eprintln!(
+                "agent_probe: {limit:?} 以内に {} が現れなかった",
+                path.display()
+            );
+            exit(NOT_RELEASED);
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
     exit(0)
 }
 

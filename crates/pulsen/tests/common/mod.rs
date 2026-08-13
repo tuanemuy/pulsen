@@ -28,7 +28,12 @@ const USER_HOME_ENV: [&str; 2] = ["HOME", "USERPROFILE"];
 const STATE_DIR: &str = "state";
 
 /// 権限制限が効かない環境(root 実行・非 POSIX 等)でのみスキップされるケース。
-const PERMISSION_CASES: [&str; 2] = ["tc_task_register_task_016", "tc_task_register_task_021"];
+const PERMISSION_CASES: [&str; 4] = [
+    "tc_task_register_task_016",
+    "tc_task_register_task_021",
+    "tc_exec_run_wrapper_014",
+    "tc_exec_run_wrapper_016",
+];
 
 /// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
 const LOCK_HOLDER_CASES: [&str; 2] = ["tc_task_register_task_017", "tc_exec_tick_015"];

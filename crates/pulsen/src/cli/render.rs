@@ -67,25 +67,44 @@ pub fn tick_summary(summary: &TickSummary) -> String {
     push_attempts(&mut out, "gcで削除", &summary.gc_deleted);
     push_attempts(&mut out, "gcで削除できず", &summary.gc_errors);
 
-    let (recorded, skipped): (Vec<&TickIssue>, Vec<&TickIssue>) = summary
-        .errors
-        .iter()
-        .partition(|issue| recorded_failure(issue));
+    let mut recorded = Vec::new();
+    let mut unsettled = Vec::new();
+    let mut skipped = Vec::new();
+    for issue in &summary.errors {
+        match issue_outcome(issue) {
+            IssueOutcome::Recorded => recorded.push(issue),
+            IssueOutcome::LaunchUnsettled => unsettled.push(issue),
+            IssueOutcome::Skipped => skipped.push(issue),
+        }
+    }
     push_issues(&mut out, "失敗を記録", &recorded);
+    push_issues(&mut out, "起動の結果が未確定", &unsettled);
     push_issues(&mut out, "スキップ", &skipped);
 
     out.trim_end().to_owned()
 }
 
-/// 報告がタスクファイルへの記録を伴うか。
+/// 報告がタスクファイルに何を残したか。運用者が次に取る行動はこれで分かれる。
+enum IssueOutcome {
+    /// 失敗を記録した。カウンタを消費し、上限を超えれば同じ tick で凍結する。
+    Recorded,
+    /// launching の記録は保存済みで、次の tick が猶予経路で分類する。
+    LaunchUnsettled,
+    /// タスクファイルへの書き込みが無く、次の tick がそのまま再試行する。
+    Skipped,
+}
+
+/// 報告の結末の分類。
 ///
-/// 記録した失敗はカウンタを消費し、上限を超えれば同じ tick で凍結する。何も記録せず
-/// 次の tick がそのまま再試行するスキップとは、運用者が次に取る行動が違う。
-fn recorded_failure(issue: &TickIssue) -> bool {
+/// 網羅 `match` に置き、分類が増えたときに振り分け先を決めないと通らないようにする。
+fn issue_outcome(issue: &TickIssue) -> IssueOutcome {
     match issue {
         TickIssue::WorktreeCreateFailed { .. }
         | TickIssue::CommandExpansionFailed { .. }
-        | TickIssue::SpawnNotObserved { .. } => true,
+        | TickIssue::SpawnNotObserved { .. } => IssueOutcome::Recorded,
+        TickIssue::PrepareAttemptFailed { .. } | TickIssue::SpawnFailed { .. } => {
+            IssueOutcome::LaunchUnsettled
+        }
         TickIssue::CorruptTaskFile { .. }
         | TickIssue::SnapshotUnreadable { .. }
         | TickIssue::MissingCurrentAttempt { .. }
@@ -93,9 +112,7 @@ fn recorded_failure(issue: &TickIssue) -> bool {
         | TickIssue::RunFileUnreadable { .. }
         | TickIssue::InconsistentRunFiles { .. }
         | TickIssue::MarkerWriteFailed { .. }
-        | TickIssue::PrepareAttemptFailed { .. }
-        | TickIssue::SpawnFailed { .. }
-        | TickIssue::SaveFailed { .. } => false,
+        | TickIssue::SaveFailed { .. } => IssueOutcome::Skipped,
     }
 }
 
@@ -1035,9 +1052,11 @@ mod tests {
                     path: PathBuf::from("/home/u/.pulsen/state/tasks/broken.json"),
                     message: "JSON として読めない".to_owned(),
                 },
-                TickIssue::SpawnFailed {
+                TickIssue::SaveFailed {
                     task_id: task("20260812t101112-abcd1234"),
-                    message: "自身のバイナリを起動できない".to_owned(),
+                    error: SaveError::Io {
+                        message: "書き込めません".to_owned(),
+                    },
                 },
             ],
             ..TickSummary::default()
@@ -1049,7 +1068,35 @@ mod tests {
              スキップ(2件):\n    \
              - /home/u/.pulsen/state/tasks/broken.json: タスクファイルを読めません\
              (JSON として読めない)\n    \
-             - 20260812t101112-abcd1234: ラッパーを起動できません(自身のバイナリを起動できない)"
+             - 20260812t101112-abcd1234: タスクファイルを保存できません(書き込めません)"
+        );
+    }
+
+    #[test]
+    fn 起動の結果が未確定の報告は起動と同じサマリーに別の見出しで並ぶ() {
+        let summary = TickSummary {
+            launched: vec![task("20260812t101112-abcd1234")],
+            errors: vec![
+                TickIssue::PrepareAttemptFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    message: "runディレクトリを作成できない".to_owned(),
+                },
+                TickIssue::SpawnFailed {
+                    task_id: task("20260812t101112-efgh5678"),
+                    message: "自身のバイナリを起動できない".to_owned(),
+                },
+            ],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             起動: 20260812t101112-abcd1234\n  \
+             起動の結果が未確定(2件):\n    \
+             - 20260812t101112-abcd1234: attempt の runディレクトリを用意できません\
+             (runディレクトリを作成できない)\n    \
+             - 20260812t101112-efgh5678: ラッパーを起動できません(自身のバイナリを起動できない)"
         );
     }
 
