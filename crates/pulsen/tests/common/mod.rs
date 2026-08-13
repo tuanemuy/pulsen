@@ -28,7 +28,7 @@ const STATE_DIR: &str = "state";
 /// 権限制限が効かない環境(root 実行・非 POSIX 等)でのみスキップされるケース。
 const PERMISSION_CASES: [&str; 2] = ["tc_task_register_task_016", "tc_task_register_task_021"];
 
-/// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
+/// 保持プロセスの合図が期限内に返らない環境でのみスキップされるケース。
 const LOCK_HOLDER_CASES: [&str; 1] = ["tc_task_register_task_017"];
 
 /// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
@@ -43,8 +43,14 @@ fn allowed_skips() -> Vec<&'static str> {
     if !pulsen_conformance::permission_restrictions_effective() {
         allowed.extend(PERMISSION_CASES);
     }
-    if lock::holder_program().is_none() {
-        allowed.extend(LOCK_HOLDER_CASES);
+    // 許容するのは、スキップの宣言だけで「なぜ走らなかったか」と「次に何をすればよいか」が
+    // 定まる能力に限る(ADR-073)。実行ファイルが無い場合と起動できない場合は定まらないので、
+    // 緑にせずケースの失敗にする。
+    match lock::holder_capability() {
+        lock::HolderCapability::SignalTimedOut => allowed.extend(LOCK_HOLDER_CASES),
+        lock::HolderCapability::Available(_)
+        | lock::HolderCapability::ProgramMissing
+        | lock::HolderCapability::ProgramUnusable(_) => {}
     }
     if !git::tmpdir_outside_repository() {
         allowed.extend(OUTSIDE_REPOSITORY_CASES);

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 
-use common::lock::{release, spawn_holder};
+use common::lock::{HolderCapability, hold, holder_capability, release, spawn_holder};
 use pulsen::adapter::lock::FileExclusiveLock;
 use pulsen_conformance::ExclusiveLockHarness;
 use tempfile::TempDir;
@@ -60,15 +60,13 @@ impl ExclusiveLockHarness for FileExclusiveLockHarness {
     }
 
     fn hold_from_other_process(&self) -> Option<Self::Holder> {
-        let (holder, locked) = spawn_holder(&self.lock_path())?;
-        if !locked {
-            let _ = release(holder);
-            return None;
-        }
-        Some(holder)
+        hold(&self.lock_path())
     }
 
     fn kill_holder(&self, mut holder: Self::Holder) -> Option<()> {
+        // ここの `None` は `kill` / `wait` の失敗であって、フックの契約が言う「別プロセスを
+        // 扱えない実装」ではない。保持プロセスを起動できた環境では許容集合が空なので、
+        // 静かなスキップにはならずケースの失敗として現れる。
         holder.kill().ok()?;
         // 待たないと解放が観測できる保証がない(終了処理の完了を待つ)。
         holder.wait().ok()?;
@@ -94,7 +92,7 @@ impl ExclusiveLockHarness for FileExclusiveLockHarness {
     }
 }
 
-/// 別プロセスにロックを保持させられない環境でのみスキップされるケース。
+/// 保持プロセスの合図が期限内に返らない環境でのみスキップされるケース。
 const LOCK_HOLDER_CASES: [&str; 4] = [
     "tc_port_exclusive_lock_002",
     "tc_port_exclusive_lock_003",
@@ -104,15 +102,17 @@ const LOCK_HOLDER_CASES: [&str; 4] = [
 
 /// この環境でスキップを許容するケース。
 ///
-/// ロック機構の異常は別ハンドル(`unusable_lock`)で組めるため、許容するのは保持プロセスの
-/// 実行ファイルが無い場合の上記4件だけ。宣言をプラットフォームではなく実行時の述語で
-/// 決めることで、同じフィクスチャを使う CLI 側の受け入れテスト
-/// (TC-task-register-task-017)と扱いが揃う(ADR-055)。
+/// 許容するのは保持プロセスの合図が期限内に返らない環境だけ。実行ファイルが無い場合は
+/// 原因も回避方法も一意で、起動できない場合は理由が起動時のエラーにしか無く、いずれも
+/// スキップの宣言だけからは次の一手が定まらないため、緑にせずケースの失敗にする
+/// (HOOKS.md / ADR-068 / ADR-073)。同じ判定を CLI 側の受け入れテスト
+/// (TC-task-register-task-017)も使うため、両者で扱いが揃う(ADR-055)。
 fn allowed_skips() -> Vec<&'static str> {
-    if common::lock::holder_program().is_some() {
-        Vec::new()
-    } else {
-        LOCK_HOLDER_CASES.to_vec()
+    match holder_capability() {
+        HolderCapability::SignalTimedOut => LOCK_HOLDER_CASES.to_vec(),
+        HolderCapability::Available(_)
+        | HolderCapability::ProgramMissing
+        | HolderCapability::ProgramUnusable(_) => Vec::new(),
     }
 }
 
