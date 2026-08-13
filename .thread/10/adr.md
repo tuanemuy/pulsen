@@ -8,6 +8,8 @@
 
 Proposed
 
+→ `.adr/065-ci-on-github-actions-with-runner-rustup.md` に昇格
+
 ### Context
 
 CLAUDE.md は「安定版ツールチェーンを前提とし、`cargo fmt` / `cargo clippy` を通る状態を保つ」「特定の OS に依存しない(Linux / macOS / Windows)」と定めるが、検証環境は Nix flake の devShell 1つだけで、rustc は nixpkgs-unstable の 1.97.1、実機は macOS のみ。Windows を含む3 OS を回せる CI が要る。
@@ -59,6 +61,8 @@ GitHub Actions を使う。toolchain はランナー同梱の `rustup` を直接
 
 Proposed
 
+→ `.adr/066-msrv-read-from-manifest-and-linked-on-three-os.md` に昇格
+
 ### Context
 
 `rust-version = "1.89"` は ADR-022(`std::fs::File::try_lock` の安定化)を根拠に宣言されているが、その版で一度もビルドされていない。MSRV ジョブでどう版を決めるかに選択肢がある。
@@ -93,6 +97,8 @@ Proposed
 
 Proposed
 
+→ `.adr/065-ci-on-github-actions-with-runner-rustup.md` に昇格
+
 ### Context
 
 CI で toolchain を明示するなら、リポジトリに `rust-toolchain.toml` を置いて rustup に解決させる手もある。ローカルでも同じ版が使われるという利点がある。
@@ -115,6 +121,8 @@ CI で toolchain を明示するなら、リポジトリに `rust-toolchain.toml
 ### Status
 
 Proposed
+
+→ `.adr/067-stable-toolchain-tracks-the-current-release.md` に昇格
 
 ### Context
 
@@ -143,6 +151,8 @@ CI で stable をどう指すかに選択肢がある。
 ### Status
 
 Proposed
+
+→ `.adr/068-skip-judgement-stays-in-skip-budget.md` に昇格
 
 ### Context
 
@@ -203,6 +213,8 @@ CI 側の扱いの選択肢:
 
 Proposed
 
+→ `.adr/069-no-dependency-cache-locked-dependency-graph.md` に昇格
+
 ### Context
 
 Rust の CI ではキャッシュがほぼ定番になっている。選択肢:
@@ -237,6 +249,8 @@ Rust の CI ではキャッシュがほぼ定番になっている。選択肢:
 
 Proposed
 
+→ `.adr/070-job-split-fmt-and-two-os-matrices.md` に昇格
+
 ### Context
 
 Issue が求めるのは `build` / `test` / `clippy --all-targets -- -D warnings` / `fmt --check` / MSRV / OS マトリクス。分割の粒度に選択肢がある。
@@ -267,6 +281,8 @@ Issue が求めるのは `build` / `test` / `clippy --all-targets -- -D warnings
 ### Status
 
 Proposed
+
+→ `.adr/071-os-differences-absorbed-by-probe-and-allowed-skips.md` に昇格
 
 ### Context
 
@@ -344,6 +360,8 @@ ADR-001 と ADR-005 は「使わないこと」を3つ決めている — `sort`
 
 Accepted
 
+→ `.adr/072-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
+
 ### Context
 
 Windows の stable ジョブで `util::atomic::tests::読み手は旧内容か新内容のどちらかだけを観測する` が `Os { code: 5, kind: PermissionDenied }` で落ちた。読み手が `fs::read` でハンドルを開いている最中に `NamedTempFile::persist`(`MoveFileEx`)を掛けると、対象を開いている他のハンドル(読み手・ウイルス対策のスキャン)によって置換が拒まれる。unix の `rename` は開いているハンドルに影響されないため、この経路は Windows でしか現れない。
@@ -419,6 +437,8 @@ Windows の stable ジョブで `adapter::task_file::tests` の5件が `NotAbsol
 
 Accepted
 
+→ `.adr/072-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
+
 ADR-010 の最後の項目(`rename_atomic` には同じ再試行を入れない)を置き換える。
 
 ### Context
@@ -462,6 +482,8 @@ ADR-008 の境界では、置換・移動の手順を保ったまま失敗時の
 ### Status
 
 Accepted
+
+→ `.adr/072-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
 
 ### Context
 
