@@ -2,11 +2,13 @@
 
 採番はこのファイル内の連番。`.adr/` への昇格判定は片付けフェーズ(steps.md ステップ10)で行い、昇格するときは `.adr/073` 以降を使う(既存の最大番号は 072)。
 
+判定の結果、ADR-001 / 002 / 003 / 005 / 006 を1本に畳んで `.adr/073-holder-capability-skip-vs-fail.md` に昇格した。ADR-004 / ADR-007 は寿命テストは満たすが波及テストを満たさないため作業ログ限りとする。各エントリの Status 行を参照。
+
 ## ADR-001: 合図のタイムアウトは環境の能力の probe として表し、`SkipBudget` の宣言をそこから導く
 
 ### Status
 
-Proposed
+Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「能力は probe で1度だけ判定し、宣言と挙動の双方がその1点を見る」に昇格
 
 ### Context
 
@@ -21,7 +23,7 @@ Proposed
 
 ### Decision
 
-`crates/pulsen/tests/common/lock.rs` に `HolderCapability`(`Available(PathBuf)` / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable(String)` — 最後の1つを分ける理由は ADR-007)と、`OnceLock` で1度だけ評価する `holder_capability()` を置く。`spawn_holder` / `hold` と、`conformance_lock.rs` / `common/mod.rs` の `allowed_skips()` は、いずれもこの1点だけを見る。許容集合に足すのは `SignalTimedOut` のときだけ。
+`crates/pulsen/tests/common/lock.rs` に `HolderCapability`(`Available`(解決済みの実行ファイルは `lock.rs` の外へ出さない) / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable(io::Error)` — 最後の1つを分ける理由は ADR-007)と、`OnceLock` で1度だけ評価する `holder_capability()` を置く。`spawn_holder` / `hold` と、`conformance_lock.rs` / `common/mod.rs` の `allowed_skips()` は、いずれもこの1点だけを見る。許容集合に足すのは `SignalTimedOut` のときだけ。
 
 2つの方向は択一ではなく、probe を骨として、起動結果の型の区別(`Started`)をその材料に使う。
 
@@ -31,9 +33,9 @@ probe が「実際に1回保持させてみる」形を取るのは、それが�
 
 - 良い点: 評価順・並列実行に関わらず、宣言と実態が一致する。吸収の形が `.adr/071` の「probe + 許容集合」に乗るため、新しい原則を足さずに済む。
 - 良い点: `SignalTimedOut` 環境での待ち時間が減る。現状は4〜5件がそれぞれ期限ぶん待つが、変更後は probe の1回だけが待ち、残りは起動を試みずに `None` を返す。
-- 良い点(ただし射程は限られる): probe が Windows の初回起動スキャンの代金を先に払うので、本番5件は温まった状態で走る。**これで減るのは cold-start 由来の遅さだけ**で、Issue が挙げたもう一方の要因(負荷の高い共有ランナー)は probe の測定条件に入っていない — probe は無負荷・単発で1プロセスを起動して測るのに対し、本番の4件は libtest の既定で並列に走り、`cli_add_error.rs` 側では `pulsen` 本体の起動も重なる。「宣言と実態が一致する」は無条件に成り立つが、「間欠性そのものが減る」は cold-start 分に限られる(裏から書いたものが ADR-006 のトレードオフ)。
+- 良い点(ただし射程は限られる): probe が Windows の初回起動スキャンの代金を先に払うので、本番5件は温まった状態で走る。**これで減るのは cold-start 由来の遅さだけ**で、Issue が挙げたもう一方の要因(負荷の高い共有ランナー)は probe の測定条件に入っていない — probe が測るのは1プロセスの単発の起動で、本番の4件が libtest の既定で並列に走る負荷も、`cli_add_error.rs` 側で重なる `pulsen` 本体の起動も再現しない。「宣言と実態が一致する」は無条件に成り立つが、「間欠性そのものが減る」は cold-start 分に限られる(裏から書いたものが ADR-006 のトレードオフ)。
 - トレードオフ: probe が本番のケースと同じ資源(プロセス起動)を1つ奪う。`.thread/10/steps.md` が挙げた懸念だが、コストは1プロセスぶんで、それが warm-up を兼ねることでほぼ相殺される。
-- トレードオフ: probe は1回きりなので、負荷の山に当たった1回が全体の宣言を決める。偽陽性で `SignalTimedOut` に倒れると許容集合が黙って広がり、5件が走らなくても緑になる。`.adr/068` が既に記録した「マージ後の環境退行に機械的な歯止めが無い」の範囲内で、`SKIP` 一覧には現れる。
+- トレードオフ: **probe の測定は無負荷では行われない。** `holder_capability()` は `OnceLock` の遅延評価なので、probe が走るのは最初にロックの能力を必要としたテストスレッドの中 — すなわち同じテストバイナリの他のケースが並列に走っている最中である(`conformance_lock` では4件がほぼ同時に到達し、`cli_add_error` では他のケースの `Home::new()` / `Repo::with_commit()` や `pulsen` 本体の起動が並行する)。しかも1回きりなので、負荷の山に当たった1回が全体の宣言を決める。偽陽性で `SignalTimedOut` に倒れると許容集合が黙って広がり、5件が走らなくても緑になる。誤差は安全側に効かない。`.adr/068` が既に記録した「マージ後の環境退行に機械的な歯止めが無い」の範囲内で、`SKIP` 一覧には現れる。
 
 ---
 
@@ -41,7 +43,7 @@ probe が「実際に1回保持させてみる」形を取るのは、それが�
 
 ### Status
 
-Proposed
+Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「能力側と失敗側を分ける基準」と、「影響」の `.adr/068` の帰結が改まる項に昇格
 
 ### Context
 
@@ -78,7 +80,7 @@ Proposed
 
 ### Status
 
-Proposed
+Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「probe の置き場所の基準」に昇格
 
 ### Context
 
@@ -107,7 +109,7 @@ Proposed
 
 ### Status
 
-Proposed
+Accepted(作業ログ限り。昇格しない) — 寿命テストは満たすが波及テストを満たさない。`None` の意味の絞り方とパニックで失敗を表す形は `crates/pulsen/tests/common/lock.rs` に閉じており、フックの `Option` 契約もハーネスの trait も変えないので、覆しても波及先は同ファイルの中に留まる。理由はコードのすぐ横の doc コメントで伝わる
 
 ### Context
 
@@ -137,7 +139,7 @@ Proposed
 
 ### Status
 
-Proposed
+Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「probe の判定基準は『合図が期限内に返ったか』だけに限る」と「期限の無い待ちは、正常に保持できたと分かっている相手にだけ許す」(射程の限定を含む)に昇格
 
 ### Context
 
@@ -151,10 +153,12 @@ probe は「合図が期限内に返ったか」だけで `Available` / `SignalT
 
 同じ基準を、`spawn_holder` / `hold` の**失敗経路の後始末**にも掛ける。合図を読み取れなかった場合(`SignalUnreadable`)も、誰も保持していないパスで取得の合図が返らなかった場合(`!locked`)も、保持プロセスが想定どおりに振る舞っていないと判断した直後であり、そこからパニックする相手の正常終了を期限なしに待つ理由が無い。どちらも `kill()` + `wait()` に揃え、`release` を使うのは正常に保持できたプロセスを畳むときだけにする。`lock_holder` は取得に失敗すれば即終了するので `!locked` の `release` が実際に止まる確率は低いが、同じ関数の2つの失敗経路で後始末の基準が割れる形を残さない。
 
+**この基準の射程は probe と `lock.rs` の失敗経路の2つに限る。** 適合ハーネスの `try_acquire_from_other_process` は `locked` の値によらず `release` を呼ぶので、取得できなかった保持プロセスの正常終了を期限なしに待つ形が残るが、そこは射程の外に置き、実装は変えない。ここに期限を掛けるには子の終了を期限つきで待つ汎用の手当てと3 OS での検証が要り、`lock_holder` を触れない以上この経路の実地検証の手段も無い。射程を広げるのはその手当てと同時にする。
+
 ### Consequences
 
 - 良い点: probe が測るものと、probe が依存するものが一致する。判定にも後始末にも「合図が期限内に返るか」以外の前提が入らない。
-- 良い点: 「期限の無い待ちは、正常に保持できたと分かっている相手にだけ許す」という1本の基準が、probe と失敗経路の双方に通る。
+- 良い点: 「期限の無い待ちは、正常に保持できたと分かっている相手にだけ許す」という基準が、probe と `lock.rs` の失敗経路の双方に同じ形で通る。射程はこの2つで、適合ハーネスからの `release` 呼び出しは含まない。
 - 良い点: 能力の区別が「保持プロセスを使えるか」の軸だけで閉じ、ロック取得や合図の読み取りの異常で変異が増えない。
 - トレードオフ: probe は本番の手順を「合図まで」しか再現せず、ロックが実際に効くかまでは確かめない。その差は最初のケースで失敗として現れるので、静かな緑にはならない。
 - トレードオフ: `kill` で畳むため、保持プロセスが正常終了の経路を通らない。probe が使うのは自分で作った一時ディレクトリのロックだけなので、後片付けの取りこぼしは `tempfile` の削除に吸収される。
@@ -165,7 +169,7 @@ probe は「合図が期限内に返ったか」だけで `Available` / `SignalT
 
 ### Status
 
-Proposed
+Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「probe が成立したあとのタイムアウトは失敗にする」に昇格
 
 ### Context
 
@@ -180,7 +184,7 @@ probe が成立した環境でも、本番のケースで合図が期限を超�
 ### Consequences
 
 - 良い点: 「環境の能力」と「異常」の線が、probe の成立という観測可能な事実で引かれる。
-- トレードオフ: probe が通ったあとに一度だけ極端な負荷を踏むと赤になる。probe は無負荷・単発の測定で、本番の並列実行の負荷を再現しないため、この余地は残る(ADR-001 の良い点の射程を裏から書いたもの)。その赤は原因(probe は通ったのにタイムアウトした)がメッセージから読めるので、原因の見えない間欠的な赤にはならない。
+- トレードオフ: probe が通ったあとに一度だけ極端な負荷を踏むと赤になる。probe が測るのは1プロセスの単発の起動で、本番の4件が同時に立ち上がる負荷そのものを再現しないため、この余地は残る(ADR-001 の良い点の射程を裏から書いたもの)。その赤は原因(probe は通ったのにタイムアウトした)がメッセージから読めるので、原因の見えない間欠的な赤にはならない。
 
 ---
 
@@ -188,7 +192,7 @@ probe が成立した環境でも、本番のケースで合図が期限を超�
 
 ### Status
 
-Proposed
+Accepted(作業ログ限り。昇格しない) — 寿命テストは満たすが波及テストを満たさない。増えた区別はいずれも「失敗として現れる側」の内訳で、許容集合の述語(合図のタイムアウトか否か)を動かさないため、覆しても波及先は `crates/pulsen/tests/common/lock.rs` とそのパニック文言に留まる。`ProgramUnusable` を失敗側に置く**理由**は `.adr/073` の基準として昇格済み
 
 ### Context
 
@@ -203,7 +207,7 @@ Proposed
 
 ### Decision
 
-- 能力の型に `ProgramUnusable(String)` を足し、`ProgramMissing`(実行ファイルが無い)と分ける。値は `spawn` が返した `io::Error` の文字列で、パニックメッセージにそのまま載せる。probe が `ProgramMissing` を返すのは `holder_program()` が `None` だったときだけにする。
+- 能力の型に `ProgramUnusable(io::Error)` を足し、`ProgramMissing`(実行ファイルが無い)と分ける。値は `spawn` が返した `io::Error` をそのまま持ち、パニックメッセージに載せる。文字列に畳まないのは、`io::Error` が `Send + Sync + 'static` で能力の型にそのまま置け、後から `ErrorKind` で述語を書く材料が残るため。probe が `ProgramMissing` を返すのは `holder_program()` が `None` だったときだけにする。
 - 起動結果の型に `SignalUnreadable(Child)` を足し、`Signaled` と分ける。`spawn_holder` はここで保持プロセスを畳んでから「合図を読み取れなかった」とパニックする。
 - `stdout` の取得失敗は起動の失敗と同じ扱い(`SpawnFailed`)にする。パイプを持たない子プロセスは合図を返しようがなく、原因も回避方法も起動失敗と同じ経路にある。変種名を `NotStarted` にしないのは、enum 名 `Started` で終わる名前が `clippy::enum_variant_names` に掛かり、CI の `-D warnings` で赤になるため。
 - **パニック文言は観測に忠実にする。** 名前の付いた区別が増えても、フィクスチャが実際に観測していない原因を断定しない。`!locked` の経路は「保持プロセスが、誰も保持していないロックを取得した合図を返さなかった」と述べるにとどめる — `spawn_holder` は `stderr(Stdio::null())` で子の標準エラーを捨てており、`lock_holder` はロックの競合(`ロックは別の保持者がいる`)も機構の異常(`ロックを扱えない: …`)も引数の誤りもそこにしか書かないので、`locked == false` から「取得できなかった」と原因を名指しする材料は手元に無い。

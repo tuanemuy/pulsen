@@ -36,26 +36,40 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
     ```rust
     /// 別プロセスにロックを保持させられるか。
     pub enum HolderCapability {
-        /// 保持プロセスを起動でき、合図が期限内に返る。値は実行ファイルのパス。
-        Available(PathBuf),
+        /// 保持プロセスを起動でき、合図が期限内に返る。
+        Available(HolderProgram),
         /// 起動はできるが、合図が期限内に返らない(環境の遅さ)。
         SignalTimedOut,
         /// 実行ファイルが無い(example がビルドされていない)。
         ProgramMissing,
-        /// 実行ファイルはあるが起動できない。値は起動が失敗した理由。
-        ProgramUnusable(String),
+        /// 実行ファイルはあるが起動できない。値は probe の起動時に spawn が返したエラー。
+        ProgramUnusable(io::Error),
+    }
+
+    /// probe が解決した保持プロセスの実行ファイル。パスは `lock.rs` の外へ出さない。
+    pub struct HolderProgram(PathBuf);
+
+    impl HolderProgram {
+        fn path(&self) -> &Path {
+            &self.0
+        }
     }
     ```
+
+    `Available` のペイロードを裸の `PathBuf` にしない。パスが公開されると、別のテストバイナリが能力の型から実行ファイルを取り出して `spawn_holder` の判断(不在・起動失敗・probe 成立後のタイムアウト)を迂回できてしまい、`holder_program()` を private にして得た保証(AC-2)が変種のペイロードで抜ける。
+
+    起動が失敗した理由を `String` に畳まない。`io::Error` は `Send + Sync + 'static` なのでそのまま `OnceLock` に置け、文字列化すると `ErrorKind` が失われて「どの種類の失敗をどちら側に置くか」を後から書く材料が消える。パニック文言は `{error}` で `to_string()` と同じ内容になる。
 
   - 起動結果の内部 enum を足す。
 
     ```rust
     /// 保持プロセスの起動を試みた結果。
     enum Started {
-        /// 合図が期限内に返った。ロックを取得できたかを添える。
+        /// 期限内に子が応答した(合図を書いたか、書かずに終了したか)。
+        /// `locked` は合図が `LOCKED` だったか。
         Signaled { holder: Child, locked: bool },
-        /// 期限内に応答はあったが、合図を読み取れなかった。
-        SignalUnreadable(Child),
+        /// 期限内に応答はあったが、合図を読み取れなかった。値はその理由。
+        SignalUnreadable { holder: Child, error: io::Error },
         /// 合図も終了も期限内に返らなかった(保持プロセスは終了させてある)。
         SignalTimedOut,
         /// 起動できなかった。
@@ -97,7 +111,7 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
   - `SIGNAL_DEADLINE`(14-16行)のドキュメンテーションコメントを、期限超過の意味が2つに分かれたことに合わせて改める。
 
     ```rust
-    /// 合図を待つ期限。probe ではこの期限を超えたことが「この環境は保持プロセスを使えない」
+    /// 合図を待つ期限。probe ではこの期限を超えたことが「この環境は合図を期限内に返せない」
     /// という能力の判定になり、probe が成立したあとに超えた場合は異常として失敗になる。
     /// いずれの場合も待ち続けないのは、フィクスチャのハングがテストの失敗より診断が
     /// 難しいため(ADR-060)。
@@ -118,11 +132,14 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
     fn start_holder(program: &Path, lock_path: &Path) -> Started {
         // spawn が Err → Started::SpawnFailed(error)
         // stdout の取得に失敗 → kill + wait して Started::SpawnFailed(io::Error::other(..))
-        // recv_timeout が Err → kill + wait して Started::SignalTimedOut
-        // 読み取りエラー(現行の Ok(None)) → Started::SignalUnreadable(holder)
+        // recv_timeout が Err(Timeout) → kill + wait して Started::SignalTimedOut
+        // recv_timeout が Err(Disconnected) → Started::SignalUnreadable { holder, error }
+        // 読み取りエラー(現行の Ok(None)) → Started::SignalUnreadable { holder, error }
         // 合図を受け取った → Started::Signaled { holder, locked: signal.trim() == LOCKED }
     }
     ```
+
+    読み取りスレッドは `io::Result<String>` をそのまま送り、`recv_timeout` の失敗は `Timeout` と `Disconnected` に分けて `_` で潰さない。`Disconnected`(読み取りスレッドが結果を返さずに消えた)は期限を1ミリ秒も測っていないので、許容集合側に落ちる `SignalTimedOut` に倒さない。
 
     読み取りエラーを `Signaled { locked: false }` に寄せない。寄せると「合図を読めなかった」が `hold` では `!locked` の失敗(取得の合図が返らなかった)として、`try_acquire_from_other_process` 経由では TC-004 の「ドロップで解放され、別プロセスが取得できる」の失敗として現れ、どちらも実際の原因を述べない。
   - probe と公開の入口を足す。
@@ -144,19 +161,20 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
         };
         let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
         match start_holder(&program, &dir.path().join("lock")) {
-            Started::Signaled { holder, locked: _ } | Started::SignalUnreadable(holder) => {
+            Started::Signaled { holder, locked: _ }
+            | Started::SignalUnreadable { holder, error: _ } => {
                 kill_and_wait(holder);
-                HolderCapability::Available(program)
+                HolderCapability::Available(HolderProgram(program))
             }
             Started::SignalTimedOut => HolderCapability::SignalTimedOut,
-            Started::SpawnFailed(error) => HolderCapability::ProgramUnusable(error.to_string()),
+            Started::SpawnFailed(error) => HolderCapability::ProgramUnusable(error),
         }
     }
     ```
 
     後始末に `release`(stdin を閉じて正常終了を待つ)を使わない。probe が測っているのは「合図が期限内に返るか」だけで、正常終了できるかは測っていない。`release` の `wait()` には期限が無く、しかも probe は `OnceLock::get_or_init` の中なので、子プロセスが終了しない環境では `holder_capability()` を呼ぶ全スレッドがそこで止まる。`kill_holder` と同じ `kill()` + `wait()` にすれば、後始末が測定対象から独立する(ADR-060 が期限を置いた理由と同じ)。`start_holder` のタイムアウト経路と共通の小さなヘルパー(`kill_and_wait`)にまとめる。
 
-    読み取りエラー(`SignalUnreadable`)を `Available` に数えるのは、合図が期限内に「返った」ことは確かで、probe の判定基準がそこに限られているため(adr.md ADR-005)。読めなかったこと自体は最初のケースで失敗として現れる。
+    読み取りエラー(`SignalUnreadable`)を `Available` に数えるのは、合図が期限内に「返った」ことは確かで、probe の判定基準がそこに限られているため(adr.md ADR-005)。probe は合図が読めたかどうかを能力の判定に入れず、読み取りの異常はケース側で失敗として扱う。
   - `use std::sync::OnceLock;` を足す。probe が使う一時ディレクトリは本番のロックとぶつからないよう `tempfile::tempdir()` で作り、判定が終わるまで保持する。
 - **理由:** 宣言を「実行ファイルの有無」から「環境の能力」へ移す(`.adr/055` / `.adr/071`)。`holder_program()` を private にすることで、古い述語を使う呼び出し側が残らないことをコンパイラが保証する(AC-2)。
 
@@ -177,15 +195,16 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
             HolderCapability::Available(program) => program,
             HolderCapability::SignalTimedOut => return None,
             HolderCapability::ProgramMissing => panic!("{PROGRAM_MISSING}"),
-            HolderCapability::ProgramUnusable(reason) => panic!(
-                "ロック保持フィクスチャ(examples/lock_holder)を起動できなかった: {reason}"
+            HolderCapability::ProgramUnusable(error) => panic!(
+                "ロック保持フィクスチャ(examples/lock_holder)を起動できなかった\
+                 (probe の起動時に観測した理由): {error}"
             ),
         };
-        match start_holder(program, lock_path) {
+        match start_holder(program.path(), lock_path) {
             Started::Signaled { holder, locked } => Some((holder, locked)),
-            Started::SignalUnreadable(holder) => {
+            Started::SignalUnreadable { holder, error } => {
                 kill_and_wait(holder);
-                panic!("保持プロセスの合図を読み取れなかった")
+                panic!("保持プロセスの合図を読み取れなかった: {error}")
             }
             Started::SignalTimedOut => panic!(
                 "保持プロセスの合図が {SIGNAL_DEADLINE:?} 以内に返らなかった。\
@@ -331,9 +350,20 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
      該当ケースが**失敗**し、メッセージが実行ファイルの不在と `cargo test --workspace` での実行を案内すること。(`CARGO_TARGET_DIR` を別のディレクトリに向けて `--test` 指定で1回だけ回す形でも同じ状態を作れる。依存の再ビルドを避けるなら削除のほうが速い。)
 
      `cli_add_error` では、**ロックを使わないケースのスキップが probe を起こす**。`common/mod.rs` の `allowed_skips()` は `SKIPS`(`LazyLock`)の初期化時に一度だけ評価され、その中で `holder_capability()` を呼ぶので、最初に `common::skipped` を通るのが権限系(`tc_task_register_task_016 / 021`)や git 系(`036`)であれば、そこで probe が走る。この確認では成果物を消してあるので probe は `ProgramMissing` を即座に返し、待ちは入らない。一方、`tc_task_register_task_017` を含まない絞り込みで回した場合も probe は走るので、合図が期限内に返らない環境では `SIGNAL_DEADLINE` ぶん待つ — 待ちが入っても異常ではない。
-  5. **`ProgramUnusable` 経路。** 実行ファイルはあるが起動できない状態を3 OS で安定して作る手段が無いため、実地では踏まない。`spawn` が返した `io::Error` がパニックメッセージに載ることをコードレビューで確認する(AC-4 のこの半分は実地検証を持たない)。
-  6. **後始末。** 2〜4 のあとに 1 を再度通して緑に戻ること(4 で消した成果物は `--workspace` が作り直す)、保持プロセス(`lock_holder`)が残っていないこと、`git diff` に一時的な差し替えが残っていないこと(AC-7)。
-- **理由:** AC-4 / AC-5 / AC-7 / AC-9 / AC-11。分岐はいずれも環境を作らないと通らないため、再現手段のあるものは実地で1回ずつ踏み、無いものは踏まないことを明記する。
+  5. **`ProgramUnusable` 経路。** unix では、ビルド済みの実行ファイルから実行ビットを落とせば「実行ファイルはあるが起動できない」状態を確定的に作れる。4 の直後に成果物を作り直してから回す。
+
+     ```
+     cargo test --workspace --locked --no-fail-fast -- --nocapture   # 成果物を作り直す
+     chmod 000 target/debug/examples/lock_holder
+     cargo test -p pulsen --test conformance_lock -- --nocapture
+     chmod 755 target/debug/examples/lock_holder
+     ```
+
+     4件が**失敗**し、メッセージが `ロック保持フィクスチャ(examples/lock_holder)を起動できなかった(probe の起動時に観測した理由): Permission denied (os error 13)` になること。`spawn` が返した `io::Error` の内容がそのまま載り、「起動できませんでした」のような固定文言に置き換わっていないことを見る(AC-4 の後半)。4件が `SKIP` 行としては現れないことも併せて見る。
+
+     Windows には同じ手段が無い(実行ビットの概念が無く、Defender の隔離も再現できない)ので、そちら側は `Started::SpawnFailed(error)` から `HolderCapability::ProgramUnusable(error)` を経てメッセージに `{error}` が載ることをコードレビューで確認する。
+  6. **後始末。** 2〜5 のあとに 1 を再度通して緑に戻ること(4 で消した成果物は `--workspace` が作り直す)、5 の実行ビットが戻っていること(`ls -l target/debug/examples/lock_holder`)、保持プロセス(`lock_holder`)が残っていないこと、`git diff` に一時的な差し替えが残っていないこと(AC-7)。
+- **理由:** AC-4 / AC-5 / AC-7 / AC-9 / AC-11。分岐はいずれも環境を作らないと通らないため、5経路を実地で1回ずつ踏む。3 OS すべてで再現できないことは、どこでも検証できないことを意味しない — `ProgramUnusable` は unix で踏み、Windows 固有の事情(Defender の隔離・実行形式の不一致)だけをコードレビューに残す。
 
 ### 9. CI の実測と予測を突き合わせる
 
@@ -348,21 +378,23 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
      - **数えないもの:** `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身の検証で出す架空の3行(`SKIP tc_port_clock_004_…` / `tc_port_clock_0051_…` / `tc_port_clock_005_…`)は**全 OS の `test.log` に出る**が、走らなかった適合ケースではないので集合に入れない(HOOKS.md も集計から外している)。ジョブサマリー側は ci.yml がその区間を落とすので現れない。`crates/pulsen/src/adapter/task_repository.rs` の `#[cfg(all(test, unix))]` の3件も、Windows では `SKIP` として現れない(コンパイルされない)ので差分にならない。
   2. CI の `test.log` / ジョブサマリーと突き合わせる。`test.log` を目で見る場合は、架空の3行を除いてから数える。
   3. 一致すれば HOOKS.md の3 OS 列は変更なし。ずれた場合は、**予測が誤っていた理由を先に特定してから**列を更新し、出典の run を「3ランナーでの実測」に書き足す。
+  4. **実測(run 31681471522)。** 7ジョブ(fmt 1 + test 3 OS + msrv 3 OS)がすべて success。ジョブサマリーの `SKIP` 行は、ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件(`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`)を加えた**11件**。ロック系5件(`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`)は3 OS とも**0件**。架空の3行は手順1 の宣言どおり数えていない。
+  5. **突き合わせ。** 手順1 の予測(unix 1件 / Windows 11件 / ロック系5件は3 OS とも0件)と実測が一致した。述語が変わった唯一の行が3 OS とも `Available` に倒れており、宣言と実態が割れていない。手順3 のとおり HOOKS.md の3 OS 列は変更なし。
 - **理由:** AC-10。`.adr/068` の「観測値を期待値へ書き写す順序は取らない」をそのまま踏む。この変更は許容集合の述語そのものを動かすので、突き合わせを飛ばすと宣言が正しいかを誰も確かめていない状態になる。
 
 ### 10. 設計判断を `.adr/` へ昇格する
 
 実装・レビュー・3 OS の検証がすべて終わったあとの最後のステップ。決定の形が確定してから正本に載せる(`.adr/035` が「実装で形が変わりうる決定を承認済みにするのは確定したステップの完了時」としたのと同じ理由)。
 
-- **対象ファイル:** `.adr/073-*.md`(新規) / `.thread/13/adr.md` / `crates/pulsen/tests/common/lock.rs` / `crates/pulsen/tests/conformance_lock.rs`
+- **対象ファイル:** `.adr/073-holder-capability-skip-vs-fail.md`(新規) / `.thread/13/adr.md` / `crates/pulsen/tests/common/lock.rs` / `crates/pulsen/tests/conformance_lock.rs` / `crates/pulsen-conformance/HOOKS.md`
 - **変更内容:**
   1. `.thread/13/adr.md` の各エントリを記録基準(寿命テスト＝この理由はマージ後にこの Issue を見ていない人にも意味を持つか / 波及テスト＝覆すと複数のモジュール・レイヤーに波及するか)にかける。判定は次を出発点にする。
      - **ADR-001(合図タイムアウトは能力の probe として表す)・ADR-002(実行ファイル不在は失敗にする / 能力側と失敗側を分ける基準)・ADR-005(probe の判定基準)・ADR-006(probe 成立後のタイムアウトは失敗)** — 両テストを満たす。Issue コメントが求めているのは「合図タイムアウト＝環境の能力の probe、実行ファイル不在＝失敗、という区別の理由」を残す**1本**なので、4本を1本に畳んで起票する。ADR-005 / ADR-006 は「probe が何を測り、測っていないものをどう扱うか」という同じ決定の内訳であり、別立てにすると正本で理由が分散する。
        畳んだ「決定」には、ADR-002 が置いた**能力側と失敗側を分ける基準**を必ず含める。基準が無いと、正本は4つの区別のうち `ProgramUnusable`(実行ファイルはあるが起動できない)をどちら側に置くかを決められず、次にこの経路を触る人がスキップ側へ倒しても反証を持たない(AC-12)。
      - **ADR-003(probe の置き場所)** — 置き場所の基準(スイート側が判定できる能力か、適用側の具体的フィクスチャに依存する能力か)は後続の適用先にも効くので、上の1本の「決定」の中に基準として畳む。
      - **ADR-004(`Option` のまま `None` の意味を絞りパニックで失敗させる)・ADR-007(起動失敗と合図の読み取り失敗を独立した区別として持つ)** — 波及テストを満たさない(`crates/pulsen/tests/common/lock.rs` に閉じ、理由はコードのすぐ横の doc コメントで伝わる)。作業ログ限りとする。
-  2. 昇格分を `.adr/073-*.md` として起票する。既存の最大採番は **072**(`ls .adr/` で確認済み)なので連番の起点は 073。書式は `.adr/038` に従い、見出しを `## ステータス` / `## コンテキスト` / `## 決定` / `## 検討した代替案` / `## 影響`、ステータス語を **承認済み** に変換する。
+  2. 昇格分を `.adr/073-holder-capability-skip-vs-fail.md` として起票する。既存の最大採番は **072**(`ls .adr/` で確認済み)なので連番の起点は 073。書式は `.adr/038` に従い、見出しを `## ステータス` / `## コンテキスト` / `## 決定` / `## 検討した代替案` / `## 影響`、ステータス語を **承認済み** に変換する。
      `## 影響` に、**`.adr/068` が「決定」で挙げた帰結が本Issueで改まる**ことを1文入れる。068 は「単一テストターゲット指定では example がビルドされず、ロック保持のフィクスチャが消えてロック系のケースが『宣言済みスキップ』に化ける」と書いているが、実行ファイルの不在を失敗側へ倒したことで、その帰結は「4件＋1件が失敗する」に改まる。`.adr/068` 自体は書き換えない(判断が下された時点の記録 — plan.md スコープ)ので、068 だけを読んだ人が現行の述語へ辿れる導線を、後から来た 073 の側に置く。`.adr/` が相互参照する運用(`.adr/005` / `037` / `071`)と揃う扱いであり、AC-12 の「区別の理由が正本に残っている」の範囲に収まる。
   3. `.thread/13/adr.md` の各エントリの Status 行を更新する。昇格したものは `→ .adr/073-... に昇格`、しなかったものは作業ログ限りである旨と理由を書き、どちらか判別できる状態にする(`.adr/038`)。
-  4. コード中の ADR 参照に新番号を足す。対象は `lock.rs` の `PROGRAM_MISSING` の doc コメント(現状 `HOOKS.md / ADR-068`)と `conformance_lock.rs` の `allowed_skips()` の doc コメント。068(許容集合に入れない方針)の参照は残したまま、区別の理由の所在として 073 を併記する。
+  4. ADR 参照に新番号を足す。対象は `lock.rs` の `PROGRAM_MISSING` の doc コメント(現状 `HOOKS.md / ADR-068`)、`conformance_lock.rs` の `allowed_skips()` の doc コメント、`HOOKS.md` で失敗側を明記している段落の典拠。068(許容集合に入れない方針)の参照は残したまま、区別の理由の所在として 073 を併記する。HOOKS.md を落とすと、正本の表の脇だけが「起動できない場合」を扱っていない 068 を単独の典拠に据えたまま残る。
 - **理由:** AC-12。Issue コメントの「あわせて更新する箇所」3点のうち残る1点。`.adr/035` が「実装中に生じた新しい決定は同じ規則で連番を続けて起票する」と定めており、`.thread/13/adr.md` は作業ログであって正本ではない。昇格しないと、Issue が合意した成果物が1つ欠けたまま完了と判定されうる。

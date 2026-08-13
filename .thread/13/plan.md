@@ -62,6 +62,6 @@
 - **`SignalTimedOut` 経路:** `SIGNAL_DEADLINE` を一時的に極小(`Duration::from_nanos(1)` 等)にして `cargo test -p pulsen -- --nocapture` を回し、5件が `SKIP` 行として出たうえで**緑**になることを確認する。確認後に必ず元に戻し、差分に残っていないことを `git diff` で確かめる。
 - **`ProgramMissing` 経路:** ビルド成果物(`target/debug/examples/lock_holder{,.exe}`)を明示的に削除してから単一テストターゲットを指定して回す。`--test` 指定は example をビルドしないが、既存の成果物を消しもしないため、削除を省くと probe が `Available` に倒れて何も確かめられない。
 - **probe 成立後のタイムアウト経路:** `start_holder` の2回目以降の呼び出しだけを一時的に遅らせて再現する(probe は1回目なので `Available` のまま)。確認後に元へ戻す。
-- **`ProgramUnusable` 経路(実行ファイルはあるが起動できない):** 3 OS で安定して再現する手段が無いため実地では踏まない。`spawn` の `io::Error` がメッセージに載ることをコードレビューで確認する(AC-4 のこの半分だけは実地検証を持たない)。
+- **`ProgramUnusable` 経路(実行ファイルはあるが起動できない):** unix ではビルド済みの `target/debug/examples/lock_holder` を `chmod 000` にすると確定的に再現できるので、実地で踏む(`spawn` が返した `Permission denied (os error 13)` がパニックメッセージに載る)。後始末は `chmod 755` で戻すだけ。Windows には同じ手段が無いので、そちら側は `spawn` の `io::Error` がメッセージに載ることをコードレビューで確認する。
 - **3 OS の CI:** `.adr/068` の手順に従い、実行前に HOOKS.md から `SKIP` 集合を予測し、実行後の `test.log` / ジョブサマリーと突き合わせる。差分が出たら予測が誤っていた理由を先に特定する。
 - **`cargo fmt --all --check` / `cargo clippy --workspace --all-targets --locked -- -D warnings`(CI と同じ形)。** `--all-targets` はテストターゲットも見るため、新しく置く enum の名前が既定の warn 級 lint(`clippy::enum_variant_names` 等)に掛からないこともここで分かる。

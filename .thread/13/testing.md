@@ -11,7 +11,7 @@
 
 本Issueの変更対象はテストのフィクスチャ層（`crates/pulsen/tests/`）とその表（`crates/pulsen-conformance/HOOKS.md`）・CI の why コメント・`.adr/` であり、CLI の振る舞いも `ExclusiveLock` ポートの契約も変わらない。**Web UI も dev サーバも存在しない**（ワークスペースは CLI バイナリ1本とライブラリ2本のみ）ため、確認はすべてターミナル上でのテスト実行・コード確認・CI 実行結果の読み取りで行う。
 
-確認の中心は「4つの経路（`Available` / `SignalTimedOut` / probe 成立後のタイムアウト / `ProgramMissing`）をそれぞれ1回ずつ実地で踏み、宣言（`allowed_skips()`）と実態が一致することを見る」ことにある。経路を作るには一時的なコード差し替えが要るものがあり、その戻し忘れ自体が受け入れ基準（AC-7）なので、各項目の手順に戻し方まで書いてある。
+確認の中心は「5つの経路（`Available` / `SignalTimedOut` / probe 成立後のタイムアウト / `ProgramMissing` / `ProgramUnusable`）をそれぞれ1回ずつ実地で踏み、宣言（`allowed_skips()`）と実態が一致することを見る」ことにある。最後の1つは unix 限定で、Windows 固有の事情（Defender の隔離・実行形式の不一致）だけがコードレビューによる。経路を作るには一時的なコード差し替えやビルド成果物の操作が要るものがあり、その戻し忘れ自体が受け入れ基準（AC-7）に関わるので、各項目の手順に戻し方まで書いてある。
 
 ### 検証環境の起動
 
@@ -40,7 +40,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 |---|---|---|
 | `cargo test --workspace --locked --no-fail-fast -- --nocapture` | する | `Available` 経路（CI と同じ形） |
 | `cargo test -p pulsen -- --nocapture` | する | `SignalTimedOut` / probe 成立後のタイムアウト経路 |
-| `cargo test -p pulsen --test conformance_lock -- --nocapture` / `cargo test -p pulsen --test cli_add_error -- --nocapture` | **しない**（ただし既存の成果物を消しもしない） | `ProgramMissing` 経路（成果物の削除とセットで初めて意味を持つ） |
+| `cargo test -p pulsen --test conformance_lock -- --nocapture` / `cargo test -p pulsen --test cli_add_error -- --nocapture` | **しない**（ただし既存の成果物を消しもしない） | `ProgramMissing` 経路（成果物の削除とセット）/ `ProgramUnusable` 経路（成果物の `chmod 000` とセット）。どちらも成果物への操作と組んで初めて意味を持つ |
 
 保持プロセスの実行ファイルは `target/debug/examples/lock_holder`（Unix）/ `target/debug/examples/lock_holder.exe`（Windows）にある。
 
@@ -64,11 +64,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   3. `grep -rn "OnceLock\|LazyLock" crates/pulsen/tests/`
   4. `grep -n "enum Started" -A 10 crates/pulsen/tests/common/lock.rs`
 - **期待結果:**
-  1. `HolderCapability` が1件ヒットし、変種が `Available(PathBuf)` / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable(String)` の**4つちょうど**。`Available` が実行ファイルのパスを、`ProgramUnusable` が起動が失敗した理由を持つ。
+  1. `HolderCapability` が1件ヒットし、変種が `Available(HolderProgram)` / `SignalTimedOut` / `ProgramMissing` / `ProgramUnusable(io::Error)` の**4つちょうど**。`Available` は解決済みの実行ファイルを、`ProgramUnusable` は probe の起動時に `spawn` が返したエラーをそのまま持つ。`HolderProgram` のフィールドが非公開で、実行ファイルのパスが `lock.rs` の外へ出ない。
   2. `OnceLock` の宣言が `holder_capability()` の中の1件だけ（`static CAPABILITY: OnceLock<HolderCapability>`）。
-  3. `crates/pulsen/tests/` 全体で、ロック能力を保持する `OnceLock` はこの1件だけ。`common/mod.rs` の `SKIPS`（`LazyLock<SkipBudget>`）は別の役割（許容集合のキャッシュ）で、この中から `holder_capability()` を呼ぶ形になっている。
-  4. `Started` が private（`pub` が付いていない）で、変種が `Signaled { holder, locked }` / `SignalUnreadable(Child)` / `SignalTimedOut` / `SpawnFailed(io::Error)` の4つ。
-- **確認ポイント:** `Started` の変種名が `enum` 名 `Started` で終わっていないこと（`clippy::enum_variant_names` は既定 warn で、CI の `-D warnings` で赤になる。確認項目11 で機械的にも見る）。`HolderCapability` に `Child` が乗っていないこと（`'static` に置く型なのでプロセスハンドルは持てず、それが `Started` を別に立てている理由）。
+  3. ヒットは**6行**で、3つの `use` 行（`common/git.rs` / `common/lock.rs` / `common/mod.rs`）と3つの `static` 宣言だけ。`static` の内訳は `common/lock.rs` の `CAPABILITY: OnceLock<HolderCapability>`（ロック能力。`crates/pulsen/tests/` 全体でこの1件だけ）、`common/mod.rs` の `SKIPS: LazyLock<SkipBudget>`（許容集合のキャッシュ。この中から `holder_capability()` を呼ぶ）、`common/git.rs` の `OUTSIDE: OnceLock<bool>`（`tmpdir_outside_repository()` が使う別の probe のキャッシュ）で、説明の付かないヒットは無い。
+  4. `Started` が private（`pub` が付いていない）で、変種が `Signaled { holder, locked }` / `SignalUnreadable { holder, error }` / `SignalTimedOut` / `SpawnFailed(io::Error)` の4つ。`SignalUnreadable` は読み取りが失敗した理由（`io::Error`）を運ぶ。
+- **確認ポイント:** `Started` の変種名が `enum` 名 `Started` で終わっていないこと（`clippy::enum_variant_names` は既定 warn で、CI の `-D warnings` で赤になる。確認項目11 で機械的にも見る）。`HolderCapability` に `Child` が乗っていないこと（`'static` に置く型なのでプロセスハンドルは持てず、それが `Started` を別に立てている理由）。`ProgramUnusable` が起動失敗の理由を文字列に畳んでいないこと（`io::Error` は `Send + Sync + 'static` なので `'static` の型にそのまま置け、畳むと `ErrorKind` が失われる）。
 
 ### 2. 判断の源が probe の1点に絞られ、古い述語が残っていない
 
@@ -99,11 +99,13 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   2. `grep -n "fn hold" -A 12 crates/pulsen/tests/common/lock.rs`
   3. `grep -n "fn hold_from_other_process" -A 6 crates/pulsen/tests/conformance_lock.rs`
   4. `grep -n "None" crates/pulsen/tests/common/lock.rs`
+  5. `grep -n "recv_timeout" -A 12 crates/pulsen/tests/common/lock.rs`
 - **期待結果:**
   1. `spawn_holder` の中で `None` を返すのは `HolderCapability::SignalTimedOut` の腕**1箇所だけ**。残る3つの腕（`Available` / `ProgramMissing` / `ProgramUnusable`）は、それぞれ処理の続行と2種のパニックになっている。`Started::SignalUnreadable` / `SignalTimedOut` / `SpawnFailed` はいずれもパニックで、`None` に落ちない。
   2. `hold` は `spawn_holder(lock_path)?` の伝播のみで `None` を作り、`!locked` は `kill_and_wait` + パニックになっている（`return None` が無い）。
   3. `hold_from_other_process` は `common::lock::hold(&self.lock_path())` の1行に委ねられている（`!locked` の判断が `hold` の中の1箇所だけになる）。
   4. `?` 演算子と `SignalTimedOut` 腕以外に `None` を生む箇所が無い。
+  5. `recv_timeout` の失敗が `RecvTimeoutError::Timeout` と `Disconnected` に分かれており、`Err(_)` の形が無い。`Disconnected`（読み取りスレッドが結果を返さずに消えた）は `Started::SignalUnreadable`＝失敗側に寄っていて、許容集合に入る `SignalTimedOut` に落ちない。
 - **確認ポイント:** `spawn_holder` の doc コメントが `None` の意味を1つに明記し、実行ファイルの不在・起動の失敗・合図の読み取り失敗・probe 成立後のタイムアウトを**スキップに逃がさない**と書いてあること。`hold` の `!locked` のメッセージが「取得の合図が返らなかった」であって「取得できなかった」と断定していないこと（`stderr(Stdio::null())` で子の標準エラーを捨てている以上、原因を断定する材料をフィクスチャは持たない）。
 
 ### 4. 許容集合が `SignalTimedOut` のときだけ広がる（宣言のコード）
@@ -199,39 +201,50 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **確認ポイント:** **手順1 の削除を省略しないこと。** `--test` 指定は example をビルドしないが、過去にビルドされた成果物を消しもしないため、確認項目5 の直後は成果物が必ず残っていて 5件が普通に通ってしまう（=何も確かめられない）。`CARGO_TARGET_DIR` を別のディレクトリに向けて `--test` 指定で1回だけ回す形でも同じ状態を作れるが、依存の再ビルドが要るぶん遅い。
   手順4 では、**ロックを使わないケースのスキップが probe を起こす**。`common/mod.rs` の `allowed_skips()` は `SKIPS`（`LazyLock`）の初期化時に一度だけ評価され、その中で `holder_capability()` を呼ぶため、最初に `common::skipped` を通るのが権限系（`tc_task_register_task_016` / `021`）や git 系（`036`）であれば、そこで probe が走る。この確認では成果物を消してあるので probe は `ProgramMissing` を即座に返し、待ちは入らない。
 
-### 9. `ProgramUnusable` 経路 — `spawn` の `io::Error` が案内に載る（コードレビュー）
+### 9. `ProgramUnusable` 経路 — 失敗し、`spawn` の `io::Error` が案内に載る
 
 - **対応する受け入れ基準:** AC-4（実行ファイルはあるが起動できない側）
-- **目的:** 起動が失敗した場合に、その理由（Windows Defender による隔離・`noexec` マウント・権限不足・実行形式の不一致のどれなのか）がパニックメッセージに載ることを確認する。**この経路は3 OS で安定して再現する手段が無いため実地では踏まない。** 唯一の確認手段がコードレビューであることを明記しておく。
-- **手順:**
-  1. `grep -n "ProgramUnusable" -B 2 -A 4 crates/pulsen/tests/common/lock.rs`
-  2. `grep -n "SpawnFailed" -B 2 -A 4 crates/pulsen/tests/common/lock.rs`
-  3. `grep -n "fn start_holder" -A 25 crates/pulsen/tests/common/lock.rs` で `spawn()` の `Err` と `stdout` 取得失敗が `Started::SpawnFailed` に振り分けられていることを読む
-  4. `grep -n "fn probe_holder" -A 16 crates/pulsen/tests/common/lock.rs`
+- **目的:** 起動が失敗した場合に、その理由（権限不足・`noexec` マウント・Windows Defender による隔離・実行形式の不一致のどれなのか）がパニックメッセージに載り、スキップではなく失敗として現れることを確認する。unix ではビルド済みの実行ファイルから実行ビットを落とすことで確定的に再現できる。Windows には同じ手段が無いので、そちら側だけコードレビューによる。
+- **手順（unix — 実地）:**
+  1. `cargo test --workspace --locked --no-fail-fast -- --nocapture` で成果物がある状態にする（確認項目8 の直後はここから始める）。
+  2. `chmod 000 target/debug/examples/lock_holder`
+  3. `ls -l target/debug/examples/lock_holder` で実行ビットが落ちていることを確認する。
+  4. `cargo test -p pulsen --test conformance_lock -- --nocapture`
+  5. 失敗したケース名とパニックメッセージの本文を読む。
+  6. `chmod 755 target/debug/examples/lock_holder` で戻し、`ls -l` で実行ビットが戻っていることを確認する。
+  7. `cargo test --workspace --locked --no-fail-fast -- --nocapture` で緑に戻ることを確認する。
+- **手順（Windows — コードレビュー）:**
+  8. `grep -n "ProgramUnusable" -B 2 -A 4 crates/pulsen/tests/common/lock.rs`
+  9. `grep -n "SpawnFailed" -B 2 -A 4 crates/pulsen/tests/common/lock.rs`
+  10. `grep -n "fn start_holder" -A 25 crates/pulsen/tests/common/lock.rs` で `spawn()` の `Err` と `stdout` 取得失敗が `Started::SpawnFailed` に振り分けられていることを読む
+  11. `grep -n "fn probe_holder" -A 16 crates/pulsen/tests/common/lock.rs`
 - **期待結果:**
-  1. `HolderCapability::ProgramUnusable(reason)` の腕のパニックメッセージに `{reason}` が埋め込まれている（probe の時点で `io::Error::to_string()` として保持された内容）。
-  2. `Started::SpawnFailed(error)` の腕のパニックメッセージに `{error}` が埋め込まれている。
-  3. `spawn()` が `Err` を返した場合はそのまま `Started::SpawnFailed(error)`、`stdout` の取得に失敗した場合は `kill_and_wait` してから `io::Error::other(..)` を包んだ `Started::SpawnFailed` になる。エラーが `.ok()?` で捨てられていない。
-  4. `probe_holder` が `Started::SpawnFailed(error)` を `HolderCapability::ProgramUnusable(error.to_string())` に変換している（`Child` を持てない `'static` の型に、理由だけを文字列で移す）。
-- **確認ポイント:** 元の `io::Error` が「起動できませんでした」のような固定文言に置き換わっていないこと。理由がここ以外に出る場所は無い（`stderr` は `Stdio::null()` に捨てている）。`ProgramUnusable` がスキップ側に倒れていないこと（確認項目4 で見た `match` と併せて確認する）。
+  - 手順4: **赤**。`tc_port_exclusive_lock_002` / `003` / `004` / `005` の**4件**が失敗し、`SKIP` 行としては現れない。
+  - 手順5: メッセージが `ロック保持フィクスチャ(examples/lock_holder)を起動できなかった(probe の起動時に観測した理由): Permission denied (os error 13)` の形で、`spawn` が返したエラーの内容がそのまま載っている。probe の時点で観測した理由であることが読め、`Started::SpawnFailed` の腕（今この場の起動の失敗）と読み分けられる。
+  - 手順7: 緑に戻り、ロック系5件の `SKIP` が0件（確認項目5 と同じ状態）。
+  - 手順8: `HolderCapability::ProgramUnusable(error)` の腕のパニックメッセージに `{error}` が埋め込まれている。理由は `io::Error` のまま保持されていて、文字列に畳まれていない（`ErrorKind` が残るので、後から「この種類は環境の能力側へ倒す」といった述語を書く材料がある）。
+  - 手順9: `Started::SpawnFailed(error)` の腕のパニックメッセージにも `{error}` が埋め込まれている。
+  - 手順10: `spawn()` が `Err` を返した場合はそのまま `Started::SpawnFailed(error)`、`stdout` の取得に失敗した場合は `kill_and_wait` してから `io::Error::other(..)` を包んだ `Started::SpawnFailed` になる。エラーが `.ok()?` で捨てられていない。
+  - 手順11: `probe_holder` が `Started::SpawnFailed(error)` を `HolderCapability::ProgramUnusable(error)` にそのまま載せている。
+- **確認ポイント:** 元の `io::Error` が「起動できませんでした」のような固定文言に置き換わっていないこと。理由がここ以外に出る場所は無い（`stderr` は `Stdio::null()` に捨てている）。`ProgramUnusable` がスキップ側に倒れていないこと（確認項目4 で見た `match` と併せて確認する）。**手順6 を飛ばさないこと** — 実行ビットが落ちたままだと以降の確認項目が同じ失敗を出し続ける（`git diff` には現れないので、確認項目10 の手順5 で実行ビットも見る）。
 
 ### 10. 一時的な差し替えが差分に残っていない
 
 - **対応する受け入れ基準:** AC-7
-- **目的:** 確認項目6・7・8 で入れた一時的な変更（`SIGNAL_DEADLINE` の書き換え・呼び出し回数カウンタ・成果物の削除）が、コミットする差分に残っていないことを確認する。`SIGNAL_DEADLINE` を延ばすだけの対処は Issue 本文が明示的に否定しており、値が動いていれば区別を作った意味が薄れる。
+- **目的:** 確認項目6・7・8・9 で入れた一時的な変更（`SIGNAL_DEADLINE` の書き換え・呼び出し回数カウンタ・成果物の削除・実行ビットの落とし）が、コミットする差分にも `target/` にも残っていないことを確認する。`SIGNAL_DEADLINE` を延ばすだけの対処は Issue 本文が明示的に否定しており、値が動いていれば区別を作った意味が薄れる。
 - **手順:**
   1. `git diff`
   2. `git diff origin/main -- crates/pulsen/tests/common/lock.rs` を読み、`SIGNAL_DEADLINE` の**値**（`Duration::from_secs(10)`）が変わっていないことを見る
   3. `grep -n "SIGNAL_DEADLINE" -B 6 crates/pulsen/tests/common/lock.rs`
   4. `grep -rn "AtomicUsize\|from_nanos" crates/pulsen/tests/`
-  5. `ls target/debug/examples/`
+  5. `ls -l target/debug/examples/`
   6. `cargo test --workspace --locked --no-fail-fast -- --nocapture`
 - **期待結果:**
   1. 一時的な差し込み（カウンタ・`from_nanos`）が1件も残っていない。
   2. `SIGNAL_DEADLINE` の値は変わらず、変わっているのは doc コメントだけ。
   3. doc コメントが、期限超過の意味が2つに分かれたこと（probe では能力の判定、probe 成立後は異常）を述べており、待ち続けない理由（フィクスチャのハングはテストの失敗より診断が難しい。ADR-060）が残っている。
   4. ヒット0件。
-  5. `lock_holder` が存在する（確認項目8 で消したものが `--workspace` の実行で作り直されている）。
+  5. `lock_holder` が存在し（確認項目8 で消したものが `--workspace` の実行で作り直されている）、実行ビットが戻っている（確認項目9 の `chmod 000` が残っていない）。
   6. 緑。
 - **確認ポイント:** 保持プロセスが残っていないこと（`lock_holder` のプロセスが取り残されると、以降のケースがロックを取れない）。probe は自分が作った一時ディレクトリのロックを使い、判定後は成否によらず `kill` + `wait` する設計なので、正常なら残らない。
 
@@ -289,12 +302,12 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **目的:** 「合図タイムアウト＝環境の能力・実行ファイル不在＝失敗」という区別の理由が、作業ログ（`.thread/13/adr.md`）ではなく正本（`.adr/`）に残り、コードから辿れることを確認する。
 - **手順:**
   1. `ls .adr/ | tail -5`
-  2. `grep -n "^## " .adr/073-*.md`
-  3. `grep -n "ProgramUnusable\|068" .adr/073-*.md`
+  2. `grep -n "^## " .adr/073-holder-capability-skip-vs-fail.md`
+  3. `grep -n "ProgramUnusable\|068" .adr/073-holder-capability-skip-vs-fail.md`
   4. `grep -n "073" crates/pulsen/tests/common/lock.rs crates/pulsen/tests/conformance_lock.rs`
   5. `grep -n "^### Status" -A 2 .thread/13/adr.md`
 - **期待結果:**
-  1. `073-` で始まるファイルが1件あり、既存の最大採番 072 の次になっている。
+  1. `073-holder-capability-skip-vs-fail.md` が1件あり、既存の最大採番 072 の次になっている（手順2・3 はこのファイル名を直接指す。glob で書くと、該当ファイルが無いときは展開されずにコマンド自体が失敗し、中身について何も読めないまま空振りする）。
   2. 見出しが `## ステータス` / `## コンテキスト` / `## 決定` / `## 検討した代替案` / `## 影響`（`.adr/038` の書式）で、ステータスが **承認済み**。
   3. `## 決定` に、能力側と失敗側を分ける基準（スキップにしたときに「なぜ走らなかったか」と「次に何をすればよいか」が宣言だけから定まるか）が書かれており、そこから `ProgramUnusable` を失敗側に置く理由が読める。`## 影響` に、`.adr/068` が挙げた帰結（単一テストターゲット指定でロック系が「宣言済みスキップ」に化ける）が「4件＋1件が失敗する」へ改まったことが、068 だけを読んだ人が辿れる形で書かれている。
   4. `lock.rs` の `PROGRAM_MISSING` の doc コメントと `conformance_lock.rs` の `allowed_skips()` の doc コメントの両方から 073 が参照されている。068 の参照も残っている。
@@ -322,6 +335,10 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   - 手順3: 7ジョブすべて `success`。
   - 手順4・5: unix は `tc_port_clock_005` の1件、Windows は11件。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）が**3 OS のいずれにも現れない**。
   - 手順6: MSRV（`1.89`）で新しい enum を含むテストターゲットがコンパイル・リンクできる（`--all-targets` がテストと example も見る）。
+- **実測（run 31681471522）:**
+  - 手順3: 7ジョブ（fmt 1 + test 3 OS + msrv 3 OS）がすべて `success`。
+  - 手順4: ジョブサマリーの `SKIP` 行は、ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件（`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`）を加えた**11件**。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）は3 OS とも現れない。架空の3行は手順1 の宣言どおり数えていない。
+  - 手順5: 手順1 の予測（unix 1件 / Windows 11件 / ロック系5件は3 OS とも0件）と**一致**。述語が変わった唯一の行が3 OS とも `Available` に倒れており、宣言と実態が割れていない。一致したので HOOKS.md の3 OS 列は変更なし。
 - **確認ポイント:**
   - **一致しなかった場合、観測値をそのまま期待値に書き写して閉じない。** 予測が誤っていた理由を先に特定してから HOOKS.md の3 OS 列を更新し、出典の run を「3ランナーでの実測」に書き足す。
   - ロック系5件が `SKIP` として現れた場合、本Issueで述語が変わった唯一の行なので**真っ先に疑う先**。probe が偽陽性で `SignalTimedOut` に倒れると許容集合が黙って広がり、5件が走らなくても緑になる（`.adr/068` が記録済みのトレードオフ。`SKIP` 一覧には現れる）。
@@ -340,7 +357,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   1. `grep -n "fn kill_and_wait" -A 5 crates/pulsen/tests/common/lock.rs`
   2. `grep -n "kill_and_wait\|release(" crates/pulsen/tests/common/lock.rs`
   3. `grep -n "fn probe_holder" -A 16 crates/pulsen/tests/common/lock.rs`
-  4. 確認項目5〜8 の各実行後に、`lock_holder` のプロセスが残っていないことを確認する。
+  4. 確認項目5〜9 の各実行後に、`lock_holder` のプロセスが残っていないことを確認する。
 - **期待結果:**
   - 手順1: `kill()` と `wait()` の結果をいずれも捨てる小さなヘルパーが1つある（既に終了している子への `kill()` はエラーになりうるが、目的は「残さないこと」だけで、どちらの結果もこの先の判断に使わない）。
   - 手順2: 呼び出し元が3経路4箇所 — `start_holder`（`stdout` の取得に失敗した経路・合図が期限内に返らなかった経路）、`probe_holder`（判定後の後始末）、`spawn_holder` の `SignalUnreadable` 腕と `hold` の `!locked` 腕（パニック直前の後始末）。片方の経路だけ `release` のまま残っていない。
@@ -395,4 +412,4 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 - **`release()` の残存利用:** `conformance_lock.rs` の `release_holder` は正常に保持できたプロセスを畳む経路なので `release` のままでよい。`grep -rn "release" crates/pulsen/tests/` で、`release` の呼び出しが正常系だけに残っていること（失敗経路はすべて `kill_and_wait`）を確認する。
 
-- **後片付け:** 全項目の実行後に `git diff` が空で（`git status` に意図した変更ファイルだけが並び）、`cargo test --workspace --locked --no-fail-fast -- --nocapture` / `cargo fmt --all --check` / `cargo clippy --workspace --all-targets --locked -- -D warnings` の3つが緑に戻っていること。`lock_holder` のプロセスが残っていないこと。
+- **後片付け:** 全項目の実行後に `git diff` が空で（`git status` に意図した変更ファイルだけが並び）、`cargo test --workspace --locked --no-fail-fast -- --nocapture` / `cargo fmt --all --check` / `cargo clippy --workspace --all-targets --locked -- -D warnings` の3つが緑に戻っていること。`target/debug/examples/lock_holder` が存在して実行ビットが戻っており、そのプロセスが残っていないこと。

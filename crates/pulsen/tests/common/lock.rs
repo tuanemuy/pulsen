@@ -11,36 +11,49 @@ use std::time::Duration;
 /// ロックを取得した保持プロセスが書き出す合図。
 const LOCKED: &str = "locked";
 
-/// 合図を待つ期限。probe ではこの期限を超えたことが「この環境は保持プロセスを使えない」
+/// 合図を待つ期限。probe ではこの期限を超えたことが「この環境は合図を期限内に返せない」
 /// という能力の判定になり、probe が成立したあとに超えた場合は異常として失敗になる。
 /// いずれの場合も待ち続けないのは、フィクスチャのハングがテストの失敗より診断が
 /// 難しいため(ADR-060)。
 const SIGNAL_DEADLINE: Duration = Duration::from_secs(10);
 
 /// 実行ファイルが無いときの案内。環境の能力ではなくビルド構成の誤りなので、
-/// スキップにはせず失敗させる(HOOKS.md / ADR-068)。
+/// スキップにはせず失敗させる(HOOKS.md / ADR-068 / ADR-073)。
 const PROGRAM_MISSING: &str = "ロック保持フィクスチャ(examples/lock_holder)の実行ファイルが無い。\
     単一のテストターゲットを指定した実行では example がビルドされないため、\
     `cargo test --workspace` のように example をビルドする形で実行する";
 
 /// 別プロセスにロックを保持させられるか。
 pub enum HolderCapability {
-    /// 保持プロセスを起動でき、合図が期限内に返る。値は実行ファイルのパス。
-    Available(PathBuf),
+    /// 保持プロセスを起動でき、合図が期限内に返る。
+    Available(HolderProgram),
     /// 起動はできるが、合図が期限内に返らない(環境の遅さ)。
     SignalTimedOut,
     /// 実行ファイルが無い(example がビルドされていない)。
     ProgramMissing,
     /// 実行ファイルはあるが起動できない。値は起動が失敗した理由。
-    ProgramUnusable(String),
+    ProgramUnusable(io::Error),
+}
+
+/// probe が解決した保持プロセスの実行ファイル。
+///
+/// パスを取り出せる手段を持たせない — 持たせると、能力の判定を迂回して直接起動する
+/// 呼び出し側が `lock.rs` の外に書けてしまう。
+pub struct HolderProgram(PathBuf);
+
+impl HolderProgram {
+    fn path(&self) -> &Path {
+        &self.0
+    }
 }
 
 /// 保持プロセスの起動を試みた結果。
 enum Started {
-    /// 合図が期限内に返った。ロックを取得できたかを添える。
+    /// 期限内に子が応答した(合図を書いたか、書かずに終了したか)。`locked` は合図が
+    /// `LOCKED` だったか。
     Signaled { holder: Child, locked: bool },
     /// 期限内に応答はあったが、合図を読み取れなかった。
-    SignalUnreadable(Child),
+    SignalUnreadable { holder: Child, error: io::Error },
     /// 合図も終了も期限内に返らなかった(保持プロセスは終了させてある)。
     SignalTimedOut,
     /// 起動できなかった。
@@ -78,14 +91,15 @@ fn probe_holder() -> HolderCapability {
     // 本番のロックとぶつからない置き場を使い、判定が終わるまで保持する。
     let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
     match start_holder(&program, &dir.path().join("lock")) {
-        // 合図を読み取れなかった場合も、期限内に返ったことは確かなので能力はある
-        // (読めなかったこと自体は最初のケースで失敗として現れる)。
-        Started::Signaled { holder, locked: _ } | Started::SignalUnreadable(holder) => {
+        // probe が測るのは合図が期限内に返るかだけで、読み取れたかどうかは能力の判定に
+        // 入れない(読み取りの異常はケース側で失敗として扱う)。
+        Started::Signaled { holder, locked: _ }
+        | Started::SignalUnreadable { holder, error: _ } => {
             kill_and_wait(holder);
-            HolderCapability::Available(program)
+            HolderCapability::Available(HolderProgram(program))
         }
         Started::SignalTimedOut => HolderCapability::SignalTimedOut,
-        Started::SpawnFailed(error) => HolderCapability::ProgramUnusable(error.to_string()),
+        Started::SpawnFailed(error) => HolderCapability::ProgramUnusable(error),
     }
 }
 
@@ -109,42 +123,52 @@ fn start_holder(program: &Path, lock_path: &Path) -> Started {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut signal = String::new();
-        let read = BufReader::new(stdout).read_line(&mut signal).ok();
-        let _ = sender.send(read.map(|_| signal));
+        let read = BufReader::new(stdout)
+            .read_line(&mut signal)
+            .map(|_| signal);
+        let _ = sender.send(read);
     });
     match receiver.recv_timeout(SIGNAL_DEADLINE) {
-        Ok(Some(signal)) => Started::Signaled {
+        Ok(Ok(signal)) => Started::Signaled {
             holder,
             locked: signal.trim() == LOCKED,
         },
-        Ok(None) => Started::SignalUnreadable(holder),
-        Err(_) => {
+        Ok(Err(error)) => Started::SignalUnreadable { holder, error },
+        Err(mpsc::RecvTimeoutError::Timeout) => {
             kill_and_wait(holder);
             Started::SignalTimedOut
         }
+        // 期限を1ミリ秒も測っていないので、環境の能力(＝スキップを許容する側)には倒さない。
+        Err(mpsc::RecvTimeoutError::Disconnected) => Started::SignalUnreadable {
+            holder,
+            error: io::Error::other("合図の読み取りが結果を返さずに終了した"),
+        },
     }
 }
 
 /// 保持プロセスを起動し、ロックを取得できたかを添えて返す。
 ///
 /// `None` はこの環境が合図を期限内に返せないこと(宣言済みスキップ)だけを意味する。
-/// 実行ファイルの不在・起動の失敗・合図の読み取り失敗と、probe が成立したあとの
-/// タイムアウトは、いずれも環境の能力ではないのでスキップに逃がさず失敗させる。
+/// 実行ファイルが無い場合は原因も回避方法も一意で、起動できない場合は理由が起動時の
+/// エラーにしか無い。合図を読み取れなかった場合と、probe が成立したあとのタイムアウトも
+/// 同じで、いずれもスキップの宣言だけからは次の一手が定まらないため、スキップに
+/// 逃がさず失敗させる(ADR-073)。
 pub fn spawn_holder(lock_path: &Path) -> Option<(Child, bool)> {
     let program = match holder_capability() {
         HolderCapability::Available(program) => program,
         // 起動を試みない — 5件それぞれに期限ぶんの待ちを重ねない。
         HolderCapability::SignalTimedOut => return None,
         HolderCapability::ProgramMissing => panic!("{PROGRAM_MISSING}"),
-        HolderCapability::ProgramUnusable(reason) => {
-            panic!("ロック保持フィクスチャ(examples/lock_holder)を起動できなかった: {reason}")
-        }
+        HolderCapability::ProgramUnusable(error) => panic!(
+            "ロック保持フィクスチャ(examples/lock_holder)を起動できなかった\
+             (probe の起動時に観測した理由): {error}"
+        ),
     };
-    match start_holder(program, lock_path) {
+    match start_holder(program.path(), lock_path) {
         Started::Signaled { holder, locked } => Some((holder, locked)),
-        Started::SignalUnreadable(holder) => {
+        Started::SignalUnreadable { holder, error } => {
             kill_and_wait(holder);
-            panic!("保持プロセスの合図を読み取れなかった")
+            panic!("保持プロセスの合図を読み取れなかった: {error}")
         }
         Started::SignalTimedOut => panic!(
             "保持プロセスの合図が {SIGNAL_DEADLINE:?} 以内に返らなかった。\
