@@ -18,13 +18,24 @@ use super::fsdir::ensure_dir;
 
 /// 置換・移動・読み取りを試みる回数の上限。
 ///
-/// 0 を表せない型にするのは、打ち切りが `attempted == MAX_ATTEMPTS.get()` の等値比較だから。
-/// 上限が 0 なら `attempted` は 1 から増えるだけで条件が成立せず、一時的な拒否が続く限り
-/// ループが返らない。
+/// 0 を表せない型にするのは、再試行の待ちを `上限 - 1` 本の列として組み立てるから。
+/// 上限が 0 なら本数の減算が成り立たず、リリースでは列が長さの上端まで伸びて、
+/// 一時的な拒否が続く限りループが返らない。
 const MAX_ATTEMPTS: NonZeroU32 = NonZeroU32::new(10).expect("上限は1回以上");
 
 /// 最初の再試行までの待ち時間。試行ごとに倍にする。
 const FIRST_RETRY_WAIT: Duration = Duration::from_millis(1);
+
+/// 試行と試行の間に待つ時間の列。上限まで拒まれ続けたときに待つ全量でもある。
+///
+/// 再試行ループはこの列だけを消費して眠るため、実際の待ちの出典はここ1つに閉じる。
+/// 公開関数の doc と ADR-010 / 013 が根拠にしている「1回の呼び出しあたり最大 511ms」は
+/// この列の和であり、ユニットテストが公称値との一致を固定している。待ちの決め方を
+/// ループから切り出しているのは、上限を壁時計で測らずに検証できるようにするため。
+fn retry_waits() -> impl Iterator<Item = Duration> {
+    std::iter::successors(Some(FIRST_RETRY_WAIT), |wait| Some(*wait * 2))
+        .take(MAX_ATTEMPTS.get() as usize - 1)
+}
 
 /// 内容全体を書き、対象パスをアトミックに置き換える。
 ///
@@ -133,7 +144,7 @@ fn read_with_retry(path: &Path, is_transient: impl Fn(&io::Error) -> bool) -> io
     )
 }
 
-/// `is_transient` が真とするエラーに限り、上限内で `attempt` を繰り返す。
+/// `is_transient` が真とするエラーに限り、`retry_waits` の列が尽きるまで `attempt` を繰り返す。
 ///
 /// 置換も移動も読み取りも Windows では同じ拒否(他のハンドルが対象を開いている・対象が
 /// delete-pending にある)で失敗するため、分類と上限を1つに集約する。`attempt` が失敗時に
@@ -141,15 +152,14 @@ fn read_with_retry(path: &Path, is_transient: impl Fn(&io::Error) -> bool) -> io
 /// 返してくるため。成果 `T` があるのは、読み取りのように値を返す試行を同じループに
 /// 載せるため。
 ///
-/// 分類を引数に取るのは、再試行の打ち切り方(上限に達したら元のエラーを返す)を、
+/// 分類を引数に取るのは、再試行の打ち切り方(列を使い切ったら元のエラーを返す)を、
 /// エラーがどう分類されるかと独立に検証できるようにするため。
 fn retry_while_transient<S, T>(
     mut state: S,
     mut attempt: impl FnMut(S) -> Result<T, (io::Error, S)>,
     is_transient: impl Fn(&io::Error) -> bool,
 ) -> io::Result<T> {
-    let mut attempted: u32 = 0;
-    let mut wait = FIRST_RETRY_WAIT;
+    let mut waits = retry_waits();
     loop {
         let error = match attempt(state) {
             Ok(value) => return Ok(value),
@@ -158,12 +168,14 @@ fn retry_while_transient<S, T>(
                 error
             }
         };
-        attempted += 1;
-        if attempted == MAX_ATTEMPTS.get() || !is_transient(&error) {
+        // 列を先に見るのは、最後の試行のあとで分類を問うても結果が変わらないから。
+        let Some(wait) = waits.next() else {
+            return Err(error);
+        };
+        if !is_transient(&error) {
             return Err(error);
         }
         thread::sleep(wait);
-        wait *= 2;
     }
 }
 
@@ -222,7 +234,6 @@ fn sync_dir(_dir: &Path) {}
 mod tests {
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Instant;
 
     use super::*;
 
@@ -340,26 +351,28 @@ mod tests {
     }
 
     #[test]
+    fn 再試行に費やす待ちの合計は公称する上限と一致する() {
+        // 公開関数の doc と ADR-010 / 013 は「1回の呼び出しあたり最大 511ms」を根拠に、
+        // 遅延が排他ロックの保持時間に乗るトレードオフを受け入れている。待ちの列は
+        // ループが実際に消費するものなので、伸び幅も回数もここに現れる。
+        assert_eq!(retry_budget(), Duration::from_millis(511));
+    }
+
+    #[test]
     fn 時間で解けない拒否に再試行の予算を使わない() {
         let base = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let missing = base.path().join("task.json");
         let to = base.path().join("archived.json");
 
-        let started = Instant::now();
-        let error = read_atomic(&missing).expect_err("読めない");
-        let read_elapsed = started.elapsed();
-        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        let read_error = read_atomic(&missing).expect_err("読めない");
+        let rename_error = rename_atomic(&missing, &to).expect_err("移動できない");
 
-        let started = Instant::now();
-        let error = rename_atomic(&missing, &to).expect_err("移動できない");
-        let rename_elapsed = started.elapsed();
-        assert_eq!(error.kind(), io::ErrorKind::NotFound);
-
-        // 予算を使い切っていれば、公開関数が渡している分類がこの拒否を一時的と見なして
-        // いることになる。時間で解けない失敗を再試行で遅らせない、が分類の役目。
-        let budget = retry_budget();
-        assert!(read_elapsed < budget, "{read_elapsed:?}");
-        assert!(rename_elapsed < budget, "{rename_elapsed:?}");
+        // 予算を使うかどうかは、公開関数が渡している分類がこの拒否をどう見るかで決まる。
+        // 経過時間で同じことを言うと、遅いランナーでは実装と無関係に判定がぶれる。
+        for error in [read_error, rename_error] {
+            assert_eq!(error.kind(), io::ErrorKind::NotFound);
+            assert_eq!(budget_spent_on(&error), Duration::ZERO, "{error:?}");
+        }
     }
 
     #[test]
@@ -522,11 +535,21 @@ mod tests {
         assert!(write_atomic(root, b"content").is_err());
     }
 
-    /// 上限まで再試行したときに待つ時間の合計。
+    /// 上限まで拒まれ続けたときに待つ時間の合計。
     fn retry_budget() -> Duration {
-        (0..MAX_ATTEMPTS.get() - 1)
-            .map(|step| FIRST_RETRY_WAIT * 2u32.pow(step))
-            .sum()
+        retry_waits().sum()
+    }
+
+    /// このエラーを受け続けた再試行ループが費やす待ちの合計。
+    ///
+    /// ループが待つのは分類が真のときだけ(`一時的でない拒否は再試行せずに返る`)なので、
+    /// 分類を通せば予算を使うかどうかが時間を測らずに決まる。
+    fn budget_spent_on(error: &io::Error) -> Duration {
+        if transiently_denied(error) {
+            retry_budget()
+        } else {
+            Duration::ZERO
+        }
     }
 
     fn entry_names(dir: &Path) -> Vec<String> {

@@ -95,12 +95,12 @@ gh run view <run-id> --json jobs -q '.jobs[] | "\(.name)\t\(.conclusion)"'
 - **手順:**
   1. `grep -n "1\.89" .github/workflows/ci.yml` を実行する。
   2. ローカルで読み出しコマンドを実行する: `cargo metadata --format-version 1 --no-deps --locked | jq -r '[.packages[].rust_version] | unique | .[]'`
-  3. CI の msrv ジョブのログで、読み出した版数を表示している行と `rustc --version` の行を見る。
+  3. CI の msrv ジョブのログで、読み出した版数を表示している行（`MSRV: 1.89`）と、導入した toolchain が名乗る行（`rustc "+$MSRV" --version`）の両方を見る。
   4. `cargo build --workspace --all-targets --locked` が msrv ジョブで実行されていることをログで確認する。
 - **期待結果:**
   1. **ヒット0件**（版数がワークフローに書かれていない）。
   2. `1.89` の1行のみ。
-  3. ログに `1.89` が出ており、`rustc --version` が `1.89.0` を示す。
+  3. ログに `MSRV: 1.89` が出ており、続く `rustc 1.89.0 …` の行と版が一致している。宣言（`Cargo.toml`）から実際にビルドする toolchain までがログだけで一本に繋がること。
   4. `cargo check` ではなく `cargo build --all-targets` が走っている（Issue が要求する「ビルド」であること）。
 - **確認ポイント:** 3 OS すべての msrv ジョブで同じ版数が読めていること。手順2 が空・複数行・`null` を返す場合は読み出しが壊れている。
 

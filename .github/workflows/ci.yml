@@ -44,6 +44,10 @@ jobs:
     steps:
       # 唯一使う Action。GitHub 公式で、メジャータグで固定する。ブランチ参照や暗黙の最新は使わない。
       - uses: actions/checkout@v7
+        # 認証情報を .git/config に残さない。このワークフローは push しないので要らず、
+        # 残すと同じジョブで走るテストコードから GITHUB_TOKEN が読める状態になる。
+        with:
+          persist-credentials: false
 
       - name: ランナー同梱ツールの前提を確認する
         # 前提が崩れたときに cargo の不可解な失敗として現れるより、崩れた前提そのものが
@@ -77,6 +81,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        # 認証情報を .git/config に残さない。このワークフローは push しないので要らず、
+        # 残すと同じジョブで走るテストコードから GITHUB_TOKEN が読める状態になる。
+        with:
+          persist-credentials: false
 
       - name: ランナー同梱ツールの前提を確認する
         # rustup は版まで表示する。awk / cat / grep / id / tee は --version に移植性が無く
@@ -230,6 +238,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        # 認証情報を .git/config に残さない。このワークフローは push しないので要らず、
+        # 残すと同じジョブで走るテストコードから GITHUB_TOKEN が読める状態になる。
+        with:
+          persist-credentials: false
 
       - name: ランナー同梱ツールの前提を確認する
         # cargo を検査するのはこのジョブだけ理由がある。fmt / test ジョブは rustup default stable
@@ -271,7 +283,12 @@ jobs:
         # 根拠がこのワークフローの外にしか無い状態になる。
         env:
           MSRV: ${{ steps.msrv.outputs.version }}
-        run: rustup toolchain install "$MSRV" --profile minimal --no-self-update
+        # 導入した版を rustc に名乗らせるのは、宣言(Cargo.toml)と実際にビルドする toolchain が
+        # 一本で繋がっていることをログだけで辿れるようにするため。読み出した値と rustc の
+        # 名乗りが揃って初めて、AC-4 が言う「宣言を唯一の出典として検証した」が確かめられる。
+        run: |
+          rustup toolchain install "$MSRV" --profile minimal --no-self-update
+          rustc "+$MSRV" --version
 
       - name: MSRV でビルドする
         # --all-targets にするのは、テストと example もその版でコンパイル・リンクできることまでを
