@@ -14,6 +14,8 @@ CLAUDE.md は「`match` でワイルドカード(`_`)を避ける」と定め、
 
 `crates/pulsen-domain/Cargo.toml` の `[lints.clippy]` にだけ設定する。workspace lints には全クレート共通のもの(`unsafe_code = "forbid"` 等)だけを置く。`pulsen` クレートには掛けない。
 
+（`pulsen` はのちに `unsafe_code` を `deny` にするため workspace lints の継承をやめた。ADR-100）
+
 ## 影響
 
 - CLAUDE.md の規約が本来の適用対象(ドメインの網羅 match)で強制され、外部 enum を扱うアダプターに `#[allow]` を撒かずに済む

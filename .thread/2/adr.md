@@ -931,3 +931,34 @@ ADR-076 と同じ形で切り出す。`compose()` に残すのはホームの解
 - 良い点: `compose()` に残るのがホームと config だけになり、「全コマンド共通の起動時処理」という宣言と中身が一致する。
 - トレードオフ: `Runtime` のメソッドに、参照を返すアクセサと構築して `Result` を返すものが混ざる。`workflow_store` / `id_generator` という呼び名を `process_controller` に揃えて、構築であることを名前で示す。
 - トレードオフ: `add` の失敗の検出点が `compose` より1段後ろへ動く。いずれもタスクを作る前で状態は変わらない(pages 規則4)ので、利用者から見える挙動は文言も終了コードも変わらない。
+
+## ADR-100: Windows のデタッチ起動は自プロセスの標準ハンドルの継承を止めてから行う
+
+### Status
+
+Proposed
+
+→ `.adr/100-windows-detach-suppresses-handle-inheritance.md` に昇格
+
+### Context
+
+Windows CI(ADR-065 で main に入り、マージで本ブランチへ届いた)で `cli_tick` の「滞留するエージェントを起動したままでも次のtickは競合しない」だけが落ちた。エージェントの滞留上限(120秒)まで tick が返らず、上限で打ち切られた `exit` が2回目の tick の時点で観測される。
+
+原因は std の `Command::spawn` が Windows で `CreateProcessW` を `bInheritHandles = TRUE` 固定で呼ぶこと。この値が `TRUE` のとき子へ渡るのは `STARTUPINFO` に載せたハンドルだけではなく、継承可能フラグの立った全ハンドルである。テストが `pulsen tick` をパイプで起動しているため、tick のハンドル表にある書き込み端が `Stdio::null()` を渡したラッパーへ、さらにエージェントへ複製され、テストの `output()` がエージェントの終了まで EOF に到達しない。
+
+ADR-075 は「stdin / stdout / stderr を `Stdio::null()` にする」ことで呼び出し側の標準入出力が引き継がれないと見なしていた。POSIX ではそのとおり(std が自前で開いた fd に `CLOEXEC` を立てる)だが、Windows では成り立たない。デタッチ起動の契約が、呼び出し側が出力をどう扱うかに依存して崩れる。
+
+適合スイートはこれを捕まえられない。`spawn_from_other_process` が `Stdio::null()` で観測しており、パイプを持つ呼び出し側が居ない。
+
+### Decision
+
+Windows のデタッチ起動に限り `unsafe` を許し、`command.spawn()` の瞬間だけ自プロセスの標準ハンドルの継承可能フラグを落とす。詳細は `.adr/100-windows-detach-suppresses-handle-inheritance.md`。
+
+`unsafe` を避ける案(`cmd.exe /C start` 経由・テスト側でパイプをやめる・制約として受け入れる)を採らない理由も同ファイルに置く。要点は、シェル経由がトークンをそのまま渡す契約と両立しないこと、残る2案が製品の欠陥を残したまま CI だけ緑にすることである。
+
+### Consequences
+
+- 良い点: Windows でも呼び出し側の出力の扱いに関係なく `spawn_wrapper` が即座に返り、当該ケースが3 OS で同じ主張のまま通る。
+- トレードオフ: `unsafe` ゼロを維持できなくなった。`pulsen` クレートの lint が `deny` に緩み、`forbid` による構造的な保証は `pulsen-domain` / `pulsen-conformance` に限られる。
+- トレードオフ: 区間の間だけプロセス全体の状態を変えるため、将来スレッドから並行して起動する場合は単一スレッドという前提が要る。
+- 残件: 「呼び出し側がパイプで出力を捕っていても起動は即座に返る」を `spawn_wrapper` の適合契約に足すかは別途判断する。フィクスチャがハングで失敗する形になり、落ち方として読みにくい。

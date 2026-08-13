@@ -28,6 +28,8 @@ std の安全 API と外部コマンドの起動だけで組み、`unsafe_code =
 - Windows: `std::os::windows::process::CommandExt::creation_flags` に `CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS` を渡す
 - 共通: stdin / stdout / stderr を `Stdio::null()` にし、`spawn` の戻り値を待たない（`Child` を drop する）
 
+Windows のデタッチ起動については、この決定を ADR-100 が置き換える。`Stdio::null()` だけでは呼び出し側のハンドルが子へ渡るのを止められず、`unsafe` を使わずに契約を満たす手段が無かった。`unsafe` を許すのはその1モジュールに限り、以下の各判断は変わらない。
+
 **kill 同定子（`KillIdent`）**
 
 - POSIX: プロセスグループIDを**観測して** `-<pgid>` の文字列とする（`kill(1)` にそのまま渡せる負の PGID 表記）
@@ -97,7 +99,7 @@ Linux で「ルート不在」と「`<root>/<pid>/stat` の `NotFound`」を分�
 
 ## 影響
 
-- `unsafe` ゼロ・新規依存ゼロを維持したまま requirements §4.3 の抽象を満たせる。起動時刻の取得手段と取得時の環境が1関数に閉じるので、`starttime_of` が同じ表現を得ることを構成で保証できる。署名が三値まで固定されているため、照合側を足すときに共有関数の署名を変えずに済む
+- 新規依存ゼロを維持したまま requirements §4.3 の抽象を満たせる。起動時刻の取得手段と取得時の環境が1関数に閉じるので、`starttime_of` が同じ表現を得ることを構成で保証できる。署名が三値まで固定されているため、照合側を足すときに共有関数の署名を変えずに済む（`unsafe` ゼロは Windows のデタッチ起動で維持できなかった。ADR-100）
 - トレードオフ: 消費者が `own_identity` だけの局面でも三値を扱うことになり、`Ok(None)` を `Err(Io)` に畳む1行が呼び出し側に現れる
 - トレードオフ: macOS / Windows では外部プロセス（`ps` / `powershell`）の起動が要る（1回あたり数十ms）。`ps -o lstart=` は秒精度なので、1秒以内の PID 再利用は検出できない（spec は「同一マシン内での等価比較」しか要求していないので契約上は満たす）。macOS の `ps` にはエポック秒を出す keyword が無く、整形済み文字列を固定した環境で読む以外の手段が取れない
 - **`process_group(0)` はセッションを分けない**（`setsid` 相当ではない）。適合契約（呼び出し側プロセスの終了後も完走する）は満たすが、ラッパーは同一セッションに残って制御端末を保持し続けるため、端末セッションの強制終了（vhangup 等）では SIGHUP が届きうる — `nohup` 相当の耐性は無い。cron 運用が主経路なので実害は小さい

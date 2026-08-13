@@ -1,6 +1,7 @@
 //! プラットフォーム依存のプロセス操作による `ProcessController` の実装。
 //!
-//! `unsafe` は使わず、std の安全 API と外部コマンドの起動だけで組む(ADR-075)。
+//! `unsafe` は Windows のハンドル継承を止める `inheritance` モジュールだけに閉じ、
+//! それ以外は std の安全 API と外部コマンドの起動だけで組む(ADR-075 / ADR-100)。
 //!
 //! 同定情報(起動時刻・プロセスグループ)の取得は、プラットフォームごとの `identity`
 //! モジュールにある**1つの関数**に閉じる。記録側(`own_identity`)と照合側が同じ表現を
@@ -133,8 +134,11 @@ impl ProcessController for SystemProcessController {
 
         // 起動後の成否には関知しない。`Child` を待たずに落とすことで、呼び出し側プロセスの
         // 終了がラッパーの完走を妨げない。
-        command
-            .spawn()
+        let spawned = {
+            let _handles = inheritance::suppress();
+            command.spawn()
+        };
+        spawned
             .map(|_child| ())
             .map_err(|error| SpawnError::Failed {
                 message: format!("ラッパー ({}) を起動できない: {error}", self_exe.display()),
@@ -225,6 +229,153 @@ fn detach(command: &mut Command) {
     const DETACHED_PROCESS: u32 = 0x0000_0008;
 
     command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+}
+
+/// 起動の瞬間だけ、呼び出し側から受け継いだハンドルが子へ渡るのを止める(ADR-100)。
+///
+/// POSIX では std が自前で開いた fd に `CLOEXEC` を立てるため、`Stdio::null()` を渡した
+/// 時点で子へ渡るのは NUL だけになる。何もしない。
+#[cfg(unix)]
+mod inheritance {
+    /// 生存期間が「止めている区間」を表す。POSIX では区間そのものが無い。
+    pub(super) struct Suppressed;
+
+    pub(super) fn suppress() -> Suppressed {
+        Suppressed
+    }
+}
+
+/// 起動の瞬間だけ、呼び出し側から受け継いだハンドルが子へ渡るのを止める(ADR-100)。
+///
+/// std の `CreateProcess` は `bInheritHandles = TRUE` 固定で呼ばれる。渡るのは
+/// `STARTUPINFO` に載せたハンドルだけではなく、**継承可能フラグの立った全ハンドル**な
+/// ので、`Stdio::null()` を渡してもラッパーは呼び出し側の標準ハンドルを掴んだままにな
+/// る。呼び出し側が出力をパイプで捕っていると、その書き込み端がラッパーとエージェント
+/// に残り、`tick` はエージェントが終わるまで EOF に到達できない — デタッチ起動の契約が
+/// 呼び出し方によって崩れる。
+///
+/// 落とすのは自プロセスの標準ハンドルだけで、`Stdio::null()` が起動時に開く NUL は区間
+/// の外で作られるため影響を受けない。復帰させるのは、`Stdio::inherit()` が
+/// `STARTUPINFO` に載せるハンドルの継承可能性を前提にするため。
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod inheritance {
+    use std::os::windows::io::RawHandle;
+
+    type Bool = i32;
+    type Dword = u32;
+
+    const STD_INPUT_HANDLE: Dword = -10i32 as Dword;
+    const STD_OUTPUT_HANDLE: Dword = -11i32 as Dword;
+    const STD_ERROR_HANDLE: Dword = -12i32 as Dword;
+    const HANDLE_FLAG_INHERIT: Dword = 0x0000_0001;
+    /// `GetStdHandle` の失敗を表す値(`INVALID_HANDLE_VALUE`)。
+    const INVALID_HANDLE: isize = -1;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "GetStdHandle"]
+        fn get_std_handle(id: Dword) -> RawHandle;
+        #[link_name = "GetHandleInformation"]
+        fn get_handle_information(handle: RawHandle, flags: *mut Dword) -> Bool;
+        #[link_name = "SetHandleInformation"]
+        fn set_handle_information(handle: RawHandle, mask: Dword, flags: Dword) -> Bool;
+    }
+
+    /// 標準ハンドルが実在するか。
+    ///
+    /// 標準入出力を持たないプロセスでは `NULL` が、取得に失敗すると `INVALID_HANDLE_VALUE`
+    /// が返る。どちらも問い合わせの対象にしない。
+    fn usable(handle: RawHandle) -> bool {
+        !handle.is_null() && handle as isize != INVALID_HANDLE
+    }
+
+    /// 生存期間が「止めている区間」を表す。drop で元の継承可能性へ戻す。
+    pub(super) struct Suppressed {
+        restore: Vec<RawHandle>,
+    }
+
+    pub(super) fn suppress() -> Suppressed {
+        let mut restore = Vec::new();
+        for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            // SAFETY: 引数は Win32 が定める標準ハンドルの識別子。返るのは所有権を伴わな
+            // い擬似ハンドルで、閉じてはならない値として扱う。
+            let handle = unsafe { get_std_handle(id) };
+            if !usable(handle) {
+                continue;
+            }
+            let mut flags: Dword = 0;
+            // SAFETY: handle は直前に得た有効なハンドル、flags は書き込める自動変数。
+            if unsafe { get_handle_information(handle, &mut flags) } == 0 {
+                continue;
+            }
+            if flags & HANDLE_FLAG_INHERIT == 0 {
+                continue;
+            }
+            // SAFETY: 同上。マスクで継承フラグだけを触る。
+            if unsafe { set_handle_information(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+                continue;
+            }
+            restore.push(handle);
+        }
+        Suppressed { restore }
+    }
+
+    impl Drop for Suppressed {
+        fn drop(&mut self) {
+            for handle in &self.restore {
+                // SAFETY: 落としたときと同じハンドル。戻せなかった場合に呼び出し側が採れ
+                // る手が無いので、結果は捨てる。
+                unsafe {
+                    set_handle_information(*handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
+                };
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn flags_of(id: Dword) -> Option<Dword> {
+            // SAFETY: 引数は Win32 が定める標準ハンドルの識別子。
+            let handle = unsafe { get_std_handle(id) };
+            if !usable(handle) {
+                return None;
+            }
+            let mut flags: Dword = 0;
+            // SAFETY: handle は直前に得た有効なハンドル、flags は書き込める自動変数。
+            (unsafe { get_handle_information(handle, &mut flags) } != 0).then_some(flags)
+        }
+
+        #[test]
+        fn 区間の中では標準ハンドルが継承されない() {
+            let suppressed = suppress();
+
+            for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+                if let Some(flags) = flags_of(id) {
+                    assert_eq!(
+                        flags & HANDLE_FLAG_INHERIT,
+                        0,
+                        "標準ハンドル {id} の継承フラグが残っている"
+                    );
+                }
+            }
+
+            drop(suppressed);
+        }
+
+        #[test]
+        fn 区間を抜けると元の継承可能性へ戻る() {
+            let ids = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE];
+            let before: Vec<_> = ids.into_iter().map(flags_of).collect();
+
+            drop(suppress());
+
+            let after: Vec<_> = ids.into_iter().map(flags_of).collect();
+            assert_eq!(before, after);
+        }
+    }
 }
 
 /// シグナル等による終了を POSIX 慣例の `128+シグナル番号` に符号化する。
