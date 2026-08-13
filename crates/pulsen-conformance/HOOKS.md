@@ -57,7 +57,9 @@
 
 ## 3ランナーでの実測
 
-出典は GitHub Actions の run 31683845168（コミット `1c582c2`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。走ったテストバイナリは3 OS とも24本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて27）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
+出典は GitHub Actions の run 31698858400（コミット `d9dd9d6`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。走ったテストバイナリは3 OS とも24本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて27）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
+
+先行する run 31683845168（`1c582c2`、Issue #13 が保持フィクスチャの能力 probe を入れる前）でもスキップの集合は同じだった。TC-port-exclusive-lock-002 / 003 / 004 / 005 の前提の言い換えは、この3ランナーでは成立するかどうかを変えていない。出典を後の run へ寄せたのは、表がいまその前提を書いている以上、それを測った run を指すべきだからである。
 
 下の3列を書き換える理由になるのは集合が動いたときだけで、run を重ねること自体では動かない。
 
