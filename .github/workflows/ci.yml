@@ -1,0 +1,299 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 打ち切りは PR に限定する。main への連続 push で先行コミットの CI が打ち切られると
+# 「どのコミットまで緑だったか」が残らない。宣言を実測に変えるのがこの CI の目的なので、
+# main の実測履歴が欠けるのは避ける。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# 赤を読むのはジョブサマリーではなくログのほうなので、cargo の出力は着色したままにする。
+# 代償として cargo の "Running" 行が ESC で始まるため、スキップ報告は ANSI を落としてから
+# 照合する。
+#
+# RUST_BACKTRACE は置かない。pulsen-conformance の lib ユニットテストは SkipBudget 自身の
+# 検証で、--nocapture 下では宣言外スキップのパニックメッセージが2件ログに出る。緑の実行でも
+# 現れるので SkipBudget 違反と読まないこと。バックトレースまで付くと、本物の失敗と見分けの
+# つかないものが緑のログに常駐する。
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+# 指定の無い run は Windows でだけ pwsh になる。同じジョブでシェルが混ざると
+# 終了コードの伝播とリダイレクトの意味がステップごとに変わり、Windows の赤を切り分けにくい。
+# bash に寄せれば -eo pipefail が全ステップに効き、tee を挟むステップだけの特例も要らない。
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # 整形はプラットフォームに依存せず（rustfmt の newline_style は既定 Auto）、依存のビルドも
+  # 要らない。マトリクスで3回走らせる意味がないので分離し、最も速く返るシグナルにする。
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # 唯一使う Action。GitHub 公式で、メジャータグで固定する。ブランチ参照や暗黙の最新は使わない。
+      - uses: actions/checkout@v7
+        # 認証情報を .git/config に残さない。このワークフローは push しないので要らず、
+        # 残すと同じジョブで走るテストコードから GITHUB_TOKEN が読める状態になる。
+        with:
+          persist-credentials: false
+
+      - name: ランナー同梱ツールの前提を確認する
+        # 前提が崩れたときに cargo の不可解な失敗として現れるより、崩れた前提そのものが
+        # 失敗として現れるほうが切り分けが早い。
+        run: rustup --version
+
+      - name: 現行 stable の rustfmt を用意する
+        # イメージ同梱の rustfmt には頼らない。整形結果は rustfmt の版で変わるので、clippy が
+        # 新 stable・rustfmt が旧 stable だと「CI は緑だが開発者が新 stable で cargo fmt すると
+        # 差分が出る」ズレが CI に映らない。版は固定せず、赤になったら現行 stable に合わせて
+        # 掛け直す。
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add rustfmt
+          rustc --version
+          cargo fmt --version
+
+      - name: 整形を検査する
+        # cargo fmt は --locked を受け付けない（rustfmt へのラッパーで依存解決を行わない）。
+        run: cargo fmt --all --check
+
+  # build / test / clippy を同じジョブに置くのは、同じ toolchain と target/ を使い回せるため。
+  # clippy を別ジョブにすると全依存を再コンパイルすることになる。順序は「動くか」→「綺麗か」。
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        # 認証情報を .git/config に残さない。このワークフローは push しないので要らず、
+        # 残すと同じジョブで走るテストコードから GITHUB_TOKEN が読める状態になる。
+        with:
+          persist-credentials: false
+
+      - name: ランナー同梱ツールの前提を確認する
+        # rustup は版まで表示する。awk / cat / grep / id / tee は --version に移植性が無く
+        # （macOS の BSD tee は illegal option で落ちる）、存在と解決先パスだけを見る。
+        # 解決先を出すのは、Windows で Git for Windows 側ではなく System32 側の同名プログラムを
+        # 掴んでいないかがログから分かるため。
+        # id を含めるのは、CI が独自に持つ唯一の合否判定（下の非 root アサート）が
+        # この道具の出力に乗るため。記録用の道具を検査して判定用の道具を検査しない理由がない。
+        run: |
+          rustup --version
+          for tool in awk cat grep id tee; do
+            command -v "$tool" || { echo "::error::$tool が見つからない" >&2; exit 1; }
+          done
+
+      - name: 非 root で走っていることを確認する
+        if: runner.os != 'Windows'
+        # SkipBudget の権限系の宣言は permission_restrictions_effective() の probe で決まる。
+        # root で走ると chmod が効かず、権限系10件が「宣言済みスキップ」として静かに緑になる。
+        # スキップ件数を数えるのではなく、その前提が崩れていないことを直接見る。
+        # 同じ理由でジョブのコンテナ指定は使わない（コンテナのランナーは root で走る）。
+        #
+        # uid を先に代入で受けるのは、if の条件内では -e が効かないため。条件の中で直接
+        # コマンド置換すると、id が落ちても [ が「整数でない」で偽になるだけで、検査が
+        # 空振りしたままステップが成功する。代入形なら id の失敗でその場で落ちる。
+        # 数値でない出力も root でない扱いにせず失敗させる — CI が独自に持つ唯一の合否判定を、
+        # 判定できなかったときに通す側へ倒さない。
+        run: |
+          uid=$(id -u)
+          echo "uid=$uid"
+          case $uid in
+            0) echo "::error::root で実行されている。SkipBudget の権限系の宣言が崩れる" >&2; exit 1 ;;
+            '' | *[!0-9]*) echo "::error::uid を読み出せない: '$uid'" >&2; exit 1 ;;
+            *) ;;
+          esac
+
+      - name: 現行 stable の toolchain を用意する
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add clippy
+          rustc --version
+
+      - name: ビルドする
+        run: cargo build --workspace --locked
+
+      - name: テストする
+        # --nocapture が無いと libtest が成功したテストの stdout を握り潰し、SKIP 行そのものが
+        # ログに出ない（次のステップの前提）。既定シェルの bash は -eo pipefail 付きなので、
+        # tee を挟んでも cargo の失敗が伝播する。
+        #
+        # ワークスペース全体を対象にした cargo test は example もビルドするため、ロック保持の
+        # フィクスチャ（examples/lock_holder）が存在する。単一のテストターゲットを指定した実行に
+        # 切り替えると example がビルドされず、ロック系の4件＋1件が「宣言済みスキップ」に化ける。
+        # --workspace のままにすることがこの経路の構造的な回避であり、SkipBudget の許容集合には
+        # 入れない。
+        #
+        # --no-fail-fast が無いと、既定のテストターゲット単位の打ち切りで最初に落ちたバイナリ
+        # 以降が一度も走らず、残りは「赤でない」ではなく「未観測」になる。マトリクスの
+        # fail-fast: false と clippy の if: success() || failure() が持つ「1回の実行で指摘を
+        # 揃える」原則を、テストバイナリの間にも掛ける。失敗時の終了コードは非ゼロのままなので
+        # 判定は緩まない。次のステップの3状態が実際に尽くせるのも、打ち切られた実行が無い前提で
+        # 成り立っている。
+        run: cargo test --workspace --locked --no-fail-fast -- --nocapture 2>&1 | tee test.log
+
+      - name: 走らなかったケースを報告する
+        if: always()
+        # 宣言集合の外のスキップは SkipBudget 自身がそのケースの失敗にする。CI が件数で二重化すると
+        # 判定が観測結果に依存して循環するので、ここは記録だけを担う。環境前提の検査は上の
+        # 非 root アサートが持つ。
+        #
+        # pulsen-conformance の lib ユニットテストは SkipBudget の仕様自体を架空のケース名で検証し、
+        # 実在の適合ケースと形が区別できない SKIP 行を3件出す。混ざるとサマリーの読み手が
+        # 「走らなかった適合ケース」を誤って数えるので、そのテストバイナリの区間を落とす。
+        # 区間の判定は ANSI を落としてから行う（CARGO_TERM_COLOR: always の下では Running 行の
+        # 行頭が空白ではなく ESC になり、行頭一致がまるごと効かなくなる）。ESC を awk の
+        # プログラム中に書かず -v で渡すのは、正規表現定数での \033 の解釈が実装依存だから。
+        #
+        # 行頭一致では足りない。--nocapture 下の libtest は改行を伴わない進捗行
+        # 「test <名前> ... 」を先に書き、その改行待ちの行末に別スレッドのテストの stdout が
+        # そのまま載る。連結の形は「... 」の直後に限らず、判定の綴りに直付いた「okSKIP …」も
+        # 実測で出ている。連結の位置を列挙しても網羅にならないので、行のどこに現れても
+        # 拾う。SKIP は本文が行末まで続くため、見つけた位置から末尾までを1件の同一性
+        # （重複排除と表示）に使う。
+        #
+        # 拾いすぎる側に倒しているのは、この機構が可視化しか持たないから。本文に綴りを含む
+        # メッセージを誤って拾えばサマリーに1行余分に出るだけだが、取りこぼせば黙って消える。
+        # 区間の判定も同じ向きで、Running / Doc-tests / test result: のどれを誤検出しても
+        # 区間が開く（＝列挙される）側にしか倒れない。
+        #
+        # 区間は Running だけでなく Doc-tests でも切り替え、test result: で閉じる。区間を
+        # 開いたままにすると、最後の Running 以降に出た SKIP がすべて除外側へ回る。閉じる側に
+        # 倒すのは、余分に列挙されるほうが黙って消えるより読み手が気づけるため。
+        #
+        # 落とした件数を出すのは、除外の単位がケース名ではなくテストバイナリの区間だから。
+        # 将来そのバイナリが実在ケースのスキップを出せばサマリーから黙って消えるが、可視化しか
+        # 役割を持たない機構なので消えたことを他の手段では検出できない。件数が3から動くことが
+        # 唯一の合図になる。区間で判定すること自体は、ケース名の列挙より腐りにくいので変えない。
+        #
+        # 「SKIP 0 件」と「テストが走っていない」を同じ表示にしない。このステップは always() で
+        # 走るため、build で落ちた実行でも表示が出る。test.log の有無だけでは足りない
+        # （テストステップまで到達すれば、コンパイルに失敗しても tee が test.log を残す）ので、
+        # テスト結果行の有無も見て3状態に分ける。
+        #
+        # grep -c が該当なしで返す exit 1 は、if の条件・[ の引数に置く限りステップの失敗に
+        # ならない（その位置ではコマンド置換の終了コードが捨てられ、-e も効かない）。
+        # 終了コードを切り離す小細工は要らない。
+        run: |
+          summary() { { echo "### 走らなかったケース($RUNNER_OS)"; cat; } >> "$GITHUB_STEP_SUMMARY"; }
+          if [ ! -f test.log ]; then
+            echo "テストステップまで到達していない(test.log が無い)。" | summary
+            exit 0
+          fi
+          if [ "$(grep -c 'test result:' test.log)" = "0" ]; then
+            echo "テストバイナリが1つも走っていない(test.log にテスト結果行が無い)。SKIP の有無は判断できない。" | summary
+            exit 0
+          fi
+          awk -v esc="$(printf '\033')" '
+            { line = $0; gsub(esc "\\[[0-9;]*m", "", line) }
+            match(line, /SKIP /) {
+              skip = substr(line, RSTART)
+              if (drop) { if (!dropped[skip]++) excluded++ }
+              else if (!seen[skip]++) kept = kept "- " skip "\n"
+            }
+            line ~ /test result:/ { drop = 0 }
+            match(line, /(Running|Doc-tests) /) {
+              drop = (substr(line, RSTART + RLENGTH) ~ /pulsen_conformance-/)
+            }
+            END {
+              printf "除外: SkipBudget 自己テスト %d 件\n\n", excluded
+              if (kept == "") print "なし(テストは走ったが SKIP 行は無かった)"
+              else printf "%s", kept
+            }
+          ' test.log | summary
+
+      - name: lint する
+        # テストが落ちても clippy まで進める。1回の実行で「動くか」と「綺麗か」の両方の
+        # 指摘が揃わないと、Windows のようにどちらのリスクも抱える環境で往復が増える。
+        # clippy が落ちればジョブは赤のままなので、continue-on-error とは意味が違う。
+        if: success() || failure()
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # MSRV を3 OS で回すのは、cfg(unix) / cfg(not(unix)) でコンパイルされるコードが OS ごとに
+  # 違うため。1 OS だけの検証では、もう一方でしかコンパイルされないコードの API 要求を
+  # 一度も検査しないことになる。
+  msrv:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        # 認証情報を .git/config に残さない。このワークフローは push しないので要らず、
+        # 残すと同じジョブで走るテストコードから GITHUB_TOKEN が読める状態になる。
+        with:
+          persist-credentials: false
+
+      - name: ランナー同梱ツールの前提を確認する
+        # cargo を検査するのはこのジョブだけ理由がある。fmt / test ジョブは rustup default stable
+        # で自分の toolchain を用意してから cargo を使うが、このジョブは rustup default を一度も
+        # 呼ばず、ランナーに既定 toolchain が設定済みであることに暗黙に依存して cargo metadata を
+        # 叩く。既定が無ければ rustup のシムがそこで落ち、それが「版数の読み出しの失敗」に化ける。
+        run: |
+          rustup --version
+          cargo --version
+          jq --version
+          command -v grep || { echo "::error::grep が見つからない" >&2; exit 1; }
+
+      - name: MSRV を Cargo.toml から読み出す
+        id: msrv
+        # 版数をワークフローに書かないのは、Cargo.toml の rust-version と CI が検証する版が
+        # 黙ってズレるのを構造的に防ぐため。
+        #
+        # 対象はワークスペース全メンバーの rust_version にする。cargo metadata は継承を解決した
+        # うえで各パッケージに値を載せるので、1パッケージだけを見ると、将来どれかが個別に
+        # rust-version を持ったときに CI がそれを検証しないまま通す。値が割れていたら失敗させるのは、
+        # どの版で検証すべきかが一意に決まらない状態を黙って通さないため。
+        #
+        # grep -c は該当なしで exit 1 を返すが、case の被検査式に置けば -e の対象外になる。
+        run: |
+          versions=$(cargo metadata --format-version 1 --no-deps --locked \
+            | jq -r '[.packages[].rust_version] | map(select(. != null)) | unique | .[]')
+          case $(printf '%s\n' "$versions" | grep -c .) in
+            0) echo "::error::rust-version が読み出せない" >&2; exit 1 ;;
+            1) ;;
+            *) echo "::error::メンバー間で rust-version が割れている: $versions" >&2; exit 1 ;;
+          esac
+          echo "version=$versions" >> "$GITHUB_OUTPUT"
+          echo "MSRV: $versions"
+
+      - name: MSRV の toolchain を用意する
+        # 読み出した版数は env 越しに渡す。${{ }} は run のスクリプトにテキストとして展開される
+        # ため、値の出所（フォークが自由に書き換えられる Cargo.toml）をそのままシェルの構文に
+        # 混ぜることになる。cargo が rust-version に数値形しか通さないことに安全性を預けると、
+        # 根拠がこのワークフローの外にしか無い状態になる。
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        # 導入した版を rustc に名乗らせるのは、宣言(Cargo.toml)と実際にビルドする toolchain が
+        # 一本で繋がっていることをログだけで辿れるようにするため。読み出した値と rustc の
+        # 名乗りが揃って初めて、AC-4 が言う「宣言を唯一の出典として検証した」が確かめられる。
+        run: |
+          rustup toolchain install "$MSRV" --profile minimal --no-self-update
+          rustc "+$MSRV" --version
+
+      - name: MSRV でビルドする
+        # --all-targets にするのは、テストと example もその版でコンパイル・リンクできることまでを
+        # 宣言の意味に含めるため。check ではなく build なのは、リンク段階でしか出ない失敗を
+        # 取りこぼさないため。テストの実行までは test ジョブが見るので重ねない。
+        env:
+          MSRV: ${{ steps.msrv.outputs.version }}
+        run: cargo "+$MSRV" build --workspace --all-targets --locked
