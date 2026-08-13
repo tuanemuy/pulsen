@@ -86,3 +86,7 @@ R4: 新規 2 / fix 3 / fix-editorial 0 / wont-fix 0 / defer 0 / 継承 1（方�
 | `progress.md/PR本文:出典run/最終コミットを指していない` | R5 | fix | `e524981` は atomic.rs も変えている。裁定3 の定義どおり出典をそこへ寄せる | 2 |
 
 R5: 新規 1 / fix 1 / fix-editorial 0 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 1件のみ、事実の訂正。3観点を1体で通しで見る確認ラウンドとして実施し、Blocker ゼロ・マージ可の判定を得た）
+
+| `progress.md:冒頭/HEAD の表記ずれ` | R6 | fix-editorial | 差分が progress.md の1行に閉じる文言修正 | 0 |
+
+R6: 新規 1 / fix 0 / fix-editorial 1 / wont-fix 0 / defer 0 / 継承 0（方針フェーズ: 省略 — 1件のみ、文言。**fix ゼロのラウンドを観測したためレビューループ完了**。3観点通しの確認ラウンドで Blocker ゼロ・マージ可の判定）
