@@ -14,7 +14,7 @@
 
 1. **能力の型** — 「別プロセスにロックを保持させられるか」の答えを、4つの区別を持つ enum で表す。`Available` は起動できる実行ファイルのパスを持ち、`SignalTimedOut` は「起動はできるが合図が期限内に返らない」、`ProgramMissing` は「実行ファイルが無い」、`ProgramUnusable` は「実行ファイルはあるが起動できない」でその理由を持つ。この4つが**唯一の判断の源**になる。後ろ2つを分けるのは、原因も回避方法も違うものを1つの案内に潰さないため(adr.md ADR-007)。
 2. **probe** — 実際に1回保持させてみて能力を決める。`OnceLock` で1度だけ評価する。手本は `probe_permission_restrictions`(`crates/pulsen-conformance/src/lib.rs:236-237`)と `git::tmpdir_outside_repository`(`crates/pulsen/tests/common/git.rs:90`)。
-3. **フィクスチャ関数** — `spawn_holder` / `hold` は能力を見てから動く。`SignalTimedOut` なら起動を試みずに `None`(＝宣言済みスキップ)、`ProgramMissing` / `ProgramUnusable` なら原因に応じた案内を添えたパニック、`Available` なら起動して合図を待ち、そこでのタイムアウトは異常としてパニック。
+3. **フィクスチャ関数** — `spawn_holder` / `hold` は能力を見てから動く。`SignalTimedOut` なら起動を試みずに `None`(＝宣言済みスキップ)、`ProgramMissing` / `ProgramUnusable` なら原因に応じた案内を添えたパニック、`Available` なら起動して合図を待ち、そこでのタイムアウトはスキップに逃がさずパニック。
 4. **宣言** — `conformance_lock.rs` と `common/mod.rs` の `allowed_skips()` が、同じ能力を `match` で読む。許容集合に足すのは `SignalTimedOut` のときだけ。
 
 この順序により、`SkipBudget`(`LazyLock`)がいつ評価されても、また5件が並列に走っても、宣言と実態が一致する。
@@ -324,8 +324,8 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
 
 - **対象ファイル:** なし(検証)
 - **変更内容:**
-  1. **`Available` 経路。** `cargo fmt --all` / `cargo clippy --workspace --all-targets --locked -- -D warnings`(CI と同じ形) / `cargo test --workspace --locked -- --nocapture` が緑で、ロック系5件の `SKIP` 行が出ないこと。clippy を CI と同じ形で回すのは、新しく置く enum の名前が既定の warn 級 lint に掛かると `-D warnings` で赤になるため(AC-11)。
-  2. **`SignalTimedOut` 経路。** `SIGNAL_DEADLINE` を一時的に `Duration::from_nanos(1)` にして `cargo test -p pulsen -- --nocapture` を回し、`tc_port_exclusive_lock_002/003/004/005` と `tc_task_register_task_017` の5件が `SKIP` 行として出たうえで**緑**になること。`-p pulsen` は example もビルドするので probe は起動まで進み、期限だけが原因で `SignalTimedOut` に倒れる(この経路と 4 の違いは、example がビルドされるかどうかにある)。確認後に元へ戻す。
+  1. **`Available` 経路。** `cargo fmt --all` / `cargo clippy --workspace --all-targets --locked -- -D warnings`(CI と同じ形) / `cargo test --workspace --locked --no-fail-fast -- --nocapture` が緑で、ロック系5件の `SKIP` 行が出ないこと。clippy を CI と同じ形で回すのは、新しく置く enum の名前が既定の warn 級 lint に掛かると `-D warnings` で赤になるため(AC-11)。
+  2. **`SignalTimedOut` 経路。** `SIGNAL_DEADLINE` を一時的に `Duration::from_nanos(1)` にして `cargo test -p pulsen --no-fail-fast -- --nocapture` を回し、`tc_port_exclusive_lock_002/003/004/005` と `tc_task_register_task_017` の5件が `SKIP` 行として出たうえで**緑**になること。`-p pulsen` は example もビルドするので probe は起動まで進み、期限だけが原因で `SignalTimedOut` に倒れる(この経路と 4 の違いは、example がビルドされるかどうかにある)。確認後に元へ戻す。
   3. **probe 成立後のタイムアウト経路。** probe を通したうえで本番だけ期限を超えさせる必要があるので、`SIGNAL_DEADLINE` の値ではなく `start_holder` の待ち方を一時的に差し替える。`start_holder` の先頭に呼び出し回数のカウンタを置き、`recv_timeout` に渡す期限を「1回目は `SIGNAL_DEADLINE`、2回目以降は `Duration::from_nanos(1)`」にする。probe が1回目、本番のケースが2回目以降になるので、能力は `Available` のまま5件が `Started::SignalTimedOut` を踏む。
 
      ```rust
@@ -338,7 +338,7 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
      };
      ```
 
-     `cargo test -p pulsen -- --nocapture` を回し、5件が**失敗**してメッセージに「probe は同じ手順で成立している」が出ることを確認する。`examples/lock_holder.rs` に `sleep` を入れる形は取らない(スコープ外)。確認後に元へ戻す。
+     `cargo test -p pulsen --no-fail-fast -- --nocapture` を回し、5件が**失敗**してメッセージに「probe は同じ手順で成立している」が出ることを確認する。5件は `conformance_lock` と `cli_add_error` の2つのテストバイナリに分かれるので、`--no-fail-fast` が無いと先に落ちた側で打ち切られて残りが走らない。`examples/lock_holder.rs` に `sleep` を入れる形は取らない(スコープ外)。確認後に元へ戻す。
   4. **`ProgramMissing` 経路。** `--test` 指定は example をビルドしないが、**既にビルドされた成果物を消しはしない**。1 を回した直後は `target/debug/examples/lock_holder{,.exe}` が必ず存在し、`holder_program()` は `Some` を返して probe が `Available` に倒れるため、削除せずに `--test` を指定しても5件は普通に通ってしまう。そこで成果物を明示的に消してから回す。
 
      ```
@@ -378,7 +378,7 @@ probe とフィクスチャ関数の双方が「起動を試みた結果」を�
      - **数えないもの:** `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身の検証で出す架空の3行(`SKIP tc_port_clock_004_…` / `tc_port_clock_0051_…` / `tc_port_clock_005_…`)は**全 OS の `test.log` に出る**が、走らなかった適合ケースではないので集合に入れない(HOOKS.md も集計から外している)。ジョブサマリー側は ci.yml がその区間を落とすので現れない。`crates/pulsen/src/adapter/task_repository.rs` の `#[cfg(all(test, unix))]` の3件も、Windows では `SKIP` として現れない(コンパイルされない)ので差分にならない。
   2. CI の `test.log` / ジョブサマリーと突き合わせる。`test.log` を目で見る場合は、架空の3行を除いてから数える。
   3. 一致すれば HOOKS.md の3 OS 列は変更なし。ずれた場合は、**予測が誤っていた理由を先に特定してから**列を更新し、出典の run を「3ランナーでの実測」に書き足す。
-  4. **実測(run 31683976608 / コミット `b344401`)。** 7ジョブ(fmt 1 + test 3 OS + msrv 3 OS)がすべて success。ジョブサマリーの `SKIP` 行は、ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件(`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`)を加えた**11件**。ロック系5件(`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`)は3 OS とも**0件**。架空の3行は手順1 の宣言どおり数えていない。
+  4. **実測(run 31688076100 / コミット `cb73567`)。** 7ジョブ(fmt 1 + test 3 OS + msrv 3 OS)がすべて success。`SKIP` 行は run のログ(`gh run view 31688076100 --log`)から採り、手順2 のとおり架空の3行を除いて数えた — ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件(`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`)を加えた**11件**。ロック系5件(`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`)は3 OS とも**0件**。
   5. **突き合わせ。** 手順1 の予測(unix 1件 / Windows 11件 / ロック系5件は3 OS とも0件)と実測が一致した。述語が変わった唯一の行が3 OS とも `Available` に倒れており、宣言と実態が割れていない。手順3 のとおり HOOKS.md の3 OS 列は変更なし。
 - **理由:** AC-10。`.adr/068` の「観測値を期待値へ書き写す順序は取らない」をそのまま踏む。この変更は許容集合の述語そのものを動かすので、突き合わせを飛ばすと宣言が正しいかを誰も確かめていない状態になる。
 

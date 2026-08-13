@@ -39,12 +39,14 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 | コマンド | example をビルドするか | この計画での用途 |
 |---|---|---|
 | `cargo test --workspace --locked --no-fail-fast -- --nocapture` | する | `Available` 経路（CI と同じ形） |
-| `cargo test -p pulsen -- --nocapture` | する | `SignalTimedOut` / probe 成立後のタイムアウト経路 |
+| `cargo test -p pulsen --no-fail-fast -- --nocapture` | する | `SignalTimedOut` / probe 成立後のタイムアウト経路 |
 | `cargo test -p pulsen --test conformance_lock -- --nocapture` / `cargo test -p pulsen --test cli_add_error -- --nocapture` | **しない**（ただし既存の成果物を消しもしない） | `ProgramMissing` 経路（成果物の削除とセット）/ `ProgramUnusable` 経路（成果物の `chmod 000` とセット）。どちらも成果物への操作と組んで初めて意味を持つ |
 
 保持プロセスの実行ファイルは `target/debug/examples/lock_holder`（Unix）/ `target/debug/examples/lock_holder.exe`（Windows）にある。
 
 `SKIP` 行の読み取りには `--nocapture` が要る。libtest は成功したテストの標準出力を握り潰すため、これが無いと `SKIP` 行そのものがログに出ない。
+
+複数のテストバイナリにまたがる5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` は `conformance_lock`、`tc_task_register_task_017` は `cli_add_error`）を数える確認には `--no-fail-fast` が要る。`cargo test` は既定でテストターゲット単位に打ち切るため、これが無いと最初に落ちたテストバイナリ以降が一度も走らず、失敗として観測できるのはその1本に含まれるぶんだけになる（`.github/workflows/ci.yml` のテストステップが `--no-fail-fast` を付けている理由と同じ）。
 
 ### デプロイ方法
 
@@ -142,7 +144,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **目的:** 合図が期限内に返らない環境で、5件が `SkipBudget` 違反の失敗ではなく宣言済みスキップとして現れることを確認する。これが Issue の主目的（現状はここが赤になる）。
 - **手順:**
   1. `crates/pulsen/tests/common/lock.rs` の `SIGNAL_DEADLINE` を一時的に `Duration::from_nanos(1)` に書き換える。
-  2. `cargo test -p pulsen -- --nocapture`
+  2. `cargo test -p pulsen --no-fail-fast -- --nocapture`
   3. 出力の `SKIP ` 行を拾う。
   4. `git checkout crates/pulsen/tests/common/lock.rs` で戻す（または手で `Duration::from_secs(10)` に戻す）。
   5. `git diff crates/pulsen/tests/common/lock.rs` で差分が無いことを確認する。
@@ -155,7 +157,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 ### 7. probe 成立後のタイムアウト経路 — スキップではなく失敗になる
 
 - **対応する受け入れ基準:** AC-5
-- **目的:** probe が `Available` と判定したあとに合図がタイムアウトした場合、それが環境の能力ではなく異常として失敗し、メッセージが「probe は同じ手順で成立している」ことを述べることを確認する。
+- **目的:** probe が `Available` と判定したあとに合図がタイムアウトした場合、その超過が環境の能力の宣言としては読めないものとして失敗し、メッセージが「probe は同じ手順で成立している」ことを述べることを確認する。
 - **手順:**
   1. `crates/pulsen/tests/common/lock.rs` の `start_holder` の先頭に、呼び出し回数で期限を切り替える差し込みを一時的に入れる。probe が1回目、本番のケースが2回目以降になるので、能力は `Available` のまま5件が `Started::SignalTimedOut` を踏む。
 
@@ -170,7 +172,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
      ```
 
      `recv_timeout` には `SIGNAL_DEADLINE` ではなくこの `deadline` を渡す。`SIGNAL_DEADLINE` の**定数の値そのものは変えない**。
-  2. `cargo test -p pulsen -- --nocapture`
+  2. `cargo test -p pulsen --no-fail-fast -- --nocapture`
   3. 失敗したケース名と、パニックメッセージの本文を読む。
   4. `git checkout crates/pulsen/tests/common/lock.rs` で戻す。
   5. `git diff crates/pulsen/tests/common/lock.rs` で差分が無いことを確認する。
@@ -179,7 +181,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   - 手順3: パニックメッセージに「保持プロセスの合図が … 以内に返らなかった」と「**probe は同じ手順で成立している**」の両方が含まれ、この環境で繰り返し起きるなら `SIGNAL_DEADLINE` を見直す旨が読める。
   - 手順3: 5件が `SKIP` 行としては現れない（能力は `Available` なので許容集合は空）。
   - 手順5: 差分なし。
-- **確認ポイント:** メッセージが「この環境では保持プロセスを使えない」と読める文言になっていないこと — probe が同じ手順で成立している以上、能力の問題ではないと述べるのがこのメッセージの役目。`crates/pulsen/examples/lock_holder.rs` に `sleep` を入れる形は取らない（スコープ外。保持プロセス側の挙動は本Issueで変えない）。
+- **確認ポイント:** 5件は `conformance_lock` と `cli_add_error` の2つのテストバイナリに分かれているので、`--no-fail-fast` を落とすと先に落ちた側で打ち切られ、期待結果の5件が揃わない。メッセージが「この環境では保持プロセスを使えない」と読める文言になっていないこと — probe が同じ手順で成立している以上、能力の問題ではないと述べるのがこのメッセージの役目。`crates/pulsen/examples/lock_holder.rs` に `sleep` を入れる形は取らない（スコープ外。保持プロセス側の挙動は本Issueで変えない）。
 
 ### 8. `ProgramMissing` 経路 — 失敗し、不在と回避方法を案内する
 
@@ -335,9 +337,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   - 手順3: 7ジョブすべて `success`。
   - 手順4・5: unix は `tc_port_clock_005` の1件、Windows は11件。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）が**3 OS のいずれにも現れない**。
   - 手順6: MSRV（`1.89`）で新しい enum を含むテストターゲットがコンパイル・リンクできる（`--all-targets` がテストと example も見る）。
-- **実測（run 31683976608 / コミット `b344401`）:**
+- **実測（run 31688076100 / コミット `cb73567`）:**
   - 手順3: 7ジョブ（fmt 1 + test 3 OS + msrv 3 OS）がすべて `success`。
-  - 手順4: ジョブサマリーの `SKIP` 行は、ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件（`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`）を加えた**11件**。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）は3 OS とも現れない。架空の3行は手順1 の宣言どおり数えていない。
+  - 手順4: `SKIP` 行は run のログ（`gh run view 31688076100 --log`）から採り、手順5 のとおり架空の3行を除いて数えた — ubuntu / macOS が `tc_port_clock_005` の**1件**、Windows がそれに権限系10件（`tc_port_config_store_023` / `tc_port_workflow_store_030` / `tc_port_task_repository_005・011・012・019・035・041` / `tc_task_register_task_016・021`）を加えた**11件**。ロック系5件（`tc_port_exclusive_lock_002` / `003` / `004` / `005` と `tc_task_register_task_017`）は3 OS とも現れない。
   - 手順5: 手順1 の予測（unix 1件 / Windows 11件 / ロック系5件は3 OS とも0件）と**一致**。述語が変わった唯一の行が3 OS とも `Available` に倒れており、宣言と実態が割れていない。一致したので HOOKS.md の3 OS 列は変更なし。
 - **確認ポイント:**
   - **一致しなかった場合、観測値をそのまま期待値に書き写して閉じない。** 予測が誤っていた理由を先に特定してから HOOKS.md の3 OS 列を更新し、出典の run を「3ランナーでの実測」に書き足す。
@@ -381,7 +383,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 - **目的:** `SkipBudget` は `LazyLock` で最初の `record` 時に許容集合を確定する。probe を先に置く形でこの順序問題を回避しているので、「タイムアウトを記録してから許容集合へ反映する」実装に後退していないことを確認する。
 - **手順:**
-  1. 確認項目6 の状態（`SIGNAL_DEADLINE` を `Duration::from_nanos(1)` にする）で `cargo test -p pulsen -- --nocapture` を**続けて2回**回す。
+  1. 確認項目6 の状態（`SIGNAL_DEADLINE` を `Duration::from_nanos(1)` にする）で `cargo test -p pulsen --no-fail-fast -- --nocapture` を**続けて2回**回す。
   2. `cargo test -p pulsen --test conformance_lock -- --nocapture` だけを回す（対象4件が並列に走る）。
   3. 一時変更を戻す（`git checkout crates/pulsen/tests/common/lock.rs`）。
 - **期待結果:** 手順1 の2回とも同じ結果（緑・5件が `SKIP`）。手順2 も緑で、4件が `SKIP`。ケースの実行順や並列度で結果が変わらない。
