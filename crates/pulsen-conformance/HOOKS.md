@@ -27,7 +27,7 @@
 
 **何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する12行だけで、区分 C の残る6行のうち4行はそれぞれ別の能力を要求する。残る2行（TC-port-process-controller-003 / 005）は spec の文面こそ「再現できるアダプター環境に限る」だが、**別ハンドルの注入**で確定的に走る（ADR-076）。005 は前提を作れない環境が無いためこの表に現れず、003 は注入とは別に `launch_spec` がテスト用エージェントを要するため、その行にだけ現れる。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
 
-右3列は3ランナーでの実測（下記「3ランナーでの実測」を参照）。`実行` は前提が成立してケースが走ったこと、`スキップ` は成立せず `SKIP` 行が出たこと、`未測定` はまだ CI で観測していないことを指す。実測の入っている行はすべて run 31666626824 の観測である。
+右3列は3ランナーでの実測（下記「3ランナーでの実測」を参照）。`実行` は前提が成立してケースが走ったこと、`スキップ` は成立せず `SKIP` 行が出たこと、`未測定` はまだ CI で観測していないことを指す。現在の3列はすべて run 31683845168 の観測である。
 
 **行を足すときは3列を `未測定` で埋める。** 実測は CI を回して初めて得られるので、行の追加と同時には書けない。空欄にしないのは、空欄だと「まだ測っていない」と「書き忘れた」が区別できないため。`未測定` を実測に置き換えるのは次に CI を回した人で、そのとき出典の run を下記の節に書き足す。左4列（区分・前提を作れない環境・判定）は設計なので、CI を待たずにその場で埋める。
 
@@ -37,36 +37,39 @@
 | TC-port-workflow-store-030 | C | 同上 | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
 | TC-port-task-repository-005 / 011 / 012 / 035 | C | 書き込めないディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
 | TC-port-task-repository-019 / 041 | C | 読み取れないディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
-| TC-port-run-store-007 | C | 読み取れないファイルを作れない（同上） | `permission_restrictions_effective` | 未測定 | 未測定 | 未測定 |
-| TC-port-run-store-017 | C | 書き込めない attempt ディレクトリを作れない（同上） | `permission_restrictions_effective` | 未測定 | 未測定 | 未測定 |
-| TC-port-process-controller-023 | C | 実行権限のない実体を作れない（同上） | `permission_restrictions_effective` | 未測定 | 未測定 | 未測定 |
-| TC-port-process-controller-025 | C | 書き込めないログの置き場を作れない（同上） | `permission_restrictions_effective` | 未測定 | 未測定 | 未測定 |
-| TC-port-process-controller-024 | B | exit code を持たない終了（シグナル死）を作れない（非 POSIX） | `agent_probe abort` がシグナル死になるプラットフォームか | 未測定 | 未測定 | 未測定 |
-| TC-port-process-controller-001 / 002 / 003 / 017〜021 / 024〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため | 未測定 | 未測定 | 未測定 |
-| TC-port-process-controller-002 | B | 上記に加えて、デタッチ性のフィクスチャ（`examples/spawn_probe`）がビルドされていない | ハーネスが `spawn_from_other_process` を提供するか。同じく**スキップ許容集合には入れない** | 未測定 | 未測定 | 未測定 |
+| TC-port-run-store-007 | C | 読み取れないファイルを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-run-store-017 | C | 書き込めない attempt ディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-process-controller-023 | C | 実行権限のない実体を作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-process-controller-025 | C | 書き込めないログの置き場を作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-process-controller-001 / 002 / 003 / 017〜021 / 024〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため | 実行 | 実行 | 実行 |
+| TC-port-process-controller-002 | B | 上記に加えて、デタッチ性のフィクスチャ（`examples/spawn_probe`）がビルドされていない | ハーネスが `spawn_from_other_process` を提供するか。同じく**スキップ許容集合には入れない** | 実行 | 実行 | 実行 |
 | TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか | スキップ | スキップ | スキップ |
 | TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか | 実行 | 実行 | 実行 |
-| TC-port-worktree-manager-010 / 012〜016 と追加ケース（`create_prunable`） | B | worktree の置き場をシンボリックリンク経由にできない（ディレクトリのリンクを張れない環境） | ハーネスが `unused_workspace` / `workspace_with_orphan_branch` / `workspace_with_prunable_registration` / `workspace_over_plain_dir` / `workspace_over_other_branch` を提供するか。置き場が未作成であることを前提にする TC-011 だけはリンクを要さない | 未測定 | 未測定 | 未測定 |
+| TC-port-worktree-manager-010 / 012〜016 と追加ケース（`create_prunable`） | B | worktree の置き場をシンボリックリンク経由にできない（ディレクトリのリンクを張れない環境） | ハーネスが `unused_workspace` / `workspace_with_orphan_branch` / `workspace_with_prunable_registration` / `workspace_over_plain_dir` / `workspace_over_other_branch` を提供するか。置き場が未作成であることを前提にする TC-011 だけはリンクを要さない | 実行 | 実行 | 実行 |
 | TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 別プロセスにロックを保持させる実行ファイルが無い（単一テストターゲットを指定した実行では example がビルドされない） | ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか | 実行 | 実行 | 実行 |
 
 ## 3ランナーでの実測
 
-出典は GitHub Actions の run 31666626824（コミット `e524981`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。**測定したのは `e524981`（Issue #10 の CI・その吸収・レビュー反映まで適用した時点）で、Issue #2 が足した適合スイートと example は含まない。** 走ったテストバイナリは3 OS とも15本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて18）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
+出典は GitHub Actions の run 31683845168（コミット `1c582c2`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。走ったテストバイナリは3 OS とも24本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて27）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
 
-同じスキップの集合は先行する5つの緑の run（31657976822 = `af24360`、31661056619 = `2c99c1b`、31662960664 = `9675b2f`、31663925152 = `1766c7b`、31665658371 = `e19c973`）でも再現している。下の3列を書き換える理由になるのは集合が動いたときだけで、run を重ねること自体では動かない。
+下の3列を書き換える理由になるのは集合が動いたときだけで、run を重ねること自体では動かない。
 
 - **unix（ubuntu / macOS）で成立しなかったのは TC-port-clock-005 の1件だけ。** これは環境ではなくアダプターの性質による恒久スキップで（`SystemClockHarness` は実時計を巻き戻せないため `rewind` を提供しない）、どの OS でも走らない。
-- **Windows で成立しなかったのは、上の1件に権限系を加えた計11件。** 適合行は表の `permission_restrictions_effective` を判定に持つ8行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041）で、残る2件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021）。
+- **Windows で成立しなかったのは、上の1件に権限系を加えた計17件。** 適合行は表の `permission_restrictions_effective` を判定に持つ12行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041 / TC-port-run-store-007・017 / TC-port-process-controller-023・025）で、残る4件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021、TC-exec-run-wrapper-014 / 016）。**表の権限系12行と実測のスキップ12件が過不足なく一致する** — 述語から導けると書いた行の集合が、実際に走らなかった行の集合と同じであることの裏付けになる。
 - **区分 C のうち TC-port-clock-003 / TC-port-exclusive-lock-007 / TC-port-worktree-manager-009 は3 OS すべてで走った。** いずれも判定がハーネス側のフック提供の有無で、実アダプターのハーネスが `observe_wall_clock` / `unusable_lock` / `failing_manager` を提供している。
-- **区分 B の TC-port-worktree-manager-003 と TC-port-exclusive-lock-002 / 003 / 004 / 005 も3 OS すべてで走った。** 前者は一時ディレクトリの置き場が git リポジトリ配下にならず前提が成立したこと、後者は `--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能したことを意味する。
-- **適合スイートの外に、Windows では存在しないテストが3件ある。** `crates/pulsen/src/adapter/task_repository.rs` の `#[cfg(all(test, unix))] mod tests`（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことを確認する3件）は Windows でコンパイルされず、**`SKIP` としても現れない**。`pulsen` の lib ユニットテストが Windows 69件・unix 72件になる差はこれである。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この3件はその外側にある Windows のカバレッジ差として記録しておく。
+- **区分 B の環境依存行も3 OS すべてで走った。** `--workspace` で example がビルドされるため `agent_probe` / `spawn_probe` / ロック保持プロセスを要する行はすべて成立し、worktree の置き場をシンボリックリンク経由にする前提も Windows で成立した（ディレクトリのリンクを張れた）。TC-port-worktree-manager-003 の「一時ディレクトリの置き場が git リポジトリ配下にならない」も3 OS で成立している。
+- **TC-port-process-controller-024 は環境依存行ではなかった。** 以前この表は「`agent_probe abort` がシグナル死になるプラットフォームか」を判定に持つ独立した行として載せていたが、ケースが要求するのは `agent_command` の提供だけで、期待も「非0の符号化値」までである（ADR-082）。シグナル死になるかを問うフックは無く、Windows でも走った。`agent_command` を判定に持つ行に吸収し、独立した行は落とした。
 
 ログには実在の適合ケースと形の区別が付かない `SKIP tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` / `tc_port_clock_005_時刻の巻き戻し` の3行が全 OS で出る。これは `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身を検証するために `record` を直接呼ぶもので、架空のケース名を持つ。上の集計にも CI のジョブサマリーにも含めない — 走らなかった適合ケースとして数えられると、実測が示す内容が変わってしまうため。
 
-RunStore / ProcessController のスイートと example は `e524981` の後に入ったため、この実測には含まれない。それらの行は3列を `未測定` にしてあり、次に CI を回した人が実測へ置き換える。
+適合スイートの外に、`SKIP` としては現れない OS ごとのカバレッジ差がある。`pulsen` の lib ユニットテストは ubuntu 102件 / macOS 100件 / Windows 92件で、内訳は次のとおり。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この差はその外側にある。
+
+- Windows に無い10件 — `adapter::process::identity` の `ps` 系6件、シグナル終了の符号化1件、`adapter::task_repository` の `#[cfg(all(test, unix))]` 3件（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことの確認）
+- Windows だけの2件 — `adapter::process::inheritance` の、起動の区間で標準ハンドルの継承が止まり区間を抜けると戻ることの確認（ADR-100）
+- ubuntu だけの3件 — procfs から同定情報を組み立てる経路。macOS だけの1件は `ps` の取得環境（ロケール・タイムゾーン）の固定
 
 ## 適用範囲
 
