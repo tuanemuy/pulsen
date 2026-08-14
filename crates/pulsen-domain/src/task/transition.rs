@@ -31,4 +31,6 @@ pub enum TransitionError {
     },
     /// 手動修復で破られた不変条件2 — 起動記録済みなのに現在 attempt が無い。
     MissingCurrentAttempt,
+    /// 通知済みの凍結への再通知記録(`WorkspaceAlreadySet` と同じく「達成済み」の拒否)。
+    AlreadyNotified,
 }

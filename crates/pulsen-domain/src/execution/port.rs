@@ -8,13 +8,13 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::definition::CommandLine;
+use crate::definition::{CommandLine, DurationSpec, PlainCommand};
 use crate::task::{
-    AttemptNumber, BranchName, KillIdent, Pid, RepoPath, RunDirPath, StartTimeRecord, TaskId,
-    Workspace, WorktreePath,
+    AttemptNumber, BranchName, KillIdent, Pid, ProcessStartTime, RepoPath, RunDirPath,
+    StartTimeRecord, TaskId, Workspace, WorktreePath,
 };
 
-use super::value::{ExitCode, PidFileContent};
+use super::value::{CommandCompletion, ExitCode, PidFileContent};
 
 /// 機構そのものの失敗の不透明な報告。
 ///
@@ -170,6 +170,35 @@ impl WrapperIdentity {
     }
 }
 
+/// 残存プロセスの終了の結末。
+///
+/// ベストエフォートの報告であり、実行の分類(failed)には影響しない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemnantOutcome {
+    /// 実行単位を同定して終了させた。
+    Killed,
+    /// 実行単位を同定できず、**いかなるプロセスも終了させていない**。
+    NotIdentifiable,
+    /// 同定できたが終了操作が失敗した。
+    Failed {
+        /// 原因の説明。
+        message: String,
+    },
+}
+
+/// 実行単位の終了操作自体の失敗。
+///
+/// 分類には使わない報告用のエラー。呼び出し側はこの失敗で状態を変更しない
+/// (生存したままのプロセスを持つタスクを failed にすると、再起動が同一 worktree で並走する)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KillError {
+    /// シグナル送出・ジョブ終了自体のエラー。
+    Failed {
+        /// 原因の説明。
+        message: String,
+    },
+}
+
 /// ラッパーの起動自体の失敗。
 ///
 /// 分類には使わない報告用のエラー。呼び出し側はこの失敗で状態を変更しない
@@ -199,12 +228,31 @@ pub enum SpawnError {
 ///   `ExitCode` を返す。リダイレクト先を開けない場合はエージェントを起動せず 126 を返す
 /// - `run_agent` はシェルを介さずに直接起動する(引数はリテラルのまま渡る)。呼び出しは
 ///   コマンドの終了まで戻らない
+/// - `starttime_of` は記録時と**同一の取得手段**で起動時刻を取得する(照合の前提)。
+///   プロセスの不在は `Ok(None)`、取得機構自体の失敗は `Err(Io)` として区別する。
+///   **機構の失敗を死亡に写像しない** — 呼び出し側は `Err(Io)` で状態を変更しない
+/// - `kill` は `KillIdent` だけを入力にプロセスグループ相当の実行単位を一括終了する。
+///   呼び出し前提は `IdentityCheck` が `Alive` であること(照合は呼び出し側が済ませる)。
+///   プロセス内に保持したハンドルに依存せず、ツールの再起動後も実行できる。失敗は
+///   `Err(KillError)` を値として返し、**呼び出し側は状態を変更しない**
+/// - `try_kill_remnants` はラッパー死亡後の残存プロセスをベストエフォートで終了する。
+///   **誤殺なく同定できる場合に限り**終了を実行し、同定できないときは `NotIdentifiable` を
+///   返していかなるプロセスも終了させない。結果は分類に影響せず報告にのみ使う
 pub trait ProcessController {
     /// ツール自身のバイナリをラッパーモードでデタッチ起動する。
     fn spawn_wrapper(&self, spec: &WrapperLaunchSpec) -> Result<(), SpawnError>;
 
     /// 自プロセスの同定情報を取得する。
     fn own_identity(&self) -> Result<WrapperIdentity, Io>;
+
+    /// プロセスの起動時刻を取得する。不在は `Ok(None)`。
+    fn starttime_of(&self, pid: Pid) -> Result<Option<ProcessStartTime>, Io>;
+
+    /// 実行単位を一括終了する。
+    fn kill(&self, ident: &KillIdent) -> Result<(), KillError>;
+
+    /// 残存プロセスの終了をベストエフォートで試みる。
+    fn try_kill_remnants(&self, ident: &KillIdent) -> RemnantOutcome;
 
     /// エージェントを同期実行する。
     fn run_agent(
@@ -280,6 +328,31 @@ pub trait WorktreeManager {
         base: &BranchName,
         ws: &Workspace,
     ) -> Result<(), WorktreeError>;
+}
+
+/// 判定コマンド・通知コマンドの直接起動。
+///
+/// 契約:
+/// - **シェルを介さず直接起動する。** トークンはリテラルのまま渡り、プレースホルダ展開・
+///   グロブ・リダイレクトの解釈は行わない
+/// - 環境変数は呼び出しプロセスの環境を継承し、`env` の変数を追加・上書きする
+/// - 作業ディレクトリは規定しない(呼び出しプロセスの cwd のまま)
+/// - `timeout` 指定時、超過したら起動したプロセスを終了させ `TimedOut` を返す。
+///   `None` なら終了まで待つ
+/// - コマンドの実体が見つからない・起動できない場合は `FailedToStart`
+/// - exit code を持たない終了(シグナル死等)は `run_agent` と同じ規則で非 0 の符号化値
+///   (POSIX では 128+シグナル番号)の `Exited` として返す
+/// - 標準出力・標準エラーは捕捉しない(呼び出しプロセスの出力へそのまま流れる)
+/// - 同期実行(終了まで戻らない)。**失敗しない** — すべての結末を `CommandCompletion` の
+///   値として返す
+pub trait CommandRunner {
+    /// コマンドを同期実行する。
+    fn run(
+        &self,
+        cmd: &PlainCommand,
+        env: &[(String, String)],
+        timeout: Option<&DurationSpec>,
+    ) -> CommandCompletion;
 }
 
 /// ロック機構自体の異常。

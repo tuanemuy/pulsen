@@ -408,6 +408,125 @@ impl Task {
         })
     }
 
+    /// 判定 completed を反映する。
+    ///
+    /// 前提: 起動確認済み。実行と判定の連続失敗はここで打ち切る(ADR-009)。タスク
+    /// ステータスは動かさない — 遷移は次の tick の `advance` が行う(1タスク1tick1ステップ)。
+    pub fn complete_run(self, now: Timestamp) -> Result<Self, TransitionError> {
+        self.ensure_running()?;
+
+        Ok(Self {
+            execution: ExecutionState::Completed,
+            counters: self.counters.reset_run_failures(),
+            updated_at: now,
+            ..self
+        })
+    }
+
+    /// 判定 skipped を反映する(ADR-008)。
+    ///
+    /// 前提: 起動確認済み。タスクステータスを動かさずに起動待ちへ戻し、次の tick が同じ
+    /// ステータスを新しい attempt で起動する。カウンタを消費しないので、人間が介入するまで
+    /// 何周でも回れる。
+    pub fn skip_run(self, now: Timestamp) -> Result<Self, TransitionError> {
+        self.ensure_running()?;
+
+        Ok(Self {
+            execution: ExecutionState::Pending,
+            counters: self.counters.reset_run_failures(),
+            updated_at: now,
+            ..self
+        })
+    }
+
+    /// 実行の失敗を確定する(判定 failed・timeout kill・プロセス死亡)。
+    ///
+    /// 前提: 起動確認済み。判定のカウンタは 0 に戻す — 実行が失敗として決着した以上、
+    /// 「判定できないまま再判定を重ねている」連続は途切れている。
+    pub fn fail_run(self, retry_limit: u32, now: Timestamp) -> Result<Self, TransitionError> {
+        self.ensure_running()?;
+
+        let counters = self.counters.increment_attempt().reset_judge_attempt();
+        let execution = if limit_exceeded(counters.attempt_count(), retry_limit) {
+            stopped(StopReason::RetryLimitExceeded)
+        } else {
+            ExecutionState::Failed
+        };
+
+        Ok(Self {
+            execution,
+            counters,
+            updated_at: now,
+            ..self
+        })
+    }
+
+    /// 判定自体が壊れたことを記録する。
+    ///
+    /// 前提: 起動確認済み。上限を超えなければ `Running` のままにする — エージェントは
+    /// 終了しており、次の tick は同じ exit を**再判定するだけ**で再実行はしない。
+    pub fn record_judge_failure(
+        self,
+        detail: String,
+        judge_attempt_limit: u32,
+        now: Timestamp,
+    ) -> Result<Self, TransitionError> {
+        self.ensure_running()?;
+
+        let counters = self.counters.increment_judge_attempt();
+        let execution = if limit_exceeded(counters.judge_attempt_count(), judge_attempt_limit) {
+            stopped(StopReason::JudgeLimitExceeded)
+        } else {
+            ExecutionState::Running
+        };
+
+        Ok(Self {
+            execution,
+            counters,
+            last_failure: Some(FailureNote::record(FailureKind::JudgeFail, detail, now)),
+            updated_at: now,
+            ..self
+        })
+    }
+
+    /// タスクステータスを現ステータスの遷移先へ進める。
+    ///
+    /// 前提: 判定確定(成功)・エージェント実行ステータス。実行状態は起動待ちへ戻り、
+    /// 次の tick が新しいステータスで起動する。
+    pub fn advance(self, now: Timestamp) -> Result<Self, TransitionError> {
+        self.ensure_completed()?;
+        let next = match self.current_status_def() {
+            StatusDefinition::AgentRun { next, .. } => next.clone(),
+            StatusDefinition::Wait | StatusDefinition::Cleanup => {
+                return Err(TransitionError::NotAgentRunStatus {
+                    status: self.task_status.clone(),
+                });
+            }
+        };
+
+        Ok(Self {
+            task_status: next,
+            execution: ExecutionState::Pending,
+            updated_at: now,
+            ..self
+        })
+    }
+
+    /// 凍結の通知を記録する。
+    ///
+    /// 前提: 未通知の凍結。通知の実行が成功した後にだけ呼ばれ、`notified_at` が残ることで
+    /// 次の tick は再通知しない。逆順(先に記録して通知)にすると、失敗した通知が
+    /// 永久に再送されない(requirements §8 の at-least-once の破れ)。
+    pub fn mark_notified(self, now: Timestamp) -> Result<Self, TransitionError> {
+        let execution = mark_notified_state(&self.execution, now)?;
+
+        Ok(Self {
+            execution,
+            updated_at: now,
+            ..self
+        })
+    }
+
     /// 再起動できる状態(起動待ち・失敗確定)であることを検査する。
     fn ensure_restartable(&self) -> Result<(), TransitionError> {
         match self.execution {
@@ -436,6 +555,36 @@ impl Task {
             }),
         }
     }
+
+    /// 起動確認済みであることを検査する。
+    fn ensure_running(&self) -> Result<(), TransitionError> {
+        match self.execution {
+            ExecutionState::Running => Ok(()),
+            ExecutionState::Pending
+            | ExecutionState::Launching { .. }
+            | ExecutionState::Completed
+            | ExecutionState::Failed
+            | ExecutionState::Stopped { .. } => Err(TransitionError::InvalidState {
+                expected: RUNNING,
+                actual: self.execution.kind(),
+            }),
+        }
+    }
+
+    /// 判定確定(成功)であることを検査する。
+    fn ensure_completed(&self) -> Result<(), TransitionError> {
+        match self.execution {
+            ExecutionState::Completed => Ok(()),
+            ExecutionState::Pending
+            | ExecutionState::Launching { .. }
+            | ExecutionState::Running
+            | ExecutionState::Failed
+            | ExecutionState::Stopped { .. } => Err(TransitionError::InvalidState {
+                expected: COMPLETED,
+                actual: self.execution.kind(),
+            }),
+        }
+    }
 }
 
 /// 再起動できる状態(前提の不一致の報告に使う)。
@@ -443,6 +592,43 @@ const RESTARTABLE: &[ExecutionStateKind] =
     &[ExecutionStateKind::Pending, ExecutionStateKind::Failed];
 /// 起動記録済みの状態。
 const LAUNCHING: &[ExecutionStateKind] = &[ExecutionStateKind::Launching];
+/// 起動確認済みの状態。
+const RUNNING: &[ExecutionStateKind] = &[ExecutionStateKind::Running];
+/// 判定確定(成功)の状態。
+const COMPLETED: &[ExecutionStateKind] = &[ExecutionStateKind::Completed];
+/// 凍結の状態。
+pub(super) const STOPPED: &[ExecutionStateKind] = &[ExecutionStateKind::Stopped];
+
+/// 未通知の凍結に通知時刻を書き込む。
+///
+/// `Task` と `DegradedTask` は同じ規則で通知を記録する — 通知に要る値がどちらでも
+/// スナップショットに依存しないため、規則そのものを 1 箇所に置ける。
+pub(super) fn mark_notified_state(
+    execution: &ExecutionState,
+    now: Timestamp,
+) -> Result<ExecutionState, TransitionError> {
+    match execution {
+        ExecutionState::Stopped {
+            reason,
+            notified_at: None,
+        } => Ok(ExecutionState::Stopped {
+            reason: *reason,
+            notified_at: Some(now),
+        }),
+        ExecutionState::Stopped {
+            notified_at: Some(_),
+            ..
+        } => Err(TransitionError::AlreadyNotified),
+        ExecutionState::Pending
+        | ExecutionState::Launching { .. }
+        | ExecutionState::Running
+        | ExecutionState::Completed
+        | ExecutionState::Failed => Err(TransitionError::InvalidState {
+            expected: STOPPED,
+            actual: execution.kind(),
+        }),
+    }
+}
 
 /// 上限の超過は加算後の値が上限を**上回った**ときにのみ成立する(等号では凍結しない)。
 ///
@@ -1348,6 +1534,429 @@ mod tests {
                     }),
                     "{kind:?}"
                 ),
+            }
+        }
+    }
+
+    #[test]
+    fn 判定completedは判定確定にして実行と判定のカウンタを0に戻す() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(2, 1, 3),
+            ..fields()
+        });
+
+        let completed = task.complete_run(later()).expect("起動確認済み");
+
+        assert_eq!(completed.execution(), &ExecutionState::Completed);
+        assert_eq!(
+            completed.counters(),
+            RetryCounters::rehydrate(0, 0, 3),
+            "spawn_fail_count は触らない"
+        );
+        assert_eq!(completed.task_status(), &status("queued"));
+        assert_eq!(completed.current_attempt(), Some(&attempt(1)));
+        assert_eq!(completed.updated_at(), later());
+    }
+
+    #[test]
+    fn 判定skippedはタスクステータスを変えずに起動待ちへ戻す() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(2, 1, 3),
+            ..fields()
+        });
+
+        let skipped = task.skip_run(later()).expect("起動確認済み");
+
+        assert_eq!(skipped.execution(), &ExecutionState::Pending);
+        assert_eq!(skipped.task_status(), &status("queued"));
+        assert_eq!(skipped.counters(), RetryCounters::rehydrate(0, 0, 3));
+        assert_eq!(skipped.updated_at(), later());
+    }
+
+    #[test]
+    fn 判定の確定は起動確認済みからのみ行える() {
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let completed = ready_task(execution.clone()).complete_run(later());
+            let skipped = ready_task(execution).skip_run(later());
+
+            match kind {
+                ExecutionStateKind::Running => {
+                    assert!(completed.is_ok(), "{kind:?}");
+                    assert!(skipped.is_ok(), "{kind:?}");
+                }
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Launching
+                | ExecutionStateKind::Completed
+                | ExecutionStateKind::Failed
+                | ExecutionStateKind::Stopped => {
+                    let expected = Err(TransitionError::InvalidState {
+                        expected: RUNNING,
+                        actual: kind,
+                    });
+                    assert_eq!(completed, expected, "{kind:?}");
+                    assert_eq!(skipped, expected, "{kind:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn 実行の失敗は実行のカウンタを進めて判定のカウンタを0に戻す() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(0, 2, 3),
+            ..fields()
+        });
+
+        let failed = task.fail_run(2, later()).expect("起動確認済み");
+
+        assert_eq!(failed.execution(), &ExecutionState::Failed);
+        assert_eq!(failed.counters(), RetryCounters::rehydrate(1, 0, 3));
+        assert_eq!(failed.updated_at(), later());
+    }
+
+    #[test]
+    fn 実行の失敗は上限と等しい回数では凍結せず超えると凍結する() {
+        let at_limit = ready_task(ExecutionState::Running)
+            .fail_run(1, later())
+            .expect("起動確認済み");
+        assert_eq!(at_limit.execution(), &ExecutionState::Failed);
+        assert_eq!(at_limit.counters().attempt_count(), 1);
+
+        let over_limit = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(1, 0, 0),
+            ..fields()
+        })
+        .fail_run(1, later())
+        .expect("起動確認済み");
+        assert_eq!(
+            over_limit.execution(),
+            &ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: None,
+            }
+        );
+        assert_eq!(over_limit.counters().attempt_count(), 2);
+    }
+
+    #[test]
+    fn リトライ上限が0のステータスは最初の実行失敗で凍結する() {
+        let frozen = ready_task(ExecutionState::Running)
+            .fail_run(0, later())
+            .expect("起動確認済み");
+
+        assert_eq!(
+            frozen.execution(),
+            &ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: None,
+            }
+        );
+        assert_eq!(frozen.counters().attempt_count(), 1);
+    }
+
+    #[test]
+    fn 実行の失敗は起動確認済みからのみ記録できる() {
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let result = ready_task(execution).fail_run(2, later());
+
+            match kind {
+                ExecutionStateKind::Running => assert!(result.is_ok(), "{kind:?}"),
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Launching
+                | ExecutionStateKind::Completed
+                | ExecutionStateKind::Failed
+                | ExecutionStateKind::Stopped => assert_eq!(
+                    result,
+                    Err(TransitionError::InvalidState {
+                        expected: RUNNING,
+                        actual: kind,
+                    }),
+                    "{kind:?}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn 判定失敗は起動確認済みのまま判定のカウンタだけを進める() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(1, 0, 2),
+            ..fields()
+        });
+
+        let recorded = task
+            .record_judge_failure("プロトコル外の終了コード 7".to_owned(), 3, later())
+            .expect("起動確認済み");
+
+        assert_eq!(recorded.execution(), &ExecutionState::Running);
+        assert_eq!(
+            recorded.counters(),
+            RetryCounters::rehydrate(1, 1, 2),
+            "エージェントは再実行されないので attempt_count は動かない"
+        );
+        assert_eq!(
+            recorded.last_failure().map(FailureNote::kind),
+            Some(FailureKind::JudgeFail)
+        );
+        assert_eq!(
+            recorded.last_failure().map(FailureNote::message),
+            Some("プロトコル外の終了コード 7")
+        );
+        assert_eq!(recorded.updated_at(), later());
+    }
+
+    #[test]
+    fn 判定失敗は上限と等しい回数では凍結せず超えると凍結する() {
+        let at_limit = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(0, 2, 0),
+            ..fields()
+        })
+        .record_judge_failure("判定できない".to_owned(), 3, later())
+        .expect("起動確認済み");
+        assert_eq!(at_limit.execution(), &ExecutionState::Running);
+        assert_eq!(at_limit.counters().judge_attempt_count(), 3);
+
+        let over_limit = task_of(TaskFields {
+            execution: ExecutionState::Running,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(0, 3, 0),
+            ..fields()
+        })
+        .record_judge_failure("判定できない".to_owned(), 3, later())
+        .expect("起動確認済み");
+        assert_eq!(
+            over_limit.execution(),
+            &ExecutionState::Stopped {
+                reason: StopReason::JudgeLimitExceeded,
+                notified_at: None,
+            }
+        );
+        assert_eq!(over_limit.counters().judge_attempt_count(), 4);
+        assert_eq!(over_limit.counters().attempt_count(), 0);
+    }
+
+    #[test]
+    fn 判定失敗は起動確認済みからのみ記録できる() {
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let result =
+                ready_task(execution).record_judge_failure("判定できない".to_owned(), 3, later());
+
+            match kind {
+                ExecutionStateKind::Running => assert!(result.is_ok(), "{kind:?}"),
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Launching
+                | ExecutionStateKind::Completed
+                | ExecutionStateKind::Failed
+                | ExecutionStateKind::Stopped => assert_eq!(
+                    result,
+                    Err(TransitionError::InvalidState {
+                        expected: RUNNING,
+                        actual: kind,
+                    }),
+                    "{kind:?}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn 遷移はタスクステータスを現ステータスのnextへ進めて起動待ちに戻す() {
+        let snapshot = snapshot_of(vec![
+            ("queued", agent_run("review", None)),
+            ("review", agent_run("done", None)),
+            ("done", StatusDefinition::Cleanup),
+        ]);
+        let task = task_of(TaskFields {
+            snapshot,
+            execution: ExecutionState::Completed,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            counters: RetryCounters::rehydrate(0, 0, 1),
+            ..fields()
+        });
+
+        let advanced = task.advance(later()).expect("判定確定である");
+
+        assert_eq!(advanced.task_status(), &status("review"));
+        assert_eq!(advanced.execution(), &ExecutionState::Pending);
+        assert_eq!(
+            advanced.counters(),
+            RetryCounters::rehydrate(0, 0, 1),
+            "カウンタのリセットは判定の確定で済んでいる"
+        );
+        assert_eq!(advanced.current_attempt(), Some(&attempt(1)));
+        assert_eq!(advanced.updated_at(), later());
+    }
+
+    #[test]
+    fn 循環したワークフローの遷移は同じステータスへ戻れる() {
+        let snapshot = snapshot_of(vec![("queued", agent_run("queued", None))]);
+        let task = task_of(TaskFields {
+            snapshot,
+            execution: ExecutionState::Completed,
+            workspace: Some(workspace()),
+            current_attempt: Some(attempt(1)),
+            ..fields()
+        });
+
+        let advanced = task.advance(later()).expect("判定確定である");
+
+        assert_eq!(advanced.task_status(), &status("queued"));
+        assert_eq!(advanced.execution(), &ExecutionState::Pending);
+    }
+
+    #[test]
+    fn 遷移は判定確定からのみ行える() {
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let result = ready_task(execution).advance(later());
+
+            match kind {
+                ExecutionStateKind::Completed => assert!(result.is_ok(), "{kind:?}"),
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Launching
+                | ExecutionStateKind::Running
+                | ExecutionStateKind::Failed
+                | ExecutionStateKind::Stopped => assert_eq!(
+                    result,
+                    Err(TransitionError::InvalidState {
+                        expected: COMPLETED,
+                        actual: kind,
+                    }),
+                    "{kind:?}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn エージェント実行以外のステータスは遷移先を持たない() {
+        let snapshot = snapshot_of(vec![
+            ("waiting", StatusDefinition::Wait),
+            ("done", StatusDefinition::Cleanup),
+        ]);
+        for name in ["waiting", "done"] {
+            let task = task_of(TaskFields {
+                snapshot: snapshot.clone(),
+                task_status: status(name),
+                execution: ExecutionState::Completed,
+                workspace: Some(workspace()),
+                current_attempt: Some(attempt(1)),
+                ..fields()
+            });
+
+            assert_eq!(
+                task.advance(later()),
+                Err(TransitionError::NotAgentRunStatus {
+                    status: status(name)
+                }),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn 通知の記録は未通知の凍結にだけ通知時刻を書く() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: None,
+            },
+            ..fields()
+        });
+
+        let notified = task.mark_notified(later()).expect("未通知の凍結である");
+
+        assert_eq!(
+            notified.execution(),
+            &ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: Some(later()),
+            }
+        );
+        assert_eq!(notified.updated_at(), later());
+    }
+
+    #[test]
+    fn 通知済みの凍結は再通知として記録されない() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: Some(now()),
+            },
+            ..fields()
+        });
+
+        assert_eq!(
+            task.mark_notified(later()),
+            Err(TransitionError::AlreadyNotified)
+        );
+    }
+
+    #[test]
+    fn 凍結していないタスクには通知を記録できない() {
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let result = ready_task(execution).mark_notified(later());
+
+            match kind {
+                ExecutionStateKind::Stopped => assert!(result.is_ok(), "{kind:?}"),
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Launching
+                | ExecutionStateKind::Running
+                | ExecutionStateKind::Completed
+                | ExecutionStateKind::Failed => assert_eq!(
+                    result,
+                    Err(TransitionError::InvalidState {
+                        expected: STOPPED,
+                        actual: kind,
+                    }),
+                    "{kind:?}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn 遷移の前提の破れは5種を区別する() {
+        let errors = [
+            TransitionError::InvalidState {
+                expected: RUNNING,
+                actual: ExecutionStateKind::Pending,
+            },
+            TransitionError::WorkspaceAlreadySet,
+            TransitionError::WorkspaceNotSet,
+            TransitionError::NotAgentRunStatus {
+                status: status("queued"),
+            },
+            TransitionError::MissingCurrentAttempt,
+        ];
+
+        for (index, left) in errors.iter().enumerate() {
+            for right in errors.iter().skip(index + 1) {
+                assert_ne!(left, right);
             }
         }
     }

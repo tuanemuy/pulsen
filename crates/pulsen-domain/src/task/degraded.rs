@@ -12,7 +12,9 @@ use super::counters::RetryCounters;
 use super::failure::FailureNote;
 use super::id::TaskId;
 use super::state::{ExecutionState, ExecutionStateKind};
+use super::task::mark_notified_state;
 use super::time::Timestamp;
+use super::transition::TransitionError;
 
 /// 永続化されたスナップショット破損タスクの全フィールド。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +139,21 @@ impl DegradedTask {
     pub fn snapshot_error(&self) -> &str {
         &self.snapshot_error
     }
+
+    /// 凍結の通知を記録する。
+    ///
+    /// 前提と事後条件は `Task::mark_notified` と同じ。スナップショットが読めなくても
+    /// 通知に要る 3 値(タスクID・ワークフロー名・タスクステータス)は揃うため、
+    /// 縮退したタスクでも at-least-once の再通知が閉じる。
+    pub fn mark_notified(self, now: Timestamp) -> Result<Self, TransitionError> {
+        let execution = mark_notified_state(&self.execution, now)?;
+
+        Ok(Self {
+            execution,
+            updated_at: now,
+            ..self
+        })
+    }
 }
 
 #[cfg(test)]
@@ -162,6 +179,10 @@ mod tests {
 
     fn now() -> Timestamp {
         Timestamp::parse_rfc3339("2026-08-11T09:15:30Z").expect("受理される")
+    }
+
+    fn later() -> Timestamp {
+        Timestamp::parse_rfc3339("2026-08-11T10:00:00Z").expect("受理される")
     }
 
     fn fields() -> DegradedTaskFields {
@@ -201,6 +222,62 @@ mod tests {
         });
 
         assert_eq!(task.task_status().as_str(), "どこにも定義がない");
+    }
+
+    #[test]
+    fn スナップショットが読めなくても未通知の凍結に通知を記録できる() {
+        let task = DegradedTask::rehydrate(DegradedTaskFields {
+            execution: ExecutionState::Stopped {
+                reason: StopReason::JudgeLimitExceeded,
+                notified_at: None,
+            },
+            ..fields()
+        });
+
+        let notified = task.mark_notified(later()).expect("未通知の凍結である");
+
+        assert_eq!(
+            notified.execution(),
+            &ExecutionState::Stopped {
+                reason: StopReason::JudgeLimitExceeded,
+                notified_at: Some(later()),
+            }
+        );
+        assert_eq!(notified.updated_at(), later());
+        assert_eq!(
+            notified.snapshot_error(),
+            "snapshot が読めない",
+            "読めない理由は修復の材料として残る"
+        );
+    }
+
+    #[test]
+    fn 通知済みのスナップショット破損タスクは再通知として記録されない() {
+        let task = DegradedTask::rehydrate(DegradedTaskFields {
+            execution: ExecutionState::Stopped {
+                reason: StopReason::Aborted,
+                notified_at: Some(now()),
+            },
+            ..fields()
+        });
+
+        assert_eq!(
+            task.mark_notified(later()),
+            Err(TransitionError::AlreadyNotified)
+        );
+    }
+
+    #[test]
+    fn 凍結していないスナップショット破損タスクには通知を記録できない() {
+        let task = DegradedTask::rehydrate(fields());
+
+        assert_eq!(
+            task.mark_notified(later()),
+            Err(TransitionError::InvalidState {
+                expected: &[ExecutionStateKind::Stopped],
+                actual: ExecutionStateKind::Pending,
+            })
+        );
     }
 
     #[test]

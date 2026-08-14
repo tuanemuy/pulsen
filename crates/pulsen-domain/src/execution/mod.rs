@@ -1,18 +1,25 @@
 //! 実行の観測と判断を担うドメイン。
 //!
-//! run ディレクトリの語彙と launching の分類、対象の検証・排他ロック・run ディレクトリの
-//! 読み書き・プロセスの起動のポートを定義する。判定・gc のドメインサービスは、それらを
-//! 使うスライスで足す。
+//! run ディレクトリの語彙と launching / running の分類、判定・通知の構成、対象の検証・
+//! 排他ロック・run ディレクトリの読み書き・プロセスの起動と観測・コマンド実行のポートを
+//! 定義する。gc のドメインサービスは、それを使うスライスで足す。
 
+mod judgement;
 mod launching;
+mod notification;
 mod port;
+mod running;
 mod value;
 
+pub use judgement::JudgementService;
 pub use launching::{
     InconsistentRunFiles, LaunchingClassifier, LaunchingDecision, LaunchingRecheck,
 };
+pub use notification::NotificationService;
 pub use port::{
-    ExclusiveLock, Io, LockError, LockGuard, ProcessController, RunFileError, RunStore, SpawnError,
-    TargetError, WorktreeError, WorktreeManager, WrapperIdentity, WrapperLaunchSpec,
+    CommandRunner, ExclusiveLock, Io, KillError, LockError, LockGuard, ProcessController,
+    RemnantOutcome, RunFileError, RunStore, SpawnError, TargetError, WorktreeError,
+    WorktreeManager, WrapperIdentity, WrapperLaunchSpec,
 };
-pub use value::{ExitCode, PidFileContent};
+pub use running::{Aliveness, IdentityCheck, RunningClassifier, RunningDecision};
+pub use value::{CommandCompletion, ExitCode, JudgeConclusion, JudgeOutcome, PidFileContent};

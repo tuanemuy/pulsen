@@ -53,6 +53,37 @@ impl RetryCounters {
         }
     }
 
+    /// 判定失敗を1つ数える。飽和の理由は [`Self::increment_attempt`] と同じ。
+    pub(super) fn increment_judge_attempt(self) -> Self {
+        Self {
+            judge_attempt_count: self.judge_attempt_count.saturating_add(1),
+            ..self
+        }
+    }
+
+    /// 判定失敗の連続を打ち切る。
+    ///
+    /// 実行が失敗として確定した時点で「判定できないまま再判定を重ねている」状態は
+    /// 終わっている。次の attempt の判定は 0 から数え直す。
+    pub(super) fn reset_judge_attempt(self) -> Self {
+        Self {
+            judge_attempt_count: 0,
+            ..self
+        }
+    }
+
+    /// 実行と判定の連続失敗をまとめて打ち切る。
+    ///
+    /// 判定が completed / skipped で確定したときの事後条件(ADR-009)。`spawn_fail_count`
+    /// は触らない — 数えている連続は「起動できないこと」であり、起動確認でリセット済み。
+    pub(super) fn reset_run_failures(self) -> Self {
+        Self {
+            attempt_count: 0,
+            judge_attempt_count: 0,
+            ..self
+        }
+    }
+
     /// spawn 失敗を1つ数える。飽和の理由は [`Self::increment_attempt`] と同じ。
     pub(super) fn increment_spawn_fail(self) -> Self {
         Self {
