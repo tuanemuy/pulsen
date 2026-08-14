@@ -77,7 +77,7 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
 ## リスクと注意点
 
 - **`CommandRunner` の timeout を追加依存なしで実装する**: std に「子プロセスを期限つきで待つ」API は無く、ADR-023 が本番依存を6クレートに閉じ、`unsafe_code = "forbid"` が効いている。判定 timeout(`judge_timeout`)と `NOTIFY_TIMEOUT`(60秒)は両方ともこのポートに乗るため、ここが破れると新規依存または lint 緩和の判断が要る。**ステップ7 で最初に実測して確かめる**(adr.md ADR-001)。
-- **`kill` / `try_kill_remnants` を `unsafe` なしで組む**: ADR-075 が決めたのはデタッチ起動・同定情報の観測までで、終了操作は未決。`KillIdent` は POSIX で `-<pgid>`、Windows で `<pid>` の**永続化された不透明値**であり、誤った対象に効くと無関係なプロセス群を殺す(adr.md ADR-002)。`try_kill_remnants` の `NotIdentifiable` は「いかなるプロセスも終了させない」ことが期待結果なので、同定できないときに広めに殺す実装は適合ケースで検出されない — 誤殺しない側に倒す判断をコードの why として残す。
+- **`kill` / `try_kill_remnants` を `unsafe` なしで組む**: ADR-075 が決めたのはデタッチ起動・同定情報の観測までで、終了操作は未決。`KillIdent` は POSIX で `-<pgid>`、Windows で `<pid>` の**永続化された不透明値**であり、誤った対象に効くと無関係なプロセス群を殺す(adr.md ADR-002 / ADR-015)。`try_kill_remnants` の `NotIdentifiable` は「いかなるプロセスも終了させない」ことが期待結果なので、同定できないときに広めに殺す実装は適合ケースで検出されない — 誤殺しない側に倒す判断をコードの why として残す。
 - **`kill` の失敗で状態を変更しない**: `KillOnTimeout` で `kill` が失敗したときに `fail_run` を呼ぶと、生存したままのプロセスを持つタスクが failed → 再起動 → **同一 worktree での並走**に至る。`starttime_of` の `Err(Io)` も同じ理由で Alive / Dead のどちらにも写像しない。どちらも「状態を変更せず報告のみ」で、次 tick が同じ決定を再導出する。
 - **exit が Some なら生存観測を行わない**: `RunningClassifier` の2段規則。観測を先に置くと、`starttime_of` が失敗する環境で判定が永久に遅延する(TC-exec-tick-103)。`classify_alive` に `Judge` を返させない型の形がこの規則の担保になる。
 - **通知の順序を逆にしない**: 「stopped を書く(`notified_at: None`)→ notify_cmd → 成功時のみ `mark_notified`」。`mark_notified` を先に書くと、通知が失敗した凍結が永久に通知されない(欠落)。二重通知は許容する(requirements §8)。
@@ -98,6 +98,8 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
 
 - `spec/domains/task.md` のエラー型は5種(`TransitionError::InvariantViolated { message: String }` を含む)だが、実装は6種 — `InvariantViolated` は ADR-096 により `MissingCurrentAttempt`(分類のみ)へ置き換わり、本スライスが `AlreadyNotified` を足す(adr.md ADR-006)。`DOM-task-053` の PASS 要件「5種を区別する」は満たすが、変種名と種類数が一致しない。
 - `spec/usecases/execution.md` の tick 出力 DTO は9フィールドだが、実装は `confirmed_running` と `judged` を加えた11フィールド(ADR-094 / adr.md ADR-005)。本スライスは `judged` / `transitioned` / `skipped_back` / `notified` を初めて埋める側なので、この差分が表示に現れる。
+- `spec/domains/execution.md:109` の `RunningClassifier::classify_alive` は `-> RunningDecision` だが、実装は `Judge` を除いた3値の `AliveDecision` を返す(adr.md ADR-009)。2段規則の1段目(exit が Some なら観測なしで即 `Judge`)はユースケース側(`crates/pulsen/src/application/tick/observe.rs`)にあり、`DOM-execution-017` の PASS 要件が1段目を `classify_alive` に含めている字義とは配置が異なる。`RunningDecision` は4値のまま残るので `DOM-execution-008` の値数要件は満たす。
+- `spec/domains/execution.md:119` の `JudgementService::default_judgement` は `-> JudgeOutcome` だが、実装は2値の `DefaultJudgement` を返す(adr.md ADR-016)。`JudgeOutcome` は3値のまま残るので `DOM-execution-004` を、2値であることが `DOM-execution-019` の PASS 要件を満たす。
 - `spec/domains/execution.md` の `LaunchingClassifier` は `InconsistentRunFiles { message: String }` だが、実装は破れの種別だけを持つ(ADR-081)。本スライスでは変更しない(記載のみ)。
 
 ## テスト方針
@@ -132,10 +134,10 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
   | task-execution.md | TC-23 | 全手順。デフォルト判定での exit 20 が failed になること |
   | setup.md | TC-09 | 全手順。**前提として事前準備1〜3・TC-01 手順1 を先行実行する**。judge の exit 0 が completed になり `next` へ進むこと |
   | setup.md | TC-10 | 手順1〜4。手順5(`set-status` での片付け)は #5 |
-  | setup.md | TC-11 | 手順1〜4。手順5 のうち `set-status` 以降は #5 |
+  | setup.md | TC-11 | 手順1〜4。手順5 は実行しない — 片付けの `set-status` が #5 で、回復(`judge-exit` を 0 に戻して completed へ進む筋)は同じ `judge-demo` の TC-09 で消化済み |
   | setup.md | TC-35 | **手順2 の `abort` を上限超過での凍結に読み替える**(`abort` は #5)。`fail` 相当のワークフローを登録して tick を繰り返し、notify_cmd 未定義でも stopped の確定が正常に動作し `notify.log` に行が増えないことを確認する。手順4 の回復(config への `notify_cmd` の復元)は必ず行う |
   | setup.md | TC-37 | 手順1〜3。手順4(`retry`)は #5。プロトコル外の exit code が判定失敗として凍結に至ること |
-  | setup.md | TC-38 | 手順1〜2。手順3(`abort` での片付け)は #5 — 代わりにタスクを残したまま次の TC へ進まないよう、`judge-exit` を 0 に戻して completed で進めてから放置する |
+  | setup.md | TC-38 | 手順1〜2。手順3(`abort` での片付け)は #5 — 代わりに放置する。この TC の `judge-missing.yaml` は `judge` が `/no/such/judge.sh` で `judge-exit` を読まないため回復の手立てが無く、以降 running のまま毎 tick 再判定されて判定上限超過で凍結し、そこで止まる |
   | setup.md | TC-39 | 手順1〜3 と手順4 の `judge_timeout` の復元。判定 timeout が判定失敗として扱われ、tick がその間ブロックすること |
   | setup.md | TC-47 | 手順1〜2。手順3(`abort`)は #5。シグナル死の符号化値が `EXIT_CODE` として判定コマンドへ渡ること |
   | intervention.md | TC-01 | 手順1〜3・5・7・8(手順3 の `ls` と手順4・6 の `ls --state` / `show` はタスクファイル直読で代替)。凍結までの間は通知されず、凍結の瞬間にちょうど1行だけ通知されること、通知済みの stopped が再通知されないこと |

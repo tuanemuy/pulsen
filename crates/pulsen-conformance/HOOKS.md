@@ -43,6 +43,7 @@
 | TC-port-process-controller-025 | C | 書き込めないログの置き場を作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
 | TC-port-process-controller-001 / 002 / 003 / 017〜021 / 024〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため | 実行 | 実行 | 実行 |
 | TC-port-process-controller-002 | B | 上記に加えて、デタッチ性のフィクスチャ（`examples/spawn_probe`）がビルドされていない | ハーネスが `spawn_from_other_process` を提供するか。同じく**スキップ許容集合には入れない** | 実行 | 実行 | 実行 |
+| TC-port-process-controller-007 / 011〜016 | B | フィクスチャの実行ファイルがビルドされていない（007 は `examples/agent_probe`、011〜016 は実行単位を別プロセスから起こすため `agent_probe` と `examples/spawn_probe` の両方） | ハーネスが `terminated_pid` / `live_execution_unit` / `detached_execution_unit` / `orphaned_execution_unit` を提供するか。同じく**スキップ許容集合には入れない** | 未測定 | 未測定 | 未測定 |
 | TC-port-process-controller-011 / 012 / 013 / 015 | B（011 / 012）・C（013 / 015） | 実行単位（プロセスグループ相当）を作れない | ハーネスが `live_execution_unit` / `detached_execution_unit` を提供するか（この適用先では、実行単位を1回起こせるかで決まる） | 未測定 | 未測定 | 未測定 |
 | TC-port-process-controller-014 / 016 | B（014）・C（016） | 上記に加えて、実行単位の一部だけを終了させられない | ハーネスが `orphaned_execution_unit` を提供するか（この適用先では、起こした実行単位の一部だけを終了させられるかで決まる） | 未測定 | 未測定 | 未測定 |
 | TC-port-command-runner-004 | C | 実行権限のない実体を作れない（root 実行・非 POSIX・権限を持たないファイルシステム） | `permission_restrictions_effective` | 未測定 | 未測定 | 未測定 |

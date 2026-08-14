@@ -11,6 +11,8 @@ use pulsen_domain::execution::{
 };
 use pulsen_domain::task::{KillIdent, Pid, ProcessStartTime, WorktreePath};
 
+use super::RecordSeq;
+
 /// 記録された呼び出し。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProcessControllerCall {
@@ -61,7 +63,7 @@ pub struct ScriptedProcessController {
     starttime_of: RefCell<VecDeque<Result<Option<ProcessStartTime>, Io>>>,
     kill: RefCell<VecDeque<Result<(), KillError>>>,
     try_kill_remnants: RefCell<VecDeque<RemnantOutcome>>,
-    calls: RefCell<Vec<ProcessControllerCall>>,
+    calls: RefCell<Vec<(Option<RecordSeq>, ProcessControllerCall)>>,
 }
 
 impl ScriptedProcessController {
@@ -117,15 +119,34 @@ impl ScriptedProcessController {
 
     /// これまでに受け取った呼び出し。
     pub fn calls(&self) -> Vec<ProcessControllerCall> {
-        self.calls.borrow().clone()
+        self.calls
+            .borrow()
+            .iter()
+            .map(|(_, call)| call.clone())
+            .collect()
+    }
+
+    /// 順序の契約がポートをまたぐ呼び出しを、ほかのダブルの記録と並べられる採番つきで返す。
+    ///
+    /// 採番するのは `try_kill_remnants` だけ — 残存の終了は失敗の確定(`TaskRepository`
+    /// への書き込み)より先でなければならず、この前後関係は `ProcessController` の列だけを
+    /// 見ても表せない。ほかのメソッドはポートをまたぐ順序の契約を持たないため採番せず、
+    /// この列にも現れない。
+    pub fn calls_in_order(&self) -> Vec<(RecordSeq, ProcessControllerCall)> {
+        self.calls
+            .borrow()
+            .iter()
+            .filter_map(|(seq, call)| seq.map(|seq| (seq, call.clone())))
+            .collect()
     }
 }
 
 impl ProcessController for ScriptedProcessController {
     fn spawn_wrapper(&self, spec: &WrapperLaunchSpec) -> Result<(), SpawnError> {
-        self.calls
-            .borrow_mut()
-            .push(ProcessControllerCall::SpawnWrapper { spec: spec.clone() });
+        self.calls.borrow_mut().push((
+            None,
+            ProcessControllerCall::SpawnWrapper { spec: spec.clone() },
+        ));
         let Some(result) = self.spawn_wrapper.borrow_mut().pop_front() else {
             panic!("spawn_wrapper の結果を使い切った")
         };
@@ -135,7 +156,7 @@ impl ProcessController for ScriptedProcessController {
     fn own_identity(&self) -> Result<WrapperIdentity, Io> {
         self.calls
             .borrow_mut()
-            .push(ProcessControllerCall::OwnIdentity);
+            .push((None, ProcessControllerCall::OwnIdentity));
         let Some(result) = self.own_identity.borrow_mut().pop_front() else {
             panic!("own_identity の結果を使い切った")
         };
@@ -149,14 +170,15 @@ impl ProcessController for ScriptedProcessController {
         stdout: &Path,
         stderr: &Path,
     ) -> ExitCode {
-        self.calls
-            .borrow_mut()
-            .push(ProcessControllerCall::RunAgent {
+        self.calls.borrow_mut().push((
+            None,
+            ProcessControllerCall::RunAgent {
                 cmd: cmd.clone(),
                 cwd: cwd.clone(),
                 stdout: stdout.to_path_buf(),
                 stderr: stderr.to_path_buf(),
-            });
+            },
+        ));
         let Some(result) = self.run_agent.borrow_mut().pop_front() else {
             panic!("run_agent の結果を使い切った")
         };
@@ -166,7 +188,7 @@ impl ProcessController for ScriptedProcessController {
     fn starttime_of(&self, pid: Pid) -> Result<Option<ProcessStartTime>, Io> {
         self.calls
             .borrow_mut()
-            .push(ProcessControllerCall::StarttimeOf { pid });
+            .push((None, ProcessControllerCall::StarttimeOf { pid }));
         let Some(result) = self.starttime_of.borrow_mut().pop_front() else {
             panic!("starttime_of の結果を使い切った")
         };
@@ -174,9 +196,12 @@ impl ProcessController for ScriptedProcessController {
     }
 
     fn kill(&self, ident: &KillIdent) -> Result<(), KillError> {
-        self.calls.borrow_mut().push(ProcessControllerCall::Kill {
-            ident: ident.clone(),
-        });
+        self.calls.borrow_mut().push((
+            None,
+            ProcessControllerCall::Kill {
+                ident: ident.clone(),
+            },
+        ));
         let Some(result) = self.kill.borrow_mut().pop_front() else {
             panic!("kill の結果を使い切った")
         };
@@ -184,11 +209,12 @@ impl ProcessController for ScriptedProcessController {
     }
 
     fn try_kill_remnants(&self, ident: &KillIdent) -> RemnantOutcome {
-        self.calls
-            .borrow_mut()
-            .push(ProcessControllerCall::TryKillRemnants {
+        self.calls.borrow_mut().push((
+            Some(RecordSeq::next()),
+            ProcessControllerCall::TryKillRemnants {
                 ident: ident.clone(),
-            });
+            },
+        ));
         let Some(result) = self.try_kill_remnants.borrow_mut().pop_front() else {
             panic!("try_kill_remnants の結果を使い切った")
         };

@@ -6,6 +6,7 @@
 mod tick_fixture;
 
 use pulsen::application::tick::TickIssue;
+use pulsen::cli::render::tick_summary;
 use pulsen_conformance::doubles::{
     RecordSeq, ScriptedCommandRunner, ScriptedRunStore, ScriptedTaskRepository,
 };
@@ -499,6 +500,42 @@ fn 判定確定の遷移で前提が破れていれば報告してスキップ�
         }]
     );
     assert!(harness.tasks.saved().is_empty(), "書き込まない");
+}
+
+#[test]
+fn 現在attemptを失った判定確定タスクは実行状態と矛盾しない報告でスキップする() {
+    // 判定確定の分岐は事前検査を持たず遷移関数に前提を検査させるため、手動修復で
+    // 現在 attempt を失ったタスクの破れがそのまま報告になる。
+    let harness = Harness {
+        tasks: repository(vec![
+            task(TASK)
+                .workspace()
+                .execution(ExecutionState::Completed)
+                .entry(),
+        ]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::Transition {
+            task_id: task_id(TASK),
+            error: TransitionError::MissingCurrentAttempt,
+        }]
+    );
+    assert!(harness.tasks.saved().is_empty(), "書き込まない");
+
+    let report = tick_summary(&summary);
+    assert!(
+        report.contains("現在 attempt"),
+        "破れた前提そのものを示す: {report}"
+    );
+    assert!(
+        !report.contains("起動記録"),
+        "判定確定のタスクを起動記録済みとは述べない: {report}"
+    );
 }
 
 #[test]

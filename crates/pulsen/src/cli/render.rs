@@ -307,8 +307,10 @@ fn transition_error(error: &TransitionError) -> String {
             "ステータス `{}` はエージェント実行ではない",
             status.as_str()
         ),
+        // 実行状態を名指ししない — この破れは起動記録済み・実行中・判定確定のいずれからも
+        // 返り、実行状態を述べると修復の入口を誤らせる。
         TransitionError::MissingCurrentAttempt => {
-            "起動記録済みなのに現在 attempt が無い".to_owned()
+            "遷移の前提となる現在 attempt(または同定情報)が無い".to_owned()
         }
         TransitionError::AlreadyNotified => "凍結の通知が記録済み".to_owned(),
     }
@@ -1240,8 +1242,9 @@ mod tests {
             .ends_with("遷移の前提が成立しません(実行状態が pending | failed ではなく running)"),
         );
         assert!(
-            transition(TransitionError::MissingCurrentAttempt)
-                .ends_with("遷移の前提が成立しません(起動記録済みなのに現在 attempt が無い)"),
+            transition(TransitionError::MissingCurrentAttempt).ends_with(
+                "遷移の前提が成立しません(遷移の前提となる現在 attempt(または同定情報)が無い)"
+            ),
         );
     }
 

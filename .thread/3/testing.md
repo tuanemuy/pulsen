@@ -49,12 +49,12 @@ AC-7 の隔離を機械的に確認する3つの grep:
 ```sh
 grep -rnE 'cfg\([^)]*\b(unix|windows|target_os|target_family)\b' crates/*/src/
 grep -rn '#\[allow(unsafe_code)\]' crates/
-grep -n -A 3 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/Cargo.toml
+grep -n -A 8 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/Cargo.toml
 ```
 
-- 1つ目: `crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs` / `adapter/process.rs` / `adapter/task_repository.rs` の3ファイルだけであること。合否はこの**ファイル集合**で判定する — 件数は本スライスの実装で増える（`adapter/process.rs` に `kill` / `try_kill_remnants` / `starttime_of` が入り、現在は 4 / 12 / 1 件）。新設の `adapter/command_runner.rs` がヒットしないこと — CommandRunner は `run_agent` と同じ符号化関数を共有し、OS 依存分岐を自前で持たない（plan.md AC-7）。`crates/pulsen-conformance/src/lib.rs` の2件は適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない。
+- 1つ目: `crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs` / `adapter/process.rs` / `adapter/task_repository.rs` の3ファイルだけであること。合否はこの**ファイル集合**で判定する — 件数は本スライスの実装で増える（`adapter/process.rs` に `kill` / `try_kill_remnants` / `starttime_of` が入り、`origin/main` の 4 / 10 / 1 件から 4 / 20 / 1 件になる）。新設の `adapter/command_runner.rs` がヒットしないこと — CommandRunner は `run_agent` と同じ符号化関数を共有し、OS 依存分岐を自前で持たない（plan.md AC-7）。`crates/pulsen-conformance/src/lib.rs` の2件は適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない。
 - 2つ目: `crates/pulsen/src/adapter/process.rs` の1件（Windows ハンドル抑止モジュール。ADR-100）だけであること。
-- 3つ目: `pulsen-domain` の `[dependencies]` が空のまま（次行がコメントまたは `[lints.rust]`）で、`pulsen` の本番依存が `pulsen-domain` / `clap` / `getrandom` / `serde` / `serde_json` / `serde_yaml_ng` / `tempfile` から増えていないこと（ADR-023 の6クレート + 内部クレート）。
+- 3つ目: `pulsen-domain` の `[dependencies]` が空のまま（依存の行が1つも無く、空行を挟んで `[lints.rust]` が続く）で、`pulsen` の本番依存が `pulsen-domain` / `clap` / `getrandom` / `serde` / `serde_json` / `serde_yaml_ng` / `tempfile` の7行から増えていないこと（ADR-023 の6クレート + 内部クレート）。`-A 8` はこの7行と `[dev-dependencies]` の手前までを1画面に収めるための幅で、`pulsen-domain` 側は空判定なので影響しない。
 
 ### 本スライスでの実行範囲（手順書からの読み替え）
 
@@ -70,7 +70,7 @@ plan.md「テスト方針 — 手動確認」の表が定める制約を、本�
 
 ### 検証用のフィクスチャ準備
 
-手動確認は3つの手順書に由来するので、フィクスチャも手順書ごとに分ける。パスは各手順書の記載どおりに保つ（読み替えによる取り違えを避けるため）。
+手動確認は3つの手順書に由来するので、フィクスチャも手順書ごとに分ける。パスは各手順書の記載どおりに保つ（読み替えによる取り違えを避けるため）。**例外は `intervention.md` の `PMT` の1つだけ** — 手順書の値（`$HOME/pulsen-manual-test`。`spec/manual-tests/intervention.md:25`）はフィクスチャB の `SETUP_HOME` と同一パスなので、フィクスチャC では `$HOME/pulsen-intervention-test` に読み替える。フィクスチャC は冒頭で `rm -rf "$PMT"` を実行するため、手順書どおりの値に戻すとフィクスチャB のホームごと消える。
 
 #### フィクスチャA — `spec/manual-tests/task-execution.md`（TC-03 / 05 / 06 / 07 / 13 / 14 / 15 / 17 / 19 / 20 / 21 / 22 / 23 用）
 
@@ -507,7 +507,7 @@ EOF
 ### 4. skipped によるポーリング周回（judge の exit 20）
 
 - **対応する受け入れ基準:** AC-5
-- **対応する手順書:** `task-execution.md` TC-06 全手順、TC-07 手順1〜5（手順6〜8 の `abort` / `set-status` は #5）、`setup.md` TC-11 手順1〜4（手順5 の `set-status` 以降は #5）
+- **対応する手順書:** `task-execution.md` TC-06 全手順、TC-07 手順1〜5（手順6〜8 の `abort` / `set-status` は #5）、`setup.md` TC-11 手順1〜4（手順5 は実行しない。片付けの `set-status` が #5 で、回復（`judge-exit` を 0 に戻して completed → 次ステータス）は setup TC-09 と同じ筋なので確認項目2 で消化済み）
 - **前提:** 確認項目3 の直後。フィクスチャA の `review-flag` / `check-broken` が存在しないこと。
 - **目的:** 判定コマンドの exit 20 が `skip_run` になり、**タスクステータス不変**のまま pending へ戻って `skipped_back` に記録されること、`attempt_count` を消費せず通知も起きないこと、次の tick が同じタスクステータスを新しい attempt で起動することを確認する。completed による循環（`next: watch`）も併せて見る。
 - **手順:**
@@ -689,7 +689,7 @@ EOF
   - 手順6: `exit` ファイルは存在しない（kill されたのでラッパーは書けない）。`pid` / `starttime` は残っている。
   - 手順7: attempt 2 も timeout kill され、`attempt_count` 2 > 1 で `.execution.state` が `stopped` / `retry_limit_exceeded` / `notified_at` あり。
   - 手順8: 通知行が1行。worktree は保持されている。
-- **確認ポイント:** kill が**タスクファイルに記録された `kill_ident` を使って**行われ、無関係なプロセスを巻き込んでいないこと（手順5 の前に `pgrep -f sleep` で他の sleep が無いことを確認しておくと差が読める。ADR-002）。経過の起点が `starttime.wall` であること — tick 実行時刻や `recorded_at` を起点にすると手順3 の連続 tick で早期 kill が起きる。手順4 の tick が「kill → fail_run」の順で1ステップだけ進むこと。
+- **確認ポイント:** kill が**タスクファイルに記録された `kill_ident` を使って**行われ、無関係なプロセスを巻き込んでいないこと（手順5 の前に `pgrep -f sleep` で他の sleep が無いことを確認しておくと差が読める。ADR-002 / ADR-015）。`kill_ident` はそのまま渡されるのではなく境界で `terminate::UnitTarget` に parse して組み直され、成否は終了コマンドの終了ステータスではなく実行単位の消滅の観測（`TERMINATION_GRACE` 2秒 / `TERMINATION_POLL` 50ms）で決まり、猶予のうちに消えなければ強い終了へ昇格する — ADR-015 が ADR-002 のこの3点を置き換えている。昇格の段は `terminate::ESCALATES` が宣言し、本確認を行う POSIX は真（`-TERM` → `-KILL` の2段。待ちの上限は 2秒 × 2 = 4秒）、昇格を持たないプラットフォームは偽で2段目を起動しない（待ちの上限は 2秒）。経過の起点が `starttime.wall` であること — tick 実行時刻や `recorded_at` を起点にすると手順3 の連続 tick で早期 kill が起きる。手順4 の tick が「kill → fail_run」の順で1ステップだけ進むこと。
 
 ### 11. exit 記録なしのプロセス死亡の検出と自動リトライ
 
@@ -714,7 +714,7 @@ EOF
 
 すべてのケースで、**tick 自体の exit code が 0 であること**（tick は1タスクの失敗で全体を落とさない。ロック機構の異常と走査の Io だけが非0）と、**該当タスク以外の状態が変わっていないこと**を共通の確認手段とする。
 
-タスク単位の報告は、結末別に「失敗を記録(<n>件):」「起動の結果が未確定(<n>件):」「スキップ(<n>件):」「後始末が残っている(<n>件):」の4見出しで表示される（`crates/pulsen/src/cli/render.rs`）。見出しはタスクファイルに何を残したかで分かれる — 最後の1つは残存プロセスの終了を確認できなかった報告（`RemnantsUnhandled`）だけが並ぶ場所で、タスクファイルには何も書かれていない。
+タスク単位の報告は、結末別に「失敗を記録(<n>件):」「起動の結果が未確定(<n>件):」「スキップ(<n>件):」「後始末が残っている(<n>件):」の4見出しで表示される（`crates/pulsen/src/cli/render.rs`）。見出しは**報告が何を残したか（運用者が次に取る行動）**で分かれる（ADR-017）— 最後の1つは残存プロセスの終了を確認できなかった報告（`RemnantsUnhandled`）だけが並ぶ場所で、タスクファイルには何も書かれておらず、OS 側に残った実行単位を終了させるのは人間になる。
 
 ### 1. スナップショットのみ破損した未通知 stopped への再通知
 
@@ -756,7 +756,7 @@ EOF
 ### 2. 判定コマンドの実体が見つからない
 
 - **対応する受け入れ基準:** AC-4（判定失敗の分類）
-- **対応する手順書:** `setup.md` TC-38 手順1〜2（手順3 の `abort` 片付けは #5 — 代わりに `judge-exit` を 0 に戻して completed で進めてから放置する）
+- **対応する手順書:** `setup.md` TC-38 手順1〜2（手順3 の `abort` 片付けは #5 — 代わりに放置する。判定コマンドの実体が `/no/such/judge.sh` で `judge-exit` を読まないため回復の手立ては無く、判定上限超過で凍結して止まる）
 - **前提:** フィクスチャB（`export PULSEN_HOME="$SETUP_HOME"`）。
 - **目的:** 判定コマンドが起動できない場合（`FailedToStart`）も、プロトコル外 exit と同じ判定失敗経路に落ちて `judge_attempt_count` が増えることを確認する。
 - **手順:**
@@ -888,7 +888,7 @@ EOF
 
 ## 既存機能への影響確認
 
-- **起動・spawn確認（Issue #2 の主経路）:** `Tick` にジェネリック引数 `C: CommandRunner` が増え、`cli::wire` がランナーを構築するようになる（steps.md ステップ8）。`.thread/2/testing.md` の確認項目2（worktree・ブランチ・launching 記録・runディレクトリ）と確認項目3（spawn確認と猶予内の冪等性）をスポットチェックとして再実行し、Issue #2 時点と同じ結果になることを確認する。特に `SystemCommandRunner` の構築が外部リソースの読み取りを伴わないこと（`cli::wire::command_runner` は `SystemCommandRunner::new() -> Self` を返すだけで失敗しない）と、`add` の経路がランナーを必要としないままであること（`grep -rn 'command_runner()' crates/pulsen/src/cli/` のヒットが `cli/tick.rs` の1件だけ）。
+- **起動・spawn確認（Issue #2 の主経路）:** `Tick` にジェネリック引数 `C: CommandRunner` が増え、`cli::wire` がランナーを構築するようになる（steps.md ステップ8）。`.thread/2/testing.md` の確認項目2（worktree・ブランチ・launching 記録・runディレクトリ）と確認項目3（spawn確認と猶予内の冪等性）をスポットチェックとして再実行し、Issue #2 時点と同じ結果になることを確認する。特に `SystemCommandRunner` の構築が外部リソースの読み取りを伴わないこと（`cli::wire::command_runner` は `SystemCommandRunner::new() -> Self` を返すだけで失敗しない）と、`add` の経路がランナーを必要としないままであること（`grep -rn 'command_runner()' crates/pulsen/src/cli/` のヒットが `cli/wire.rs` の定義1件と `cli/tick.rs` の呼び出し1件の計2件で、`cli/add.rs` に現れないこと）。
 
 - **サマリー表示の追随:** `cli::render::tick_summary` の項目行は「起動 / 起動確認 / 判定確定 / 遷移 / 実行待ちへ復帰 / 凍結 / 通知 / 終端処理 / gcで削除 / gcで削除できず」の順に並び、そのあとに報告の4見出し（「失敗を記録」「起動の結果が未確定」「スキップ」「後始末が残っている」）が続く（`crates/pulsen/src/cli/render.rs`）。本スライスで初めて値が入るのは**「判定確定」「遷移」「実行待ちへ復帰」「通知」の4つ**（「判定確定」は completed を確定したタスクだけが並ぶ。failed は「失敗を記録」、skipped は「実行待ちへ復帰」に出る）。値の無い項目が行ごと出ないこと、書き込みを行った tick が必ずサマリーに現れること（ADR-092）を、確認項目1（判定確定・遷移）・4（実行待ちへ復帰）・7〜9（通知）で併せて確認する。`archived` / `gc_deleted` / `gc_errors` は引き続き値の入る経路を持たない（#6）。
 

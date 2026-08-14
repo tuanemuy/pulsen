@@ -518,8 +518,9 @@ enum Persisted {
 /// この保存が凍結を意味するか。
 ///
 /// 凍結は遷移の結果であり、遷移を呼んだ側だけが知っている。保存後の状態が Stopped か
-/// どうかで導出すると、既に凍結しているタスクを別の理由で保存する経路(#3 の catch-up
-/// 通知は `mark_notified` した Stopped を保存する)が、過去の凍結を毎 tick 再計上する。
+/// どうかで導出すると、既に凍結しているタスクを別の理由で保存する経路 — `notify` は
+/// `mark_notified` した Stopped を `Freeze::NotFrozen` で保存する — が、過去の凍結を
+/// 毎 tick 再計上する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Freeze {
     /// この遷移が上限超過で凍結させた。

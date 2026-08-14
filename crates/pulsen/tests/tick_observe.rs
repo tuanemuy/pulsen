@@ -8,8 +8,8 @@ mod tick_fixture;
 
 use pulsen::application::tick::{RemnantsLeft, RunFailureCause, TickIssue, TickSummary};
 use pulsen_conformance::doubles::{
-    ProcessControllerCall, ScriptedCommandRunner, ScriptedProcessController, ScriptedRunStore,
-    ScriptedTaskRepository,
+    ProcessControllerCall, RecordSeq, ScriptedCommandRunner, ScriptedProcessController,
+    ScriptedRunStore, ScriptedTaskRepository,
 };
 use pulsen_domain::definition::{PlainCommand, StatusDefinition, TimeoutSpec, WorkflowDefinition};
 use pulsen_domain::execution::{
@@ -86,6 +86,59 @@ fn running_without_workspace(judge: StatusDefinition) -> TaskEntry {
     })
     .expect("不変条件1を満たす");
     TaskEntry::Record(TaskRecord::Intact(task))
+}
+
+/// 終了コードを残さず死亡した実行の後始末で観測できる出来事。
+#[derive(Debug, PartialEq, Eq)]
+enum DiedStep {
+    /// 残存の終了を試みた。
+    TriedKillRemnants,
+    /// 失敗の確定を保存した。
+    SavedFailed,
+    /// 失敗の確定以外を保存した。
+    SavedOther,
+}
+
+/// 残存の終了と保存を、起きた順に1本の列へ並べる。
+///
+/// 順序の契約(残存を終了させる → 失敗を確定して書く)は `ProcessController` と
+/// `TaskRepository` をまたぐため、ダブルごとの列を別々に見ても「どちらが先か」は主張
+/// できない。共有の採番で並べ直してはじめて、失敗を先に永続化する実装を落とせる。
+fn died_without_exit_steps(harness: &Harness) -> Vec<DiedStep> {
+    let remnants = harness
+        .processes
+        .calls_in_order()
+        .into_iter()
+        .filter_map(|(seq, call)| match call {
+            ProcessControllerCall::TryKillRemnants { .. } => {
+                Some((seq, DiedStep::TriedKillRemnants))
+            }
+            // 順序の契約を持たない呼び出しは採番されず、この列にも現れない。
+            ProcessControllerCall::SpawnWrapper { .. }
+            | ProcessControllerCall::OwnIdentity
+            | ProcessControllerCall::RunAgent { .. }
+            | ProcessControllerCall::StarttimeOf { .. }
+            | ProcessControllerCall::Kill { .. } => None,
+        });
+    let saves = harness
+        .tasks
+        .saved_in_order()
+        .into_iter()
+        .map(|(seq, task)| {
+            let step = match task.execution() {
+                ExecutionState::Failed => DiedStep::SavedFailed,
+                ExecutionState::Pending
+                | ExecutionState::Launching { .. }
+                | ExecutionState::Running
+                | ExecutionState::Completed
+                | ExecutionState::Stopped { .. } => DiedStep::SavedOther,
+            };
+            (seq, step)
+        });
+
+    let mut steps = remnants.chain(saves).collect::<Vec<(RecordSeq, _)>>();
+    steps.sort_by_key(|(seq, _)| *seq);
+    steps.into_iter().map(|(_, step)| step).collect()
 }
 
 #[test]
@@ -670,6 +723,11 @@ fn 終了コードを残さず死亡した実行は残存終了を試みてか�
                 ident: kill_ident()
             },
         ],
+        "消滅を観測してはじめて残存の終了へ進む"
+    );
+    assert_eq!(
+        died_without_exit_steps(&harness),
+        vec![DiedStep::TriedKillRemnants, DiedStep::SavedFailed],
         "残存終了は失敗の確定より先に試みる"
     );
     assert_eq!(harness.saved(TASK).execution(), &ExecutionState::Failed);

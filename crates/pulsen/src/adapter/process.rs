@@ -42,7 +42,8 @@ const NOT_FOUND: i32 = 127;
 /// 終了操作1段につき、実行単位の消滅を待つ上限。
 ///
 /// tick はこの待ちのあいだ排他ロックを保持するので、判定の timeout(既定60秒)に対して
-/// 十分小さく取る。終了操作は最大2段なので、1回の終了で待ちうる最大はこの2倍になる。
+/// 十分小さく取る。昇格を持つプラットフォーム([`terminate::ESCALATES`])では終了操作が
+/// 最大2段になるので、1回の終了で待ちうる最大はこの2倍になる。
 const TERMINATION_GRACE: Duration = Duration::from_secs(2);
 /// 消滅を確かめる間隔。
 const TERMINATION_POLL: Duration = Duration::from_millis(50);
@@ -52,6 +53,9 @@ const TERMINATION_POLL: Duration = Duration::from_millis(50);
 /// POSIX は捕捉できる終了から始め、消えなければ捕捉できない終了へ昇格する。契約が `kill` の
 /// `Ok` に求めるのは「実行単位に属する全プロセスが終了する」ことなので、終了を捕まえる
 /// エージェントを生かしたまま成功を返さない。
+///
+/// 捕捉できる終了を持たないプラットフォームでは両者が同じ操作に落ちる。そのことは
+/// [`terminate::ESCALATES`] が宣言する。
 #[derive(Debug, Clone, Copy)]
 enum Termination {
     /// 実行単位に後始末の余地を与える終了。
@@ -188,14 +192,29 @@ impl SystemProcessController {
         if self.gone_within_grace(target) {
             return Ok(());
         }
-        let forced = self.run_termination(Termination::Forced, target)?;
-        if self.gone_within_grace(target) {
+        // 昇格を持たないプラットフォームでは2段目が1段目と同じ操作の再実行になる。得るものが
+        // 無いまま猶予ぶん排他ロックを保持し、同定子が pid そのものなら pid 再利用による誤殺の
+        // 窓をもう一度開くので、起動せずに終了ステータスの評価へ進む。
+        let forced = if terminate::ESCALATES {
+            let forced = self.run_termination(Termination::Forced, target)?;
+            if self.gone_within_grace(target) {
+                return Ok(());
+            }
+            Some(forced)
+        } else {
+            None
+        };
+
+        if graceful.status.success()
+            || forced
+                .as_ref()
+                .is_some_and(|forced| forced.status.success())
+        {
             return Ok(());
         }
-        if forced.status.success() || graceful.status.success() {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&forced.stderr);
+        // 原因は最後に起動した段のものを読む。
+        let last = forced.unwrap_or(graceful);
+        let stderr = String::from_utf8_lossy(&last.stderr);
         let detail = stderr.trim();
         Err(KillError::Failed {
             message: format!(
@@ -204,7 +223,7 @@ impl SystemProcessController {
                 // 終了操作の実体は失敗しても何も書かないことがある。原因が空文字列になると
                 // 運用者が何も読めないので、そのときは終了ステータスを添える。
                 if detail.is_empty() {
-                    forced.status.to_string()
+                    last.status.to_string()
                 } else {
                     detail.to_owned()
                 }
@@ -564,6 +583,12 @@ mod terminate {
 
     use super::{Termination, TerminatorSource};
 
+    /// 段によって終了操作が変わるか。
+    ///
+    /// `-TERM` は捕捉できる終了で、無視する実行単位が残りうる。`-KILL` への昇格は別の操作で
+    /// あり、1段目で消えなかった対象に対して結果が変わる。
+    pub const ESCALATES: bool = true;
+
     /// 実行単位として受理する最小のプロセスグループID。
     ///
     /// POSIX の `kill` で `-1` は「シグナルを送れる全プロセス」、`-0` / `0` は「呼び出し側の
@@ -638,6 +663,12 @@ mod terminate {
 
     use super::{Termination, TerminatorSource};
 
+    /// 段によって終了操作が変わるか。
+    ///
+    /// [`command`] が `Graceful` と `Forced` のどちらにも同じ `taskkill /T /F` を返す
+    /// (捕捉できる終了が無い)ので、2段目は1段目の再実行にしかならない。
+    pub const ESCALATES: bool = false;
+
     /// 終了操作を向けられる実行単位。理由は POSIX 側と同じ。
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct UnitTarget(u32);
@@ -669,7 +700,7 @@ mod terminate {
 
     pub fn command(source: &TerminatorSource, step: Termination, target: &UnitTarget) -> Command {
         // 終了操作はプロセスツリーごとの強制終了1段しかない。捕捉できる終了が無いので、
-        // 昇格しても同じ操作になる。
+        // 昇格しても同じ操作になる(`ESCALATES` が偽である根拠)。
         let flags = match step {
             Termination::Graceful | Termination::Forced => ["/T", "/F"],
         };
