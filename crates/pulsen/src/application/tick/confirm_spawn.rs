@@ -6,7 +6,7 @@
 //! 並走しない。マーカーを書けなかったときに pending へ戻さないのも同じ理由による。
 
 use pulsen_domain::execution::{
-    ExclusiveLock, InconsistentRunFiles, Io, LaunchingClassifier, LaunchingDecision,
+    CommandRunner, ExclusiveLock, InconsistentRunFiles, Io, LaunchingClassifier, LaunchingDecision,
     LaunchingRecheck, PidFileContent, ProcessController, RunStore, WorktreeManager,
 };
 use pulsen_domain::task::{
@@ -21,7 +21,7 @@ struct RunFiles {
     starttime: Option<StartTimeRecord>,
 }
 
-impl<R, L, K, W, S, P> Tick<'_, R, L, K, W, S, P>
+impl<R, L, K, W, S, P, C> Tick<'_, R, L, K, W, S, P, C>
 where
     R: TaskRepository,
     L: ExclusiveLock,
@@ -29,6 +29,7 @@ where
     W: WorktreeManager,
     S: RunStore,
     P: ProcessController,
+    C: CommandRunner,
 {
     /// run ファイルを観測し、起動確認か spawn 失敗かを確定させる。
     pub(super) fn confirm_spawn(

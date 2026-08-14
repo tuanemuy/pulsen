@@ -59,6 +59,7 @@ pub fn tick_summary(summary: &TickSummary) -> String {
     let mut out = String::from("tick を実行しました。\n");
     push_ids(&mut out, "起動", &summary.launched);
     push_ids(&mut out, "起動確認", &summary.confirmed_running);
+    push_ids(&mut out, "判定確定", &summary.judged);
     push_ids(&mut out, "遷移", &summary.transitioned);
     push_ids(&mut out, "実行待ちへ復帰", &summary.skipped_back);
     push_ids(&mut out, "凍結", &summary.frozen);
@@ -101,17 +102,26 @@ fn issue_outcome(issue: &TickIssue) -> IssueOutcome {
     match issue {
         TickIssue::WorktreeCreateFailed { .. }
         | TickIssue::CommandExpansionFailed { .. }
-        | TickIssue::SpawnNotObserved { .. } => IssueOutcome::Recorded,
+        | TickIssue::SpawnNotObserved { .. }
+        | TickIssue::JudgeFailed { .. }
+        | TickIssue::RunFailed { .. }
+        // 残存終了の報告は、同じ tick で記録した実行の失敗に添える文脈として並べる
+        // (保存できたときにだけ積まれる)。
+        | TickIssue::RemnantsUnhandled { .. } => IssueOutcome::Recorded,
         TickIssue::PrepareAttemptFailed { .. } | TickIssue::SpawnFailed { .. } => {
             IssueOutcome::LaunchUnsettled
         }
         TickIssue::CorruptTaskFile { .. }
         | TickIssue::SnapshotUnreadable { .. }
         | TickIssue::MissingCurrentAttempt { .. }
+        | TickIssue::MissingProcessIdent { .. }
         | TickIssue::Transition { .. }
         | TickIssue::RunFileUnreadable { .. }
         | TickIssue::InconsistentRunFiles { .. }
         | TickIssue::MarkerWriteFailed { .. }
+        | TickIssue::ObservationFailed { .. }
+        | TickIssue::KillFailed { .. }
+        | TickIssue::NotifyFailed { .. }
         | TickIssue::SaveFailed { .. } => IssueOutcome::Skipped,
     }
 }
@@ -195,6 +205,32 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: 起動を確認できず spawn 失敗として記録しました({message})",
             task_id.as_str()
         ),
+        TickIssue::MissingProcessIdent { task_id } => format!(
+            "{}: 起動確認済みですが同定情報がありません(pid ファイルからの修復が必要です)",
+            task_id.as_str()
+        ),
+        TickIssue::ObservationFailed { task_id, message } => format!(
+            "{}: プロセスの生存を観測できません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::KillFailed { task_id, message } => format!(
+            "{}: timeout を超えた実行を終了させられません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::RemnantsUnhandled { task_id, message } => {
+            format!("{}: {message}", task_id.as_str())
+        }
+        TickIssue::JudgeFailed { task_id, detail } => format!(
+            "{}: 判定できず判定失敗として記録しました({detail})",
+            task_id.as_str()
+        ),
+        TickIssue::RunFailed { task_id, message } => {
+            format!("{}: 実行の失敗を記録しました({message})", task_id.as_str())
+        }
+        TickIssue::NotifyFailed { task_id, message } => format!(
+            "{}: 凍結を通知できません({message})。次の tick が再通知します",
+            task_id.as_str()
+        ),
         TickIssue::SaveFailed { task_id, error } => format!(
             "{}: タスクファイルを保存できません({})",
             task_id.as_str(),
@@ -224,6 +260,7 @@ fn transition_error(error: &TransitionError) -> String {
         TransitionError::MissingCurrentAttempt => {
             "起動記録済みなのに現在 attempt が無い".to_owned()
         }
+        TransitionError::AlreadyNotified => "凍結の通知が記録済み".to_owned(),
     }
 }
 
@@ -931,6 +968,7 @@ mod tests {
         let summary = TickSummary {
             launched: vec![task("20260812t101112-aaaa0001")],
             confirmed_running: vec![task("20260812t101112-aaaa0002")],
+            judged: vec![task("20260812t101112-aaaa0011")],
             transitioned: vec![task("20260812t101112-aaaa0003")],
             skipped_back: vec![task("20260812t101112-aaaa0004")],
             frozen: vec![task("20260812t101112-aaaa0005")],
@@ -954,6 +992,7 @@ mod tests {
             "tick を実行しました。\n  \
              起動: 20260812t101112-aaaa0001\n  \
              起動確認: 20260812t101112-aaaa0002\n  \
+             判定確定: 20260812t101112-aaaa0011\n  \
              遷移: 20260812t101112-aaaa0003\n  \
              実行待ちへ復帰: 20260812t101112-aaaa0004\n  \
              凍結: 20260812t101112-aaaa0005\n  \
