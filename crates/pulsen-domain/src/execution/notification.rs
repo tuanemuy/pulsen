@@ -30,8 +30,6 @@ impl NotificationService {
     /// notify_cmd に必ず適用する timeout(組み込み。ADR-018)。
     ///
     /// ハングした通知コマンドが排他ロックを保持したまま tick / CLI を塞ぐことを防ぐ。
-    /// 超過・起動不能・非 0 終了はいずれも通知失敗であり、`notified_at` を書かずに
-    /// 終える(次の tick が再通知する。at-least-once)。
     pub const NOTIFY_TIMEOUT: DurationSpec = DurationSpec::from_secs_unchecked(60);
 
     /// 通知コマンドの結末を成否として解釈する。

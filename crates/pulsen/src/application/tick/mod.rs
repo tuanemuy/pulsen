@@ -1,8 +1,7 @@
 //! 1回の tick パスのユースケース(UC-execution-002)。
 //!
 //! 全タスクを走査し、実行状態(と、起動待ち・失敗確定では現ステータスの動作種別)ごとの
-//! 手続きへ分岐する。判断はドメイン(`Task` の遷移関数・`LaunchingClassifier`)が行い、
-//! ここは「ポートで観測 → ドメインで判断 → ポートで実行」の配線に徹する。
+//! 手続きへ分岐する。
 //!
 //! 1タスクの処理失敗は `errors` に記録して残りを続行する。tick 全体を
 //! 失敗させるのは、走査そのものができない場合とロック機構の異常だけ。
@@ -270,8 +269,7 @@ impl RemnantsLeft {
 /// tick パスの結果。
 ///
 /// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` と `judged` を
-/// 足した形(ADR-094)。`archived` / `gc_deleted` / `gc_errors` は終端処理と gc を入れる
-/// スライスまで値の入る経路を持たない。
+/// 足した形(ADR-094)。`archived` / `gc_deleted` / `gc_errors` はまだ値の入る経路を持たない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。
@@ -439,7 +437,7 @@ where
             Branch::ConfirmSpawn { recorded_at } => self.confirm_spawn(task, recorded_at, summary),
             // 待機ステータスは tick が進めるものを持たない。
             Branch::Wait => {}
-            // 終端処理(手続きB)は Issue #6 が入れる。
+            // 手続きB(終端処理)は未実装。
             Branch::Cleanup => {}
             Branch::Observe => self.observe(task, summary),
             Branch::Advance => self.advance(task, summary),
@@ -467,8 +465,8 @@ where
     /// 遷移の結果を永続化し、凍結ならサマリーに記録して同じ tick で通知する。
     ///
     /// stopped を書いたすべての経路がここを通るため、通知の共通手続きはこの1箇所から
-    /// 呼べる(ADR-074)。順序は「stopped を書く → 通知を実行する → `notified_at` を追記
-    /// する」で固定する — 逆にすると、失敗した通知が永久に再送されない。
+    /// 呼べる。順序は「stopped を書く → 通知を実行する → `notified_at` を追記する」で
+    /// 固定する — 逆にすると、失敗した通知が永久に再送されない。
     fn commit(&self, task: &Task, freeze: Freeze, summary: &mut TickSummary) -> Persisted {
         match self.tasks.save(task) {
             Ok(()) => {

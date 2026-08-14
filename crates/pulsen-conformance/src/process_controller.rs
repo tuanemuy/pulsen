@@ -526,7 +526,6 @@ pub mod observation {
         CaseOutcome::Ran
     }
 
-    /// 自プロセスのPID。
     fn own_pid() -> Pid {
         Pid::new(std::process::id())
     }
@@ -603,7 +602,7 @@ macro_rules! process_controller_identity_conformance {
 /// `spawn_wrapper` の適合スイートをアダプターに適用する。
 ///
 /// ラッパーモード(実バイナリ)の実装を前提にするため、`identity` のスイートとは別に
-/// 適用する(ADR-083)。1つのテストファイルに両方を適用できる。
+/// 適用する(ADR-083)。1つのテストファイルに3つとも適用できる。
 #[macro_export]
 macro_rules! process_controller_spawn_conformance {
     ($setup:expr, $allowed_skips:expr) => {

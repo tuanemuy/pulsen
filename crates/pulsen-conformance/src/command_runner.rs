@@ -273,7 +273,7 @@ const OVERRIDE_SUFFIX: &str = "-overridden";
 /// timeout を確実に超えるコマンドの実行時間。
 const BEYOND_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 超過を作るための短い timeout。ポーリング間隔より十分大きく取る(adr ADR-001)。
+/// 超過を作るための短い timeout。アダプターが超過を確かめるポーリング間隔より十分大きく取る。
 const SHORT_TIMEOUT_SECS: u64 = 1;
 
 /// 超過しないことが確かな timeout。
@@ -282,7 +282,6 @@ const GENEROUS_TIMEOUT_SECS: u64 = 60;
 /// コマンドを実行し続けさせる時間。
 const COMMAND_RUNTIME: Duration = Duration::from_millis(300);
 
-/// 秒数から期間を作る。
 fn seconds(value: u64) -> DurationSpec {
     DurationSpec::parse(&format!("{value}s")).expect("正の秒数は受理される")
 }

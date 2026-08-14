@@ -180,12 +180,10 @@ pub fn agent_run(spec: AgentRunSpec) -> StatusDefinition {
     }
 }
 
-/// トークン列からコマンドを組む。
 pub fn command(text: &str) -> PlainCommand {
     PlainCommand::parse_text(text).expect("受理される")
 }
 
-/// 秒数から timeout を組む。
 pub fn timeout_secs(seconds: u64) -> TimeoutSpec {
     TimeoutSpec::Limited(DurationSpec::parse(&format!("{seconds}s")).expect("受理される"))
 }

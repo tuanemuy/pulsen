@@ -212,7 +212,6 @@ impl SystemProcessController {
         {
             return Ok(());
         }
-        // 原因は最後に起動した段のものを読む。
         let last = forced.unwrap_or(graceful);
         let stderr = String::from_utf8_lossy(&last.stderr);
         let detail = stderr.trim();
@@ -1367,7 +1366,7 @@ mod identity {
         if trimmed.is_empty() {
             // 機構の失敗は終了コードで判定済みなので、完走した空出力は対象の不在だけを表す。
             // stderr の非空を機構の失敗に足すと、警告・情報ストリームを stderr に流した完走が
-            // 死亡したプロセスを `Err(Io)` に畳み、#3 で running のまま永久滞留する。
+            // 死亡したプロセスを `Err(Io)` に畳み、running のまま永久滞留する。
             return Ok(None);
         }
         let starttime = ProcessStartTime::parse(trimmed.to_owned()).map_err(|_| Io::Failed {

@@ -12,7 +12,7 @@ use pulsen_domain::execution::{CommandCompletion, CommandRunner, ExitCode};
 
 use super::process::encode;
 
-/// 期限つきの待機で `try_wait` を確かめる間隔(adr ADR-001)。
+/// 期限つきの待機で `try_wait` を確かめる間隔。
 ///
 /// 短くしすぎると、排他ロックを保持したまま待つ tick が cron 実行のたびに無駄に起きる。
 /// 長くしすぎると判定・通知の完了検出が体感の遅延になる。timeout の判定にも同じ粒度の

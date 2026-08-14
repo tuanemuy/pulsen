@@ -849,7 +849,6 @@ fn 見送りで起動待ちへ戻ったタスクは次のtickで新しいattempt
     );
 }
 
-/// 実行の失敗が報告されたか。
 fn reported_run_failure(summary: &TickSummary) -> bool {
     summary
         .errors
