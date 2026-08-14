@@ -174,8 +174,10 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: 埋め込まれたワークフロー定義を読めません({message})",
             task_id.as_str()
         ),
+        // 実行状態を名指ししない — この破れは起動記録済み・起動確認済みのどちらの手続きでも
+        // 積まれ、片方を名乗ると帳簿の実行状態と食い違う。
         TickIssue::MissingCurrentAttempt { task_id } => format!(
-            "{}: 起動記録済みですが現在 attempt がありません(タスクファイルの修復が必要です)",
+            "{}: 観測の前提となる現在 attempt がありません(タスクファイルの修復が必要です)",
             task_id.as_str()
         ),
         TickIssue::Transition { task_id, error } => format!(
@@ -1054,7 +1056,7 @@ mod tests {
              gcで削除: 20260812t101112-aaaa0009/attempt-1\n  \
              gcで削除できず: 20260812t101112-aaaa0010/attempt-2\n  \
              スキップ(1件):\n    \
-             - 20260812t101112-aaaa0008: 起動記録済みですが現在 attempt がありません\
+             - 20260812t101112-aaaa0008: 観測の前提となる現在 attempt がありません\
              (タスクファイルの修復が必要です)"
         );
     }
@@ -1220,6 +1222,25 @@ mod tests {
                 "判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)"
             ),
         );
+    }
+
+    #[test]
+    fn 現在attemptの欠落は実行状態を名指ししない() {
+        let report = tick_summary(&TickSummary {
+            errors: vec![TickIssue::MissingCurrentAttempt {
+                task_id: task("20260812t101112-abcd1234"),
+            }],
+            ..TickSummary::default()
+        });
+
+        assert!(
+            report.ends_with(
+                "観測の前提となる現在 attempt がありません(タスクファイルの修復が必要です)"
+            ),
+            "{report}"
+        );
+        assert!(!report.contains("起動記録"), "{report}");
+        assert!(!report.contains("起動確認"), "{report}");
     }
 
     #[test]

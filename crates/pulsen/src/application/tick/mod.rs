@@ -76,7 +76,7 @@ pub enum TickIssue {
         /// 読めない理由。
         message: String,
     },
-    /// 起動記録済みなのに現在 attempt がない(不変条件2の破れ)。
+    /// 現在 attempt がない(不変条件2の破れ)。手続きC・D のどちらの冒頭検査からも積まれる。
     MissingCurrentAttempt {
         /// 対象のタスク。
         task_id: TaskId,

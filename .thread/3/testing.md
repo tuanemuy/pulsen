@@ -898,7 +898,7 @@ EOF
 
 - **ラッパー（`pulsen wrapper`）:** 本スライスはラッパーを変更しない。確認項目1・10・11 で `exit` / `pid` / `starttime` が Issue #2 と同じキー構成（`exit` は `code`、`pid` は `pid` / `kill_ident`、`starttime` は `ident` / `wall`）の整形 JSON として書かれることをもって影響なしとする。
 
-- **実運用ホームの非汚染:** 全項目の実行後に `ls -a "$HOME/.pulsen" 2>/dev/null` が実行前と変わらないこと。フィクスチャA は `/tmp/pulsen-test/`、B は `$HOME/pulsen-manual-test`、C は `$HOME/pulsen-intervention-test` に閉じている。
+- **実運用ホームの非汚染:** 全項目の実行後に `ls -a "$HOME/.pulsen" 2>/dev/null` が実行前と変わらないこと。フィクスチャA は `/tmp/pulsen-test/`、B は `$HOME/pulsen-manual-test` / `$HOME/pulsen-test-repo` / `$HOME/pulsen-manual-work` の3つ（手順書の `PULSEN_HOME` / `REPO` / `WORK` と同じパス。B は冒頭でこの3つを `rm -rf` する）、C は `$HOME/pulsen-intervention-test` に閉じている。
 
 - **後片付け:**
 

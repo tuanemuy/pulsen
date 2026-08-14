@@ -46,6 +46,18 @@ fn register(home: &Home, repo: &Repo) -> String {
     home.only_task_id()
 }
 
+/// 既知のID以外にちょうど1件だけ登録されているタスクのID。
+fn other_task_id(home: &Home, known: &str) -> String {
+    let mut ids: Vec<String> = home
+        .tasks()
+        .iter()
+        .map(|task| task["task_id"].as_str().expect("文字列").to_owned())
+        .filter(|id| id != known)
+        .collect();
+    assert_eq!(ids.len(), 1, "既知のタスク以外はちょうど1件");
+    ids.remove(0)
+}
+
 fn run_tick(home: &Home) -> Run {
     tick().home(home.path()).run()
 }
@@ -944,29 +956,53 @@ fn 判定と遷移と凍結と通知はサマリーに現れる() {
         ),
     );
     let home = controlled_home(&control, &workflow_with(""), &notify);
+    // 凍結までを1周で見るための別ワークフロー。最初の失敗が上限を超える。
+    home.write_workflow("once", &workflow_with("    retries: 0\n"));
     let repo = Repo::with_commit();
-    let id = register(&home, &repo);
+    let advancing = register(&home, &repo);
     set_control(&control, 0);
 
-    launch_and_confirm(&home, &id, 1);
+    launch_and_confirm(&home, &advancing, 1);
     let judged = run_tick(&home);
     judged.assert_succeeded();
-    assert!(judged.stdout.contains("判定確定"), "{}", judged.stdout);
-    assert!(judged.stdout.contains(&id), "{}", judged.stdout);
+    assert!(
+        judged.stdout.contains(&format!("判定確定: {advancing}")),
+        "{}",
+        judged.stdout
+    );
+
+    set_control(&control, 1);
+    add("once", repo.path())
+        .home(home.path())
+        .run()
+        .assert_succeeded();
+    let freezing = other_task_id(&home, &advancing);
 
     let advanced = run_tick(&home);
     advanced.assert_succeeded();
-    assert!(advanced.stdout.contains("遷移"), "{}", advanced.stdout);
+    assert!(
+        advanced.stdout.contains(&format!("遷移: {advancing}")),
+        "{}",
+        advanced.stdout
+    );
 
-    // 凍結と通知は帳簿を直に置いて確かめる。同じ tick の凍結からの通知は別のケースが見る。
-    home.patch_task(&id, |task| {
-        task["execution"] = json!({"state": "stopped", "reason": "retry_limit_exceeded"});
-    });
-    let notified = run_tick(&home);
+    wait_for_exit(&home, &freezing, 1);
+    run_tick(&home).assert_succeeded();
+    assert_eq!(home.task(&freezing)["execution"]["state"], json!("running"));
 
-    notified.assert_succeeded();
-    assert!(notified.stdout.contains("通知"), "{}", notified.stdout);
-    assert!(notified.stdout.contains(&id), "{}", notified.stdout);
+    let frozen = run_tick(&home);
+
+    frozen.assert_succeeded();
+    assert!(
+        frozen.stdout.contains(&format!("凍結: {freezing}")),
+        "{}",
+        frozen.stdout
+    );
+    assert!(
+        frozen.stdout.contains(&format!("通知: {freezing}")),
+        "{}",
+        frozen.stdout
+    );
 }
 
 #[test]
