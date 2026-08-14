@@ -46,6 +46,8 @@ Proposed
 
 Proposed
 
+→ ADR-015 と統合して `.adr/3-unit-termination-by-observed-disappearance.md` に昇格
+
 ### Context
 
 `ProcessController::kill(ident: &KillIdent)` と `try_kill_remnants(ident)` は、プロセスグループ相当の実行単位を一括終了する。ADR-075 が決めたのはデタッチ起動・kill 同定子の**記録**・起動時刻の観測までで、終了操作そのものは未決だった。
@@ -82,6 +84,8 @@ Proposed
 
 Proposed
 
+→ ADR-011 と統合して `.adr/3-notification-procedure-layering.md` に昇格
+
 ### Context
 
 共通手続き notify は `TASK_ID` / `WORKFLOW` / `TASK_STATUS` を env に組み、`Exited(0)` のときだけ `mark_notified(now)` → `save` する。呼び出し元は5つある — 上限超過3経路(`Tick::commit` の `Freeze::Frozen` の枝に集約済み)、`Branch::Notify` アーム、`TaskRecord::SnapshotUnreadable` かつ未通知 stopped の再通知。
@@ -110,6 +114,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ ADR-008 と統合して `.adr/3-tick-issue-classification-by-repair-hint.md` に昇格
 
 ### Context
 
@@ -224,6 +230,8 @@ plan.md は TC-port-process-controller-010 / 013 / 015 / 016 を「実行環境�
 
 Proposed
 
+→ ADR-004 と統合して `.adr/3-tick-issue-classification-by-repair-hint.md` に昇格
+
 ### Context
 
 手続きDの判定アームは、判定コマンドを持つステータスで `task.workspace()` が None のとき、判定コマンドの起動も書き込みも行わずに報告する。実装はこのとき `TransitionError::WorkspaceNotSet` を組み立てて `report_transition` に渡していた。
@@ -249,6 +257,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ ADR-016 と統合して `.adr/3-narrow-decision-types-embedded-in-ledger-types.md` に昇格
 
 ### Context
 
@@ -277,6 +287,8 @@ running の分類は2段で行う。1段目(exit の有無)は観測を行うユ
 ### Status
 
 Proposed
+
+→ `.adr/3-run-failure-cause-and-remnants-as-classifications.md` に昇格
 
 ### Context
 
@@ -311,6 +323,8 @@ ADR-081 は tick の `errors` を分類として持ち、文言は `cli::render`
 ### Status
 
 Proposed
+
+→ ADR-003 と統合して `.adr/3-notification-procedure-layering.md` に昇格
 
 ### Context
 
@@ -400,6 +414,8 @@ ProcessController 観測スイート(TC-011〜016)の許容集合は `cfg!(unix)
 
 Proposed
 
+→ `.adr/3-cross-port-ordering-by-shared-sequence.md` に昇格
+
 ### Context
 
 通知の共通手続きの順序(凍結を書く → notify_cmd を実行する → `notified_at` を追記する)は、逆にすると失敗した通知が永久に再送されない — at-least-once を支える契約そのものである。
@@ -436,6 +452,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ ADR-002 と統合して `.adr/3-unit-termination-by-observed-disappearance.md` に昇格
 
 ### Context
 
@@ -485,6 +503,8 @@ ADR-002 は「`KillIdent` の文字列をそのまま終了コマンドへ渡し
 
 Proposed
 
+→ ADR-009 と統合して `.adr/3-narrow-decision-types-embedded-in-ledger-types.md` に昇格
+
 ### Context
 
 見送り(`Skipped`)は判定コマンドの exit 20 だけが生む(`.adr/008-skipped-judgement-outcome.md`)。`JudgementService::default_judgement` はこの規則により2値しか返さないが、返り値は3値の `JudgeOutcome` のままで、規則の担保が doc コメントにしか無かった。結果、ユースケース側の `Settled::by_default` に到達不能な `JudgeOutcome::Skipped` アームが生きていた。
@@ -510,6 +530,8 @@ ADR-009 が `classify_alive` に当てた手当ての、判定側の残りであ
 ### Status
 
 Proposed
+
+→ `.adr/3-cleanup-left-as-fourth-error-heading.md` に昇格
 
 ### Context
 
