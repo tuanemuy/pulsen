@@ -27,7 +27,7 @@ spec/testcases/ports/*.md は「すべてのアダプター実装が共通で通
   | Clock | `observe_wall_clock` / `advance` / `rewind` |
   | TaskIdGenerator | `another_generator` |
 
-  対応表の正本は `crates/pulsen-conformance/HOOKS.md`(125行 × フック)であり、フックを足すときは両方を更新する。
+  対応表の正本は `crates/pulsen-conformance/HOOKS.md` 一本とする。上の表は決定時点のポートとフックの記録であり、後続スライスでポートやフックが増えても更新しない。正本を2つ置くと、ポートが増えるたびに恒久の決定記録を書き換え続けることになり、食い違ったときにどちらが正しいかを決める根拠も無くなる。
 
 - すべてのフックは既定実装が `None` を返し、スイートはスキップして理由を出力する
 - **権限操作系のフック(`make_unreadable` / `make_unwritable`)は、制限が実際に効いたことを確認してから `Some` を返す**。`chmod 000` は root では効かないため、確認せずに `Some` を返すと `Err(Io)` を期待するケースがスキップに落ちずに FAIL する。実装規則は「制限を掛ける → 実際に読み(書き)を試す → 通ってしまったら復元して `None` を返す」。root 実行・Windows・特殊なファイルシステムのすべてをこの1つの規則で吸収する

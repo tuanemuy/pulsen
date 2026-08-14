@@ -22,6 +22,15 @@ pub struct Cli {
 pub enum Command {
     /// タスクを登録する(実行はしない)
     Add(AddArgs),
+
+    /// 1回のtickパスを実行する
+    Tick,
+
+    /// デタッチ起動されるラッパーモード(内部用)
+    // 利用者向けのインターフェースではないため、ヘルプの一覧には出さない(ADR-077)。
+    // 隠すだけで到達はできる — spec が求めるのは「一覧に表示しない」こと。
+    #[command(hide = true)]
+    Wrapper(WrapperArgs),
 }
 
 /// `add` の引数。
@@ -41,4 +50,27 @@ pub struct AddArgs {
     // 拒否する対象であり、引数の使い方の誤りではない(spec 境界値)。
     #[arg(long, value_name = "BRANCH", allow_hyphen_values = true)]
     pub base: Option<String>,
+}
+
+/// `wrapper` の引数(`WrapperLaunchSpec` の直列化)。
+#[derive(Debug, Args)]
+pub struct WrapperArgs {
+    /// attempt の run ディレクトリ
+    #[arg(long, value_name = "DIR")]
+    pub run_dir: PathBuf,
+
+    /// エージェントの作業ディレクトリになる worktree
+    #[arg(long, value_name = "DIR")]
+    pub workspace: PathBuf,
+
+    /// 起動するエージェントのコマンド
+    // エージェントのコマンドは `--model` のような `-` 始まりのトークンや、config の配列
+    // 形式が許す空文字列トークンを含みうる。明示しないと `spawn_wrapper` が組んだ argv を
+    // 受理できず、起動経路だけが壊れて run ディレクトリに何も残らない。
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "COMMAND"
+    )]
+    pub agent_cmd: Vec<String>,
 }

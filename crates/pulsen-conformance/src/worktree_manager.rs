@@ -1,9 +1,10 @@
 //! WorktreeManager の適合ケース(`spec/testcases/ports/worktree-manager.md` のうち、
-//! 対象の検証を行う3メソッド分の9行)。
+//! 対象の検証を行う3メソッドと `create` の16行)と、ADR-085 由来の追加1件。
 //!
-//! `create` / `remove` の12行は、それらをポートに足すスライスで扱う。
+//! `remove` の5行は、それをポートに足すスライスで扱う。
 
-use pulsen_domain::execution::{TargetError, WorktreeManager};
+use pulsen_domain::execution::{TargetError, WorktreeError, WorktreeManager};
+use pulsen_domain::task::Workspace;
 
 use crate::{CaseOutcome, WorktreeManagerHarness, require};
 
@@ -107,6 +108,221 @@ pub fn tc_port_worktree_manager_009_操作自体の失敗は分類と区別し�
     CaseOutcome::Ran
 }
 
+pub fn tc_port_worktree_manager_010_未使用のパスとブランチにはbaseから新しいworktreeが作られる(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let workspace = require!(harness.unused_workspace());
+    let base_tip = require!(harness.branch_tip(&base));
+
+    assert_eq!(harness.manager().create(&repo, &base, &workspace), Ok(()));
+
+    assert!(require!(harness.worktree_present(&workspace)));
+    assert_eq!(
+        harness.manager().branch_exists(&repo, workspace.branch()),
+        Ok(true)
+    );
+    assert_eq!(
+        require!(harness.branch_tip(workspace.branch())),
+        base_tip,
+        "新しいブランチは base の先端から作られる"
+    );
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_worktree_manager_011_worktreeの置き場が未作成でも用意される(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let workspace = require!(harness.workspace_under_missing_root());
+
+    assert_eq!(harness.manager().create(&repo, &base, &workspace), Ok(()));
+
+    assert!(require!(harness.worktree_present(&workspace)));
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_worktree_manager_012_自タスクの残骸への再作成は内容に触れず成功する(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let workspace = require!(harness.unused_workspace());
+    assert_eq!(harness.manager().create(&repo, &base, &workspace), Ok(()));
+    require!(harness.put_worktree_marker(&workspace, "作業中の変更"));
+
+    assert_eq!(harness.manager().create(&repo, &base, &workspace), Ok(()));
+
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        "作業中の変更",
+        "既存の変更に触れない"
+    );
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_worktree_manager_013_ブランチのみ残存していれば先端を変えずに張り直される(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let (workspace, committed) = require!(harness.workspace_with_orphan_branch());
+    let tip = require!(harness.branch_tip(workspace.branch()));
+
+    assert_eq!(harness.manager().create(&repo, &base, &workspace), Ok(()));
+
+    assert_eq!(
+        require!(harness.branch_tip(workspace.branch())),
+        tip,
+        "ブランチの先端は変わらない"
+    );
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        committed,
+        "積まれたコミットの成果物が worktree に現れる"
+    );
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_worktree_manager_014_worktreeでない通常のディレクトリは失敗し内容に触れない(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let (workspace, existing) = require!(harness.workspace_over_plain_dir());
+
+    assert_create_failed(harness.manager().create(&repo, &base, &workspace), || {
+        occupancy_report(harness, &workspace, &existing)
+    });
+
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        existing,
+        "既存ディレクトリの内容に触れない"
+    );
+    assert_eq!(
+        harness.manager().branch_exists(&repo, workspace.branch()),
+        Ok(false),
+        "自動修復しない"
+    );
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_worktree_manager_015_別ブランチのworktreeがあれば失敗し既存に触れない(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let (workspace, existing) = require!(harness.workspace_over_other_branch());
+    // 占有 worktree が `create` を呼ぶ時点で在ることを主張してから進む。前提が破れたまま
+    // 進むと、以降の失敗が「前提が消えた」のか「同定が外れた」のかを名指しできない。
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        existing,
+        "占有 worktree の実体が ws.path にある"
+    );
+    assert_eq!(
+        harness.manager().branch_exists(&repo, workspace.branch()),
+        Ok(false),
+        "占有 worktree は ws.branch 以外のブランチを指す"
+    );
+
+    assert_create_failed(harness.manager().create(&repo, &base, &workspace), || {
+        occupancy_report(harness, &workspace, &existing)
+    });
+
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        existing,
+        "既存 worktree の内容に触れない"
+    );
+    assert_eq!(
+        harness.manager().branch_exists(&repo, workspace.branch()),
+        Ok(false),
+        "パスの存在だけでは達成済みとみなさず、ブランチも作らない"
+    );
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_worktree_manager_016_baseが存在しなければブランチもworktreeも作られない(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.absent_branch_name());
+    let workspace = require!(harness.unused_workspace());
+
+    assert_create_failed(harness.manager().create(&repo, &base, &workspace), || {
+        occupancy_report(harness, &workspace, "")
+    });
+
+    assert!(!require!(harness.worktree_present(&workspace)));
+    assert_eq!(
+        harness.manager().branch_exists(&repo, workspace.branch()),
+        Ok(false)
+    );
+    CaseOutcome::Ran
+}
+
+/// 台帳行に対応しない追加ケース(ADR-085)。
+///
+/// 実体の消えた登録からの復旧は、登録ごと消えてブランチだけが残った状態
+/// (TC-013)とは別の分岐で処理される。両方を実行するケースが無いと、片方の分岐が
+/// 落ちても適合スイートが緑のままになる。
+pub fn create_prunable_実体の消えた登録は先端を変えずに張り直される(
+    harness: &impl WorktreeManagerHarness,
+) -> CaseOutcome {
+    let repo = require!(harness.repo_with_commit());
+    let base = require!(harness.head_branch_name());
+    let (workspace, committed) = require!(harness.workspace_with_prunable_registration());
+    let tip = require!(harness.branch_tip(workspace.branch()));
+
+    assert_eq!(harness.manager().create(&repo, &base, &workspace), Ok(()));
+
+    assert_eq!(
+        require!(harness.branch_tip(workspace.branch())),
+        tip,
+        "ブランチの先端は変わらない"
+    );
+    assert_eq!(
+        require!(harness.worktree_marker(&workspace)),
+        committed,
+        "積まれたコミットの成果物が worktree に戻る"
+    );
+    CaseOutcome::Ran
+}
+
+/// 自動修復せず、原因の説明を伴って失敗することを確かめる。
+///
+/// `report` は成功してしまったときにだけ評価される観測で、`ws.path` の状態を失敗の場に
+/// 残す。成功は「同定が外れて別の実体を掴んだ」ことを意味するため、掴んだ先が何だったかが
+/// 分からないと次の一手が決まらない。
+fn assert_create_failed(result: Result<(), WorktreeError>, report: impl FnOnce() -> String) {
+    match result {
+        Err(WorktreeError::Failed { message }) => {
+            assert!(!message.is_empty(), "原因が説明される");
+        }
+        Ok(()) => panic!("既存の実体には触れず失敗する: {}", report()),
+    }
+}
+
+/// `create` が失敗すべき状況で成功したときに残す、`ws.path` の観測。
+fn occupancy_report(
+    harness: &impl WorktreeManagerHarness,
+    workspace: &Workspace,
+    expected_marker: &str,
+) -> String {
+    format!(
+        "path={} branch={} 期待した内容={expected_marker:?} 観測した内容={:?} \
+         ws.branch の worktree として登録されているか={:?}",
+        workspace.path().as_path().display(),
+        workspace.branch().as_str(),
+        harness.worktree_marker(workspace),
+        harness.worktree_present(workspace),
+    )
+}
+
 /// 実行環境のエラーであり、対象の分類のいずれでもないことを確かめる。
 fn assert_failed(error: Option<TargetError>, method: &str) {
     let Some(error) = error else {
@@ -149,6 +365,14 @@ macro_rules! worktree_manager_conformance {
                 tc_port_worktree_manager_007_存在するブランチは真になる,
                 tc_port_worktree_manager_008_存在しないブランチは偽になる,
                 tc_port_worktree_manager_009_操作自体の失敗は分類と区別して返る,
+                tc_port_worktree_manager_010_未使用のパスとブランチにはbaseから新しいworktreeが作られる,
+                tc_port_worktree_manager_011_worktreeの置き場が未作成でも用意される,
+                tc_port_worktree_manager_012_自タスクの残骸への再作成は内容に触れず成功する,
+                tc_port_worktree_manager_013_ブランチのみ残存していれば先端を変えずに張り直される,
+                tc_port_worktree_manager_014_worktreeでない通常のディレクトリは失敗し内容に触れない,
+                tc_port_worktree_manager_015_別ブランチのworktreeがあれば失敗し既存に触れない,
+                tc_port_worktree_manager_016_baseが存在しなければブランチもworktreeも作られない,
+                create_prunable_実体の消えた登録は先端を変えずに張り直される,
             ]
         );
     };

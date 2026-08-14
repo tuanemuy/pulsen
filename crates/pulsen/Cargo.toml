@@ -16,5 +16,8 @@ tempfile = "3.27.0"
 [dev-dependencies]
 pulsen-conformance.workspace = true
 
-[lints]
-workspace = true
+# Windows のデタッチ起動だけは Win32 の呼び出しを要するため、workspace の `forbid` を
+# 継承せず `deny` にする。緩められるのはこのクレートだけで、許可は `adapter::process` の
+# `inheritance` モジュールに閉じる(ADR-100)。
+[lints.rust]
+unsafe_code = "deny"

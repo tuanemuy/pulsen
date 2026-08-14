@@ -1,6 +1,8 @@
 # 適合テストの行 × ハーネスのフック
 
-`spec/testcases/ports/*.md` のうち、本スライスで扱う7ポート125行を、どう組み立てるかで分類した表。フックは spec の前提条件から導く（ADR-027）。行を足す・フックを足すときはこの表も更新する。
+`spec/testcases/ports/*.md` のうち、これまでのスライスで扱った9ポート169行を、どう組み立てるかで分類した表。フックは spec の前提条件から導く（ADR-027）。行を足す・フックを足すときはこの表も更新する。
+
+台帳行に対応しない追加ケースは、件数に数えず「追加ケース」として区別して載せる。
 
 区分の意味は次のとおり。
 
@@ -14,18 +16,18 @@
 
 | 区分 | 件数 |
 |---|---|
-| A | 28 |
-| B | 85 |
-| C | 12 |
-| 合計 | 125 |
+| A | 38 |
+| B | 113 |
+| C | 18 |
+| 合計 | 169 |
 
 スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境でスキップを許容するケース」を集合として宣言する（`SkipBudget`）。集合の外のスキップはそのケースの失敗として現れる。集合は環境の能力から実行時に決める（`.adr/055-conformance-skip-budget.md`）。
 
 ## 環境で走らなくなりうる行
 
-**何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する8行だけで、区分 C の残る4行はそれぞれ別の能力を要求する。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
+**何が前提を壊すかは行ごとに違う**。共通の述語 `permission_restrictions_effective` で導けるのは権限操作に依存する12行だけで、区分 C の残る6行のうち4行はそれぞれ別の能力を要求する。残る2行（TC-port-process-controller-003 / 005）は spec の文面こそ「再現できるアダプター環境に限る」だが、**別ハンドルの注入**で確定的に走る（ADR-076）。005 は前提を作れない環境が無いためこの表に現れず、003 は注入とは別に `launch_spec` がテスト用エージェントを要するため、その行にだけ現れる。区分 B にも、フックの前提が環境で成立しない行がある。宣言を組むときはこの表で読む。
 
-右3列は3ランナーでの実測（下記「3ランナーでの実測」を参照）。`実行` は前提が成立してケースが走ったこと、`スキップ` は成立せず `SKIP` 行が出たこと、`未測定` はまだ CI で観測していないことを指す。現在の3列はすべて run 31666626824 の観測である。
+右3列は3ランナーでの実測（下記「3ランナーでの実測」を参照）。`実行` は前提が成立してケースが走ったこと、`スキップ` は成立せず `SKIP` 行が出たこと、`未測定` はまだ CI で観測していないことを指す。現在の3列はすべて run 31683845168 の観測である。
 
 **行を足すときは3列を `未測定` で埋める。** 実測は CI を回して初めて得られるので、行の追加と同時には書けない。空欄にしないのは、空欄だと「まだ測っていない」と「書き忘れた」が区別できないため。`未測定` を実測に置き換えるのは次に CI を回した人で、そのとき出典の run を下記の節に書き足す。左4列（区分・前提を作れない環境・判定）は設計なので、CI を待たずにその場で埋める。
 
@@ -35,11 +37,18 @@
 | TC-port-workflow-store-030 | C | 同上 | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
 | TC-port-task-repository-005 / 011 / 012 / 035 | C | 書き込めないディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
 | TC-port-task-repository-019 / 041 | C | 読み取れないディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-run-store-007 | C | 読み取れないファイルを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-run-store-017 | C | 書き込めない attempt ディレクトリを作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-process-controller-023 | C | 実行権限のない実体を作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-process-controller-025 | C | 書き込めないログの置き場を作れない（同上） | `permission_restrictions_effective` | 実行 | 実行 | スキップ |
+| TC-port-process-controller-001 / 002 / 003 / 017〜021 / 024〜027 | B | テスト用エージェント（`examples/agent_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `agent_command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため | 実行 | 実行 | 実行 |
+| TC-port-process-controller-002 | B | 上記に加えて、デタッチ性のフィクスチャ（`examples/spawn_probe`）がビルドされていない | ハーネスが `spawn_from_other_process` を提供するか。同じく**スキップ許容集合には入れない** | 実行 | 実行 | 実行 |
 | TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか | スキップ | スキップ | スキップ |
 | TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-worktree-manager-009 | C | 必ず失敗するハンドルか、コミットのあるリポジトリを用意できない | ハーネスが `failing_manager` / `repo_with_commit` / `head_branch_name` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-worktree-manager-003 | B | git リポジトリでない実在のディレクトリを作れない（一時ディレクトリの置き場自体がリポジトリ配下） | ハーネスが `non_repo_dir` を提供するか | 実行 | 実行 | 実行 |
+| TC-port-worktree-manager-010 / 012〜016 と追加ケース（`create_prunable`） | B | worktree の置き場をシンボリックリンク経由にできない（ディレクトリのリンクを張れない環境） | ハーネスが `unused_workspace` / `workspace_with_orphan_branch` / `workspace_with_prunable_registration` / `workspace_over_plain_dir` / `workspace_over_other_branch` を提供するか。置き場が未作成であることを前提にする TC-011 だけはリンクを要さない | 実行 | 実行 | 実行 |
 | TC-port-exclusive-lock-002 / 003 / 004 / 005 | B | 保持プロセスの合図が期限内に返らない | ハーネスが `hold_from_other_process` / `try_acquire_from_other_process` を提供するか（この適用先では、保持プロセスを1回起動して合図が期限内に返るかで決まる） | 実行 | 実行 | 実行 |
 
 この表は**スキップを許容する条件**の一覧である。保持プロセスの実行ファイルが無い場合と、実行ファイルはあるが起動できない場合は、ここでいう「前提を作れない環境」には当たらない。前者は原因も回避方法も一意で、後者は理由が起動時のエラーにしか無く、いずれもスキップの宣言だけからは次の一手が定まらない。どちらもスキップにせずケースの失敗にする（`.adr/068-*.md` / `.adr/073-*.md`）。
@@ -48,23 +57,29 @@
 
 ## 3ランナーでの実測
 
-出典は GitHub Actions の run 31666626824（コミット `e524981`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。**測定したのは `e524981`（Issue #10 の CI・その吸収・レビュー反映まで適用した時点）で、PR #11 が足す適合スイートと example は含まない。** 走ったテストバイナリは3 OS とも15本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて18）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
+出典は GitHub Actions の run 31698858400（コミット `d9dd9d6`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。走ったテストバイナリは3 OS とも24本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて27）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
 
-同じスキップの集合は先行する5つの緑の run（31657976822 = `af24360`、31661056619 = `2c99c1b`、31662960664 = `9675b2f`、31663925152 = `1766c7b`、31665658371 = `e19c973`）でも再現している。下の3列を書き換える理由になるのは集合が動いたときだけで、run を重ねること自体では動かない。
+先行する run 31683845168（`1c582c2`、Issue #13 が保持フィクスチャの能力 probe を入れる前）でもスキップの集合は同じだった。TC-port-exclusive-lock-002 / 003 / 004 / 005 の前提の言い換えは、この3ランナーでは成立するかどうかを変えていない。出典を後の run へ寄せたのは、表がいまその前提を書いている以上、それを測った run を指すべきだからである。
+
+下の3列を書き換える理由になるのは集合が動いたときだけで、run を重ねること自体では動かない。
 
 - **unix（ubuntu / macOS）で成立しなかったのは TC-port-clock-005 の1件だけ。** これは環境ではなくアダプターの性質による恒久スキップで（`SystemClockHarness` は実時計を巻き戻せないため `rewind` を提供しない）、どの OS でも走らない。
-- **Windows で成立しなかったのは、上の1件に権限系を加えた計11件。** 適合行は表の `permission_restrictions_effective` を判定に持つ8行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041）で、残る2件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021）。
+- **Windows で成立しなかったのは、上の1件に権限系を加えた計17件。** 適合行は表の `permission_restrictions_effective` を判定に持つ12行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041 / TC-port-run-store-007・017 / TC-port-process-controller-023・025）で、残る4件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021、TC-exec-run-wrapper-014 / 016）。**表の権限系12行と実測のスキップ12件が過不足なく一致する** — 述語から導けると書いた行の集合が、実際に走らなかった行の集合と同じであることの裏付けになる。
 - **区分 C のうち TC-port-clock-003 / TC-port-exclusive-lock-007 / TC-port-worktree-manager-009 は3 OS すべてで走った。** いずれも判定がハーネス側のフック提供の有無で、実アダプターのハーネスが `observe_wall_clock` / `unusable_lock` / `failing_manager` を提供している。
-- **区分 B の TC-port-worktree-manager-003 と TC-port-exclusive-lock-002 / 003 / 004 / 005 も3 OS すべてで走った。** 前者は一時ディレクトリの置き場が git リポジトリ配下にならず前提が成立したこと、後者は `--workspace` で example がビルドされ、ロックを保持する別プロセスが3 OS で機能したことを意味する。後者と同じ前提（保持プロセスの合図が期限内に返るか）を共有する CLI 側の受け入れケース TC-task-register-task-017 も、3 OS すべてで走った。この1件は表に行を持たず、`SKIP` 行は `ハーネスが lock::hold を提供しないため…` と出るので、成立しなかった条件は TC-port-exclusive-lock-002 / 003 / 004 / 005 の行の括弧で読む。
-- **適合スイートの外に、Windows では存在しないテストが3件ある。** `crates/pulsen/src/adapter/task_repository.rs` の `#[cfg(all(test, unix))] mod tests`（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことを確認する3件）は Windows でコンパイルされず、**`SKIP` としても現れない**。`pulsen` の lib ユニットテストが Windows 69件・unix 72件になる差はこれである。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この3件はその外側にある Windows のカバレッジ差として記録しておく。
+- **区分 B の環境依存行も3 OS すべてで走った。** `--workspace` で example がビルドされるため `agent_probe` / `spawn_probe` / ロック保持プロセスを要する行はすべて成立し、worktree の置き場をシンボリックリンク経由にする前提も Windows で成立した（ディレクトリのリンクを張れた）。TC-port-worktree-manager-003 の「一時ディレクトリの置き場が git リポジトリ配下にならない」も3 OS で成立している。TC-port-exclusive-lock-002 / 003 / 004 / 005 と同じ前提（保持プロセスの合図が期限内に返るか）を共有する CLI 側の受け入れケース TC-task-register-task-017 も、3 OS すべてで走った。この1件は表に行を持たず、`SKIP` 行は `ハーネスが lock::hold を提供しないため…` と出るので、成立しなかった条件は TC-port-exclusive-lock-002 / 003 / 004 / 005 の行の括弧で読む。
+- **TC-port-process-controller-024 は環境依存行ではなかった。** 以前この表は「`agent_probe abort` がシグナル死になるプラットフォームか」を判定に持つ独立した行として載せていたが、ケースが要求するのは `agent_command` の提供だけで、期待も「非0の符号化値」までである（ADR-082）。シグナル死になるかを問うフックは無く、Windows でも走った。`agent_command` を判定に持つ行に吸収し、独立した行は落とした。
 
 ログには実在の適合ケースと形の区別が付かない `SKIP tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` / `tc_port_clock_005_時刻の巻き戻し` の3行が全 OS で出る。これは `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身を検証するために `record` を直接呼ぶもので、架空のケース名を持つ。上の集計にも CI のジョブサマリーにも含めない — 走らなかった適合ケースとして数えられると、実測が示す内容が変わってしまうため。
 
-この実測は PR #11 がスイートと example を足した時点で部分的に古くなる。その更新は #11 の責務とする。
+適合スイートの外に、`SKIP` としては現れない OS ごとのカバレッジ差がある。`pulsen` の lib ユニットテストは ubuntu 102件 / macOS 100件 / Windows 92件で、内訳は次のとおり。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この差はその外側にある。
+
+- Windows に無い10件 — `adapter::process::identity` の `ps` 系6件、シグナル終了の符号化1件、`adapter::task_repository` の `#[cfg(all(test, unix))]` 3件（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことの確認）
+- Windows だけの2件 — `adapter::process::inheritance` の、起動の区間で標準ハンドルの継承が止まり区間を抜けると戻ることの確認（ADR-100）
+- ubuntu だけの3件 — procfs から同定情報を組み立てる経路。macOS だけの1件は `ps` の取得環境（ロケール・タイムゾーン）の固定
 
 ## 適用範囲
 
-TaskRepository / Clock / TaskIdGenerator / ExclusiveLock / WorktreeManager のフックは、破損・状況の**意味**だけを受け取る。この5ポートのスイートは、フックを実装するだけで別の実装（in-memory 等）にも適用できる。
+TaskRepository / Clock / TaskIdGenerator / ExclusiveLock / WorktreeManager / RunStore / ProcessController のフックは、破損・状況の**意味**だけを受け取る。この7ポートのスイートは、フックを実装するだけで別の実装（in-memory 等）にも適用できる。
 
 ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` / `put_named_with_ext` / `put_at_absolute` / `put_at_relative`）は **YAML ソースを受け取る**。「YAML 構文エラー」「重複キー」を前提とする行（TC-port-config-store-014 / TC-port-workflow-store-017）は、表現そのものを渡す口が無ければ組み立てられないためで、この2ポートのスイートは YAML 表現に結合している（`.adr/053-conformance-yaml-source-hooks.md`）。
 
@@ -218,9 +233,11 @@ TC-002〜005 は別プロセスにロックを保持させるフィクスチャ�
 | TC-port-exclusive-lock-006 | 異なるホームのロックを別ハンドルが保持中 | B | `separate_home` |
 | TC-port-exclusive-lock-007 | ロック機構自体が利用不能 | C | `unusable_lock` |
 
-## WorktreeManager（本スライス該当の9行 / A 0・B 8・C 1）
+## WorktreeManager（本スライス該当の16行 / A 0・B 15・C 1、+ 追加ケース1件）
 
-`create` / `remove` の12行は worktree スライスでポートにメソッドを足すときに扱う。
+`remove` の5行は、それをポートにメソッドとして足すスライスで扱う。
+
+`create` のケースが使う `ws.path` の置き場（worktree_root）は**シンボリックリンク経由のパス**として組む。同定の鍵は物理パスなので（ADR-085）、置き場が実体そのものだと正規化の分岐がどのケースからも実行されない。
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
@@ -233,6 +250,72 @@ TC-002〜005 は別プロセスにロックを保持させるフィクスチャ�
 | TC-port-worktree-manager-007 | 指定ブランチが存在する | B | `repo_with_commit` + `head_branch_name` |
 | TC-port-worktree-manager-008 | 指定ブランチが存在しない | B | `repo_with_commit` + `absent_branch_name` |
 | TC-port-worktree-manager-009 | git 操作自体が失敗する | C | `failing_manager` + `repo_with_commit` + `head_branch_name`（3メソッドとも `Failed`） |
+| TC-port-worktree-manager-010 | base があり、ブランチもパスも未使用 | B | `unused_workspace` + `head_branch_name` + `branch_tip`（新ブランチが base の先端から作られたこと）+ `worktree_present`（`ws.path` が `ws.branch` の worktree として**登録され**、実体も在ること。実体の有無だけを見ると、ブランチを作ってディレクトリを掘っただけの実装が通る） |
+| TC-port-worktree-manager-011 | worktree_root 自体が未作成 | B | `workspace_under_missing_root` + `worktree_present` |
+| TC-port-worktree-manager-012 | 自タスクの worktree が存在し、内容に変更がある | B | `unused_workspace` → `create` → `put_worktree_marker` + `worktree_marker`（内容の不変を観測） |
+| TC-port-worktree-manager-013 | 登録なし・コミットの積まれた `ws.branch` のみ存在 | B | `workspace_with_orphan_branch` + `branch_tip` + `worktree_marker`（先端の不変と成果物の復帰） |
+| TC-port-worktree-manager-014 | `ws.path` に worktree でない通常のディレクトリ | B | `workspace_over_plain_dir` + `worktree_marker` + `branch_exists` |
+| TC-port-worktree-manager-015 | `ws.path` に別ブランチの worktree | B | `workspace_over_other_branch` + `worktree_marker` + `branch_exists` |
+| TC-port-worktree-manager-016 | base に指定したブランチが存在しない | B | `absent_branch_name` + `unused_workspace` + `worktree_present` + `branch_exists` |
+| （追加ケース・ADR-085） | 自タスクの登録は残るが実体が消えている（`prunable`） | B | `workspace_with_prunable_registration` + `branch_tip` + `worktree_marker`。復旧の2分岐（`prunable` からの `add -f` と、登録なし・ブランチのみからの `add`）を**どちらも**実行させるための追加。TC-013 を `prunable` 側に寄せると、`add`（`-f` なし）の分岐がどのケースからも実行されない |
+
+## RunStore（本スライス該当の21行 / A 10・B 9・C 2、+ 追加ケース1件）
+
+`attempt_exists` / `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の22行は、それらをポートにメソッドとして足すスライスで扱う。
+
+run ディレクトリのファイルの位置はケース側が契約の語彙（`RunDirPath` の導出関数）で指し、フックは対象の**種別**（`RunFileKind`）だけを受け取る。
+
+| ID | 前提条件 | 区分 | 組み立て手段 |
+|---|---|---|---|
+| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-084） |
+| TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（`attempt_exists` は宣言しないため、内容の不変で観測する。ADR-084） |
+| TC-port-run-store-003 | 準備済み・pid 未書き込み | A | `prepare_attempt` → `read_pid_file` |
+| TC-port-run-store-004 | attempt ディレクトリ自体が不在 | B | `expected_run_dir`（準備しないまま読む） |
+| TC-port-run-store-005 | `write_pid_file` 済み | A | `write_pid_file` → `read_pid_file` |
+| TC-port-run-store-006 | pid の位置に解釈不能な内容 | B | `put_unreadable_content(Pid)` |
+| TC-port-run-store-007 | pid は存在するが読み取り自体が失敗 | C | `make_unreadable(Pid)` |
+| TC-port-run-store-008 | 準備済み・starttime 未書き込み | A | `prepare_attempt` → `read_starttime` |
+| TC-port-run-store-009 | attempt ディレクトリ自体が不在 | B | `expected_run_dir` |
+| TC-port-run-store-010 | `write_starttime` 済み | A | `write_starttime` → `read_starttime` |
+| TC-port-run-store-011 | starttime の位置に解釈不能な内容 | B | `put_unreadable_content(StartTime)` |
+| TC-port-run-store-012 | 準備済み・exit 未書き込み | A | `prepare_attempt` → `read_exit` |
+| TC-port-run-store-013 | attempt ディレクトリ自体が不在 | B | `expected_run_dir` |
+| TC-port-run-store-014 | `write_exit` 済み（0 と非0） | A | `write_exit` → `read_exit` |
+| TC-port-run-store-015 | exit の位置に解釈不能な内容 | B | `put_unreadable_content(Exit)` |
+| TC-port-run-store-016 | write 系の連続書き込み中 | B | `concurrent_store`（別スレッドが読み続ける。読み手の停止は `Drop` に載せる。ADR-063） |
+| TC-port-run-store-017 | write 系の書き込みが失敗する | C | `make_attempt_unwritable`（読み取りは残す — 失敗後に従前の値が読めることが行の主張） |
+| TC-port-run-store-018 | attempt ディレクトリ自体が不在 | B | `expected_run_dir` → `write_invalidation_marker` → `marker_exists`（ディレクトリごと作られたことは `attempt_dir_present` があればそこも観測する。無ければその分岐だけ飛ばす） |
+| TC-port-run-store-019 | マーカー書き込み済み | A | `write_invalidation_marker` 2回 |
+| TC-port-run-store-020 | 準備済み・マーカー未書き込み | A | `marker_exists` |
+| TC-port-run-store-021 | マーカー書き込み済み | A | `write_invalidation_marker` → `marker_exists` |
+| （追加ケース・write 系の置き場作成） | 準備を経ていない attempt ディレクトリが不在 | B | `expected_run_dir` → `write_starttime` / `write_pid_file` / `write_exit` → 各 read 系（`attempt_dir_present` があれば書き込み前の不在もそこで観測する）。台帳行がディレクトリ作成を主張するのはマーカー（TC-018）だけで、`prepare_attempt` の失敗後も起動を続ける経路が残る3つの write 系の同じ契約に乗っている |
+
+## ProcessController（本スライス該当の16行 / A 0・B 12・C 4）
+
+`starttime_of` / `kill` / `try_kill_remnants` の8行は、それらをポートにメソッドとして足すスライスで扱う。
+
+スイートは2つに分かれる（ADR-083）。`identity_and_agent` は `own_identity` / `run_agent` の13行で、アダプター単体で閉じる。`spawn` は `spawn_wrapper` の3行で、ラッパーモード（実バイナリ）の実装を前提にする。1つのテストファイルに両方を適用する。
+
+テスト用エージェントは `agent_command` に**振る舞いの意味**（`AgentBehavior`）だけを渡して組む。プラットフォーム固有のコマンド名やシェルをケースに持ち込まないため（ADR-082）。
+
+| ID | 前提条件 | 区分 | 組み立て手段 |
+|---|---|---|---|
+| TC-port-process-controller-001 | 用意済みの run_dir・実在する worktree・テスト用エージェント | B | `launch_spec` + `run_dir_is_empty` + `wait_for_run_files`（結末は run ディレクトリ経由でのみ現れる。観測が起動の**前後で反転すること**まで主張する。真偽を定数で返すハーネスはどちらかの側で落ちる） |
+| TC-port-process-controller-002 | 一定時間実行し続けるエージェントで `spawn_wrapper` 済み | B | `launch_spec(Sleep)` + `spawn_from_other_process`（呼び出し側プロセスの終了）+ `wait_for_run_files` |
+| TC-port-process-controller-003 | ラッパーの起動自体が不可能 | C | `failing_controller`（存在しないパスを自バイナリとして注入。ADR-076）+ `run_dir_is_empty` |
+| TC-port-process-controller-004 | テストプロセス自身 | B | `observe_wall_clock`（呼び出し前後の範囲）。pid は `std::process::id()` と突き合わせる |
+| TC-port-process-controller-005 | 同定情報の取得機構自体が失敗する | C | `failing_identity_controller`（存在しない取得元を注入。ADR-076） |
+| TC-port-process-controller-017 | exit 0 で終了するコマンド | B | `agent_command(Exit(0))` + `worktree` + `log_paths` |
+| TC-port-process-controller-018 | 非0（7）で終了するコマンド | B | `agent_command(Exit(7))` |
+| TC-port-process-controller-019 | 作業ディレクトリを検査するコマンド | B | `agent_command(CheckCwd(worktree))` |
+| TC-port-process-controller-020 | 標準出力・標準エラーへ書くコマンド | B | `agent_command(Print)` + `log_paths`（リダイレクト先の内容を読む） |
+| TC-port-process-controller-021 | シェルのメタ文字・空白・プレースホルダを含むトークン | B | `agent_command(EchoArgs(tokens))`（受け取ったトークンが標準出力に1行ずつ現れ、渡した列と一致する） |
+| TC-port-process-controller-022 | 存在しないコマンド名 | B | `missing_command` |
+| TC-port-process-controller-023 | 実行不能なファイル | C | `non_executable_command`（起動が拒否されることを確かめてから `Some`） |
+| TC-port-process-controller-024 | 外部から強制終了されるコマンド | B | `agent_command(Abort)`（期待は**非0の符号化値**まで。`128+シグナル番号` の具体値はアダプターのユニットテストが固定する。ADR-082） |
+| TC-port-process-controller-025 | stdout のリダイレクト先が開けない | C | `unwritable_log_path`（起動していれば 0 が返るため、126 が「エージェントの副作用が生じていない」の観測になる） |
+| TC-port-process-controller-026 | cwd が存在しない | B | `missing_worktree` |
+| TC-port-process-controller-027 | 一定時間実行してから終了するコマンド | B | `agent_command(Sleep)`（経過時間で同期実行を観測） |
 
 ## フック一覧
 
@@ -244,8 +327,10 @@ TC-002〜005 は別プロセスにロックを保持させるフィクスチャ�
 | `ClockHarness` | `observe_wall_clock` / `advance` / `rewind` |
 | `TaskIdGeneratorHarness` | `another_generator` |
 | `ExclusiveLockHarness` | `hold_from_other_process` / `kill_holder` / `release_holder` / `try_acquire_from_other_process` / `separate_home` / `unusable_lock` |
-| `WorktreeManagerHarness` | `repo_with_commit` / `repo_without_commit` / `detached_repo` / `non_repo_dir` / `missing_path` / `head_branch_name` / `absent_branch_name` / `failing_manager` |
+| `WorktreeManagerHarness` | `repo_with_commit` / `repo_without_commit` / `detached_repo` / `non_repo_dir` / `missing_path` / `head_branch_name` / `absent_branch_name` / `failing_manager` / `unused_workspace` / `workspace_under_missing_root` / `workspace_with_orphan_branch` / `workspace_with_prunable_registration` / `workspace_over_plain_dir` / `workspace_over_other_branch` / `put_worktree_marker` / `worktree_marker` / `worktree_present` / `branch_tip` |
+| `RunStoreHarness` | `expected_run_dir` / `attempt_dir_present` / `put_unreadable_content` / `make_unreadable` / `make_attempt_unwritable` / `concurrent_store` |
+| `ProcessControllerHarness` | `observe_wall_clock` / `failing_identity_controller` / `worktree` / `missing_worktree` / `log_paths` / `unwritable_log_path` / `agent_command` / `missing_command` / `non_executable_command` / `launch_spec` / `wait_for_run_files` / `spawn_from_other_process` / `failing_controller` / `run_dir_is_empty` |
 
-対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager`）はフックではなく、すべてのケースが使う。
+対象アクセサ（`fn store` / `fn repo` / `fn clock` / `fn generator` / `fn lock` / `fn manager` / `fn controller`）はフックではなく、すべてのケースが使う。
 
-この一覧と `.adr/027-port-conformance-suite-and-harness-hooks.md` のフック表は同じものを指す。フックを足すときは両方を更新する。
+フックの一覧はこのファイルが正本。`.adr/027-port-conformance-suite-and-harness-hooks.md` のフック表は決定時点の記録なので、フックを足すときに更新するのはこのファイルだけでよい。

@@ -8,11 +8,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use pulsen_domain::definition::{ConfigLoadError, ConfigStore, GlobalConfig};
-use pulsen_domain::task::AbsolutePathError;
+use pulsen_domain::task::{AbsolutePathError, RunDirPath, StateRoot, WorktreeRoot};
 
 use crate::adapter::clock::SystemClock;
 use crate::adapter::config_store::FsConfigStore;
 use crate::adapter::lock::FileExclusiveLock;
+use crate::adapter::process::{IdentitySource, SystemProcessController};
+use crate::adapter::run_store::FsRunStore;
 use crate::adapter::task_id::{DefaultTaskIdGenerator, IdGeneratorInitError};
 use crate::adapter::task_repository::FsTaskRepository;
 use crate::adapter::workflow_store::FsWorkflowStore;
@@ -62,16 +64,28 @@ pub enum WireError {
         /// 原因の説明。
         message: String,
     },
+    /// 自身の実行ファイルのパスを取得できない。
+    SelfExeUnavailable {
+        /// 原因の説明。
+        message: String,
+    },
+    /// run ディレクトリから状態のルートを復元できない。
+    RunDirUnusable {
+        /// 与えられた run ディレクトリ。
+        given: PathBuf,
+    },
 }
 
 /// 結線済みのアダプターと、起動時に読み込んだグローバル設定。
 pub struct Runtime {
     config: GlobalConfig,
-    workflows: FsWorkflowStore,
+    state_root: StateRoot,
+    worktree_root: WorktreeRoot,
+    workflows_dir: PathBuf,
     worktrees: GitCliWorktreeManager,
-    ids: DefaultTaskIdGenerator<SystemClock>,
     clock: SystemClock,
     tasks: FsTaskRepository,
+    runs: FsRunStore,
     lock: FileExclusiveLock,
 }
 
@@ -81,19 +95,36 @@ impl Runtime {
         &self.config
     }
 
-    /// ワークフロー定義のストア。
-    pub fn workflows(&self) -> &FsWorkflowStore {
-        &self.workflows
+    /// 状態のルート。
+    ///
+    /// tick は run ディレクトリのパスをここから決定的に導出する。導出はドメイン
+    /// (`RunDirPath::derive`)が行うため、合成ルートはルートの値だけを渡す。
+    pub fn state_root(&self) -> &StateRoot {
+        &self.state_root
+    }
+
+    /// worktree のルート。
+    ///
+    /// tick はタスクIDからワークスペースを導出する(`WorkspacePlanner::derive`)。
+    pub fn worktree_root(&self) -> &WorktreeRoot {
+        &self.worktree_root
+    }
+
+    /// ワークフロー定義のストアを組む。
+    ///
+    /// `compose` では組まない — 名前とパスからワークフローを解決するのは `add` だけで、
+    /// 相対パスの解決基準になるカレントディレクトリを要するのもこのストアだけである
+    /// (ADR-099)。
+    pub fn workflow_store(&self) -> Result<FsWorkflowStore, WireError> {
+        let base_dir = env::current_dir().map_err(|error| WireError::CurrentDirUnavailable {
+            message: error.to_string(),
+        })?;
+        Ok(FsWorkflowStore::new(self.workflows_dir.clone(), base_dir))
     }
 
     /// 対象の検証。
     pub fn worktrees(&self) -> &GitCliWorktreeManager {
         &self.worktrees
-    }
-
-    /// タスクIDの発行。
-    pub fn ids(&self) -> &DefaultTaskIdGenerator<SystemClock> {
-        &self.ids
     }
 
     /// 時刻。
@@ -104,6 +135,11 @@ impl Runtime {
     /// タスクの永続化。
     pub fn tasks(&self) -> &FsTaskRepository {
         &self.tasks
+    }
+
+    /// run ディレクトリの読み書き。
+    pub fn runs(&self) -> &FsRunStore {
+        &self.runs
     }
 
     /// 排他ロック。
@@ -124,32 +160,96 @@ impl Runtime {
 
 /// グローバルホームを解決し、アダプターを構築してグローバル設定を読み込む。
 ///
-/// 起動時のグローバル設定の読み込みは全コマンド共通(pages ※1)なので、ここで行う。
+/// 起動時のグローバル設定の読み込みは全コマンド共通なので、ここで行う。
 pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
     let home = resolve_home(home_flag)?;
-    let base_dir = env::current_dir().map_err(|error| WireError::CurrentDirUnavailable {
-        message: error.to_string(),
-    })?;
 
     let config_path = home.config_path();
     let config = FsConfigStore::new(config_path.clone(), home.path().to_path_buf())
         .load()
         .map_err(|error| WireError::Config { config_path, error })?;
 
-    let ids = DefaultTaskIdGenerator::new(SystemClock::new()).map_err(|error| {
-        WireError::IdGenerator {
-            message: id_generator_cause(&error),
-        }
-    })?;
-
     Ok(Runtime {
-        workflows: FsWorkflowStore::new(home.workflows_dir(), base_dir),
+        workflows_dir: home.workflows_dir(),
         worktrees: GitCliWorktreeManager::new(PathBuf::from(DEFAULT_GIT_PROGRAM)),
-        ids,
         clock: SystemClock::new(),
         tasks: FsTaskRepository::new(home.state_root().clone()),
+        runs: FsRunStore::new(home.state_root().clone()),
         lock: FileExclusiveLock::new(home.lock_path()),
+        state_root: home.state_root().clone(),
+        worktree_root: home.worktree_root().clone(),
         config,
+    })
+}
+
+/// ラッパーモードだけが使うアダプター。
+///
+/// ホームも config も読まない — ラッパーが必要とする情報はすべて起動引数で受け取る
+/// (ADR-078)。`Runtime` とは別の型にすることで、ラッパーの経路にホーム解決や設定の
+/// 読み込みが後から紛れ込まないようにする。
+pub struct WrapperRuntime {
+    runs: FsRunStore,
+    processes: SystemProcessController,
+}
+
+impl WrapperRuntime {
+    /// run ディレクトリの読み書き。
+    pub fn runs(&self) -> &FsRunStore {
+        &self.runs
+    }
+
+    /// プロセスの起動と観測。
+    pub fn processes(&self) -> &SystemProcessController {
+        &self.processes
+    }
+}
+
+/// run ディレクトリだけからラッパー用のアダプターを組む。
+///
+/// `--home` は `global = true` なので `wrapper` にも付くが、ラッパーはこれを使わない。
+/// tick が spawn したラッパーは `--home` を受け取らないため、ホームを解決すると既定の
+/// `~/.pulsen` へ落ちる。値が使われないことに依存した配線は次の変更で壊れる。
+///
+/// `current_exe()` も読まない — ラッパーが呼ぶのは自身の同定情報の取得とエージェントの
+/// 起動だけで、自バイナリのパスを要するのはラッパーを spawn する側だけ(ADR-076)。
+pub fn compose_wrapper(run_dir: &RunDirPath) -> Result<WrapperRuntime, WireError> {
+    let state_root = run_dir
+        .state_root()
+        .ok_or_else(|| WireError::RunDirUnusable {
+            given: run_dir.as_path().to_path_buf(),
+        })?;
+
+    Ok(WrapperRuntime {
+        runs: FsRunStore::new(state_root),
+        processes: SystemProcessController::without_self_exe(
+            IdentitySource::platform_default(),
+            SystemClock::new(),
+        ),
+    })
+}
+
+/// 自バイナリのパスと同定情報の取得元を解決してプロセス操作を組む。
+///
+/// `compose` には載せない — `ProcessController` を要するのはプロセスを起動する経路
+/// だけであり、`current_exe()` の失敗で `add` が落ちるのは筋が通らない(ADR-076)。
+pub fn process_controller() -> Result<SystemProcessController, WireError> {
+    let self_exe = env::current_exe().map_err(|error| WireError::SelfExeUnavailable {
+        message: error.to_string(),
+    })?;
+    Ok(SystemProcessController::new(
+        self_exe,
+        IdentitySource::platform_default(),
+        SystemClock::new(),
+    ))
+}
+
+/// 乱数を初期化してタスクIDの発行を組む。
+///
+/// `compose` には載せない — IDを発行するのはタスクを登録する経路だけで、乱数を取れない
+/// ことで `tick` が落ちるのは筋が通らない(ADR-099)。
+pub fn id_generator() -> Result<DefaultTaskIdGenerator<SystemClock>, WireError> {
+    DefaultTaskIdGenerator::new(SystemClock::new()).map_err(|error| WireError::IdGenerator {
+        message: id_generator_cause(&error),
     })
 }
 
@@ -164,7 +264,7 @@ fn id_generator_cause(error: &IdGeneratorInitError) -> String {
     }
 }
 
-/// `--home` > `PULSEN_HOME` > `~/.pulsen/` の順で解決する(pages 共通事項)。
+/// `--home` > `PULSEN_HOME` > `~/.pulsen/` の順で解決する。
 fn resolve_home(flag: Option<PathBuf>) -> Result<PulsenHome, WireError> {
     if let Some(path) = flag {
         return home_from(path);

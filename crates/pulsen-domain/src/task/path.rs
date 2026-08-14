@@ -3,6 +3,7 @@
 //! レイアウトの知識をドメインに置き、アダプターは導出結果を受け取るだけにする
 //! (ポートの外にレイアウトが漏れない)。
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use super::attempt::AttemptNumber;
@@ -89,6 +90,23 @@ absolute_path! {
 }
 
 impl RunDirPath {
+    /// run ディレクトリを収める段の名前。
+    const RUNS_DIR: &'static str = "runs";
+    /// attempt ディレクトリの接頭辞。
+    const ATTEMPT_PREFIX: &'static str = "attempt-";
+    /// pid ファイルの名前。
+    const PID_FILE: &'static str = "pid";
+    /// starttime ファイルの名前。
+    const STARTTIME_FILE: &'static str = "starttime";
+    /// exit ファイルの名前。
+    const EXIT_FILE: &'static str = "exit";
+    /// 標準出力ログの名前。
+    const STDOUT_LOG: &'static str = "stdout.log";
+    /// 標準エラーログの名前。
+    const STDERR_LOG: &'static str = "stderr.log";
+    /// 無効化マーカーの名前。
+    const MARKER_FILE: &'static str = "invalidated";
+
     /// `<state_root>/runs/<task-id>/attempt-<n>` を導出する。
     ///
     /// 決定的導出だが、人間が直接辿れるようにタスクファイルにも記録する
@@ -96,10 +114,73 @@ impl RunDirPath {
     pub fn derive(state_root: &StateRoot, id: &TaskId, number: AttemptNumber) -> Self {
         let path = state_root
             .as_path()
-            .join("runs")
+            .join(Self::RUNS_DIR)
             .join(id.as_str())
-            .join(format!("attempt-{}", number.get()));
+            .join(Self::attempt_dir_name(number));
         Self(path)
+    }
+
+    /// attempt ディレクトリの名前 `attempt-<n>`。
+    ///
+    /// 表示や走査は run ディレクトリの値を持たない断片(タスクIDと attempt 番号だけ)を
+    /// 扱うことがある。命名の定義箇所を `derive` と共有し、接頭辞を変えたときに綴りが
+    /// 分かれないようにする。
+    pub fn attempt_dir_name(number: AttemptNumber) -> String {
+        format!("{}{}", Self::ATTEMPT_PREFIX, number.get())
+    }
+
+    /// `derive` の逆写像。`<state_root>/runs/<task-id>/attempt-<n>` の形でなければ `None`。
+    ///
+    /// ラッパーは config もホームも読まず、起動引数の run ディレクトリだけから run
+    /// ディレクトリの読み書きを組み立てる。レイアウトの知識を合成ルートに漏らさないため、
+    /// 復元を `derive` の直下に置く。
+    pub fn state_root(&self) -> Option<StateRoot> {
+        let number = self.0.file_name()?.to_str()?;
+        let number = number.strip_prefix(Self::ATTEMPT_PREFIX)?;
+        let number = AttemptNumber::parse(number.parse().ok()?).ok()?;
+
+        let task_dir = self.0.parent()?;
+        let id = TaskId::parse(task_dir.file_name()?.to_str()?.to_owned()).ok()?;
+
+        let runs_dir = task_dir.parent()?;
+        if runs_dir.file_name()? != OsStr::new(Self::RUNS_DIR) {
+            return None;
+        }
+        let state_root = StateRoot::parse(runs_dir.parent()?.to_path_buf()).ok()?;
+
+        // 逆写像であることを `derive` との一致で確かめる。番号の表記ゆれ(`attempt-01` /
+        // `attempt-+1`)は数値としては読めるが、`derive` はその値を出力しない。
+        (Self::derive(&state_root, &id, number) == *self).then_some(state_root)
+    }
+
+    /// pid ファイル `<run_dir>/pid`。
+    pub fn pid_file(&self) -> PathBuf {
+        self.0.join(Self::PID_FILE)
+    }
+
+    /// starttime ファイル `<run_dir>/starttime`。
+    pub fn starttime_file(&self) -> PathBuf {
+        self.0.join(Self::STARTTIME_FILE)
+    }
+
+    /// exit ファイル `<run_dir>/exit`。
+    pub fn exit_file(&self) -> PathBuf {
+        self.0.join(Self::EXIT_FILE)
+    }
+
+    /// 標準出力ログ `<run_dir>/stdout.log`。
+    pub fn stdout_log(&self) -> PathBuf {
+        self.0.join(Self::STDOUT_LOG)
+    }
+
+    /// 標準エラーログ `<run_dir>/stderr.log`。
+    pub fn stderr_log(&self) -> PathBuf {
+        self.0.join(Self::STDERR_LOG)
+    }
+
+    /// 無効化マーカー `<run_dir>/invalidated`。存在のみが意味を持つ空ファイル。
+    pub fn marker_file(&self) -> PathBuf {
+        self.0.join(Self::MARKER_FILE)
     }
 }
 
@@ -227,6 +308,67 @@ mod tests {
             ])
             .as_path()
         );
+    }
+
+    #[test]
+    fn attemptディレクトリの名前は導出したrunディレクトリの末尾と一致する() {
+        for number in [1, 3, 42] {
+            let number = AttemptNumber::parse(number).expect("受理される");
+            let run_dir = RunDirPath::derive(&state_root(), &task_id(), number);
+
+            assert_eq!(
+                run_dir.as_path().file_name(),
+                Some(OsStr::new(&RunDirPath::attempt_dir_name(number))),
+            );
+        }
+    }
+
+    #[test]
+    fn runディレクトリのファイル配置は固定の名前で導出される() {
+        let run_dir = RunDirPath::derive(
+            &state_root(),
+            &task_id(),
+            AttemptNumber::parse(3).expect("受理される"),
+        );
+        let in_run_dir = |name: &str| run_dir.as_path().join(name);
+
+        assert_eq!(run_dir.pid_file(), in_run_dir("pid"));
+        assert_eq!(run_dir.starttime_file(), in_run_dir("starttime"));
+        assert_eq!(run_dir.exit_file(), in_run_dir("exit"));
+        assert_eq!(run_dir.stdout_log(), in_run_dir("stdout.log"));
+        assert_eq!(run_dir.stderr_log(), in_run_dir("stderr.log"));
+        assert_eq!(run_dir.marker_file(), in_run_dir("invalidated"));
+    }
+
+    #[test]
+    fn 導出したrunディレクトリからstateルートを復元できる() {
+        for number in [1, 2, 42] {
+            let run_dir = RunDirPath::derive(
+                &state_root(),
+                &task_id(),
+                AttemptNumber::parse(number).expect("受理される"),
+            );
+            assert_eq!(run_dir.state_root(), Some(state_root()), "attempt-{number}");
+        }
+    }
+
+    #[test]
+    fn 規定の形でないrunディレクトリからはstateルートを復元しない() {
+        for segments in [
+            vec!["state", "runs", "20260811t091530-k3f9qa1b"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-0"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-01"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-+1"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-x"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "attempt-"],
+            vec!["state", "runs", "20260811t091530-k3f9qa1b", "1"],
+            vec!["state", "attempts", "20260811t091530-k3f9qa1b", "attempt-1"],
+            vec!["state", "runs", "大文字と記号を含む名前", "attempt-1"],
+            vec!["attempt-1"],
+        ] {
+            let run_dir = RunDirPath::parse(absolute(&segments)).expect("受理される");
+            assert_eq!(run_dir.state_root(), None, "{segments:?}");
+        }
     }
 
     #[test]

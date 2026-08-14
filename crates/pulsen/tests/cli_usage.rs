@@ -1,4 +1,4 @@
-//! 引数の解釈と、提供しないことの確認(pages 共通事項 / PAGE-common-007 / PAGE-common-011)。
+//! 引数の解釈と、提供しないことの確認(PAGE-common-007 / PAGE-common-011)。
 //!
 //! 終了コードの規約(引数の使い方の誤りは 2、`--help` は 0)と、提供するサブコマンドの
 //! 集合を固定する。「機械可読な出力形式を提供しない」「設定・ワークフロー定義の作成
@@ -50,11 +50,36 @@ fn helpの表示は0で終わり標準出力に出る() {
 }
 
 #[test]
-fn 提供するサブコマンドはタスク登録だけである() {
+fn 利用者向けに提供するサブコマンドはタスク登録とtickだけである() {
     let run = run_cli(&["--help"]);
     run.assert_succeeded();
 
-    assert_eq!(subcommands(&run.stdout), vec!["add", BUILTIN_SUBCOMMAND]);
+    assert_eq!(
+        subcommands(&run.stdout),
+        vec!["add", "tick", BUILTIN_SUBCOMMAND]
+    );
+}
+
+#[test]
+fn 内部のラッパーはヘルプに現れないが実行はできる() {
+    let help = run_cli(&["--help"]);
+    help.assert_succeeded();
+    assert!(
+        !subcommands(&help.stdout)
+            .iter()
+            .any(|name| name == "wrapper"),
+        "一覧に表示しない: {}",
+        help.stdout
+    );
+
+    let run = run_cli(&["wrapper", "--help"]);
+
+    run.assert_succeeded();
+    assert!(
+        run.stdout.contains("--run-dir") && run.stdout.contains("--workspace"),
+        "隠れているだけで到達できる: {}",
+        run.stdout
+    );
 }
 
 #[test]

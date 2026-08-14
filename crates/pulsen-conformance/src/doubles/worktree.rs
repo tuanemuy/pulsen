@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
-use pulsen_domain::execution::{TargetError, WorktreeManager};
-use pulsen_domain::task::{BranchName, RepoPath};
+use pulsen_domain::execution::{TargetError, WorktreeError, WorktreeManager};
+use pulsen_domain::task::{BranchName, RepoPath, Workspace};
 
 /// 記録された呼び出し。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +26,15 @@ pub enum WorktreeManagerCall {
         /// 問い合わせたブランチ。
         branch: BranchName,
     },
+    /// `create`。
+    Create {
+        /// 対象のリポジトリ。
+        repo: RepoPath,
+        /// base ブランチ。
+        base: BranchName,
+        /// 用意する worktree。
+        ws: Workspace,
+    },
 }
 
 /// メソッドごとにあらかじめ与えた結果を順に返すマネージャー。
@@ -38,6 +47,7 @@ pub struct ScriptedWorktreeManager {
     validate_repo: RefCell<VecDeque<Result<(), TargetError>>>,
     head_branch: RefCell<VecDeque<Result<BranchName, TargetError>>>,
     branch_exists: RefCell<VecDeque<Result<bool, TargetError>>>,
+    create: RefCell<VecDeque<Result<(), WorktreeError>>>,
     calls: RefCell<Vec<WorktreeManagerCall>>,
 }
 
@@ -71,6 +81,12 @@ impl ScriptedWorktreeManager {
         results: impl IntoIterator<Item = Result<bool, TargetError>>,
     ) -> Self {
         *self.branch_exists.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `create` が返す結果の列を与える。
+    pub fn with_create(self, results: impl IntoIterator<Item = Result<(), WorktreeError>>) -> Self {
+        *self.create.borrow_mut() = results.into_iter().collect();
         self
     }
 
@@ -110,6 +126,23 @@ impl WorktreeManager for ScriptedWorktreeManager {
             });
         let Some(result) = self.branch_exists.borrow_mut().pop_front() else {
             panic!("branch_exists の結果を使い切った")
+        };
+        result
+    }
+
+    fn create(
+        &self,
+        repo: &RepoPath,
+        base: &BranchName,
+        ws: &Workspace,
+    ) -> Result<(), WorktreeError> {
+        self.calls.borrow_mut().push(WorktreeManagerCall::Create {
+            repo: repo.clone(),
+            base: base.clone(),
+            ws: ws.clone(),
+        });
+        let Some(result) = self.create.borrow_mut().pop_front() else {
+            panic!("create の結果を使い切った")
         };
         result
     }

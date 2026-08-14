@@ -27,6 +27,19 @@ pub enum AgentDefError {
     MissingSkillInput,
 }
 
+impl AgentDefError {
+    /// 不備の説明。
+    ///
+    /// 登録時検証の案内と、起動時の展開失敗としてタスクファイルに残る失敗要因の両方に載る。
+    pub fn describe(&self) -> String {
+        match self {
+            Self::InvalidCmd(error) => format!("cmd の{}", error.describe()),
+            Self::InvalidSkillInput(error) => format!("skill_input の{}", error.describe()),
+            Self::MissingSkillInput => "skill_input がありません".to_owned(),
+        }
+    }
+}
+
 /// 構造のみ検証済みのエージェント定義。グローバル設定が保持する形。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawAgentDefinition {

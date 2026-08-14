@@ -4,13 +4,17 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use pulsen_domain::definition::{
-    AgentInput, AgentName, Prompt, StatusDefinition, StatusName, WorkflowDefinition,
+    AgentInput, AgentName, CommandLine, Prompt, StatusDefinition, StatusName, WorkflowDefinition,
     WorkflowLoadError, WorkflowName, WorkflowRef, WorkflowSnapshot, WorkflowStore,
 };
-use pulsen_domain::execution::{ExclusiveLock, LockError, TargetError, WorktreeManager};
+use pulsen_domain::execution::{
+    ExclusiveLock, ExitCode, Io, LockError, PidFileContent, ProcessController, RunStore,
+    SpawnError, TargetError, WorktreeManager, WrapperIdentity, WrapperLaunchSpec,
+};
 use pulsen_domain::task::{
-    BranchName, Clock, CreateError, RepoPath, Target, Task, TaskId, TaskIdGenerator,
-    TaskRepository, Timestamp,
+    AttemptNumber, BranchName, Clock, CreateError, KillIdent, Pid, ProcessStartTime, ReadError,
+    RepoPath, RunDirPath, SaveError, StartTimeRecord, StateRoot, Target, Task, TaskId,
+    TaskIdGenerator, TaskRepository, Timestamp, WorktreePath,
 };
 
 use super::*;
@@ -79,13 +83,140 @@ fn ワークツリーマネージャーはメソッドごとの結果を返し�
 
 #[test]
 fn リポジトリは作成の結果を順に返して渡されたタスクを記録する() {
-    let repository = ScriptedTaskRepository::new([Err(CreateError::Conflict), Ok(())]);
+    let repository =
+        ScriptedTaskRepository::new().with_create([Err(CreateError::Conflict), Ok(())]);
     let first = task("t1");
     let second = task("t2");
 
     assert_eq!(repository.create(&first), Err(CreateError::Conflict));
     assert_eq!(repository.create(&second), Ok(()));
     assert_eq!(repository.created(), vec![first, second]);
+}
+
+#[test]
+fn リポジトリは走査の結果を順に返す() {
+    let repository = ScriptedTaskRepository::new().with_list_active([
+        Ok(Vec::new()),
+        Err(ReadError::Io {
+            message: "走査できない".to_owned(),
+        }),
+    ]);
+
+    assert_eq!(repository.list_active(), Ok(Vec::new()));
+    assert_eq!(
+        repository.list_active(),
+        Err(ReadError::Io {
+            message: "走査できない".to_owned()
+        })
+    );
+}
+
+#[test]
+fn リポジトリは保存の結果を順に返して渡されたタスクを記録する() {
+    let repository = ScriptedTaskRepository::new().with_save([
+        Ok(()),
+        Err(SaveError::Io {
+            message: "書き込めない".to_owned(),
+        }),
+    ]);
+    let first = task("t1");
+    let second = task("t2");
+
+    assert_eq!(repository.save(&first), Ok(()));
+    assert_eq!(
+        repository.save(&second),
+        Err(SaveError::Io {
+            message: "書き込めない".to_owned()
+        })
+    );
+    assert_eq!(repository.saved(), vec![first, second]);
+}
+
+#[test]
+fn 可変クロックは置いた時刻を返し過去へも戻せる() {
+    let clock = SettableClock::new(moment());
+    let later = Timestamp::parse_rfc3339("2026-08-11T09:16:00Z").expect("受理される");
+
+    assert_eq!(clock.now(), moment());
+    clock.set(later);
+    assert_eq!(clock.now(), later);
+    clock.set(moment());
+    assert_eq!(clock.now(), moment());
+}
+
+#[test]
+fn runストアはメソッドごとの結果を返して呼び出しを記録する() {
+    let store = ScriptedRunStore::new()
+        .with_write_starttime([Ok(())])
+        .with_write_pid_file([Err(Io::Failed {
+            message: "書き込めない".to_owned(),
+        })])
+        .with_marker_exists([Ok(true)]);
+    let run_dir = run_dir();
+
+    assert_eq!(store.write_starttime(&run_dir, &starttime()), Ok(()));
+    assert_eq!(
+        store.write_pid_file(&run_dir, &pid_content()),
+        Err(Io::Failed {
+            message: "書き込めない".to_owned()
+        })
+    );
+    assert_eq!(store.marker_exists(&run_dir), Ok(true));
+    assert_eq!(
+        store.calls(),
+        vec![
+            RunStoreCall::WriteStarttime {
+                run_dir: run_dir.clone(),
+                record: starttime(),
+            },
+            RunStoreCall::WritePidFile {
+                run_dir: run_dir.clone(),
+                content: pid_content(),
+            },
+            RunStoreCall::MarkerExists { run_dir },
+        ]
+    );
+}
+
+#[test]
+fn プロセスコントローラーはメソッドごとの結果を返して呼び出しを記録する() {
+    let controller = ScriptedProcessController::new()
+        .with_own_identity([Ok(identity())])
+        .with_run_agent([ExitCode::new(7)])
+        .with_spawn_wrapper([Err(SpawnError::Failed {
+            message: "起動できない".to_owned(),
+        })]);
+    let spec = WrapperLaunchSpec::new(run_dir(), agent_cmd(), workspace());
+
+    assert_eq!(controller.own_identity(), Ok(identity()));
+    assert_eq!(
+        controller.run_agent(
+            &agent_cmd(),
+            &workspace(),
+            &run_dir().stdout_log(),
+            &run_dir().stderr_log(),
+        ),
+        ExitCode::new(7)
+    );
+    assert_eq!(
+        controller.spawn_wrapper(&spec),
+        Err(SpawnError::Failed {
+            message: "起動できない".to_owned()
+        })
+    );
+    assert_eq!(
+        controller.calls(),
+        vec![
+            ProcessControllerCall::OwnIdentity,
+            ProcessControllerCall::RunAgent {
+                cmd: agent_cmd(),
+                cwd: workspace(),
+                stdout: run_dir().stdout_log(),
+                stderr: run_dir().stderr_log(),
+            },
+            ProcessControllerCall::SpawnWrapper { spec },
+        ]
+    );
 }
 
 #[test]
@@ -119,13 +250,55 @@ fn branch() -> BranchName {
     BranchName::parse("main".to_owned()).expect("受理される")
 }
 
-fn repo() -> RepoPath {
-    let path = if std::path::MAIN_SEPARATOR == '\\' {
-        PathBuf::from("C:\\repos\\pulsen")
+fn absolute(segments: &[&str]) -> PathBuf {
+    let mut path = if std::path::MAIN_SEPARATOR == '\\' {
+        PathBuf::from("C:\\")
     } else {
-        PathBuf::from("/repos/pulsen")
+        PathBuf::from("/")
     };
-    RepoPath::parse(path).expect("受理される")
+    for segment in segments {
+        path.push(segment);
+    }
+    path
+}
+
+fn repo() -> RepoPath {
+    RepoPath::parse(absolute(&["repos", "pulsen"])).expect("受理される")
+}
+
+fn run_dir() -> RunDirPath {
+    RunDirPath::derive(
+        &StateRoot::parse(absolute(&["home", "u", ".pulsen", "state"])).expect("受理される"),
+        &task_id("20260811t091530-k3f9qa1b"),
+        AttemptNumber::parse(1).expect("受理される"),
+    )
+}
+
+fn workspace() -> WorktreePath {
+    WorktreePath::parse(absolute(&["home", "u", ".pulsen", "worktrees", "t1"])).expect("受理される")
+}
+
+fn agent_cmd() -> CommandLine {
+    CommandLine::rehydrate(vec!["claude".to_owned(), "実装して".to_owned()]).expect("受理される")
+}
+
+fn starttime() -> StartTimeRecord {
+    StartTimeRecord::new(
+        ProcessStartTime::parse("Wed Aug 12 11:44:13 2026".to_owned()).expect("受理される"),
+        moment(),
+    )
+}
+
+fn pid_content() -> PidFileContent {
+    PidFileContent::new(Pid::new(4242), kill_ident())
+}
+
+fn identity() -> WrapperIdentity {
+    WrapperIdentity::new(Pid::new(4242), kill_ident(), starttime())
+}
+
+fn kill_ident() -> KillIdent {
+    KillIdent::parse("-4242".to_owned()).expect("受理される")
 }
 
 fn task(id: &str) -> Task {
