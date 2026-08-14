@@ -1,0 +1,214 @@
+# ADR — Issue #3: tick による観測・判定・ステータス遷移(リトライ・凍結・通知)
+
+spec に書かれていない実装手段の判断だけを記録する。判定プロトコルの4値解釈(ADR-008)・連続失敗カウンタ(ADR-009)・`NOTIFY_TIMEOUT`(ADR-018)・凍結の受け渡し(ADR-097)など、既に決着している事項は再記録しない。
+
+## ADR-001: `CommandRunner` の timeout は追加依存なしで、`try_wait` のポーリングとして組む
+
+### Status
+
+Proposed
+
+### Context
+
+`CommandRunner::run` は `timeout: Option<&DurationSpec>` を受け取り、超過時に「起動したプロセスを終了させて `TimedOut` を返す」ことを契約とする(`spec/domains/execution.md#commandrunner`、TC-port-command-runner-012)。判定コマンド(`judge_timeout`、既定60秒)と通知コマンド(`NOTIFY_TIMEOUT`、60秒)の両方がこのポートに乗る。
+
+ところが std に「子プロセスを期限つきで待つ」API は無い。`Child::wait` はブロックし、期限を渡せない。ADR-023 が本番依存を6クレートに閉じており `wait-timeout` / `nix` / `tokio` はいずれも入っていない。workspace lints の `unsafe_code = "forbid"` により `waitpid` の直接呼び出しもできない。
+
+選択肢は3つあった。
+
+1. `wait-timeout` 等のクレートを足す
+2. `Child` を別スレッドへ move して `wait()` させ、`mpsc::recv_timeout` で期限を測る
+3. 呼び出しスレッドで `Child::try_wait()` を短い間隔でポーリングし、期限超過で `Child::kill()` → `wait()`
+
+### Decision
+
+**3(`try_wait` のポーリング)を採る。** 依存を増やさず、`unsafe` も使わない。
+
+2 を採らないのは、`Child` をスレッドへ move すると呼び出し側に終了させる手段が残らないためである。契約は「timeout 後に生存していない」ことまで要求しており、kill するには `Child` の所有権(`kill` は `&mut self`)が要る。pid だけを取り出して `ProcessController::kill` 相当の経路で殺す案は、CommandRunner に実行単位の同定という別の関心を持ち込むうえ、判定コマンドは新しいプロセスグループの長ではないので `KillIdent` の語彙がそもそも合わない。
+
+1 を採らないのは、ADR-023 の依存方針を1つのポートの実装都合で緩めることになるためである。ポーリングで契約を満たせる以上、依存を増やす理由が立たない。
+
+ポーリング間隔は「判定・通知の完了検出が体感の遅延にならない」ことと「1タスクあたりの `try_wait` 呼び出し回数が実用の範囲に収まる」ことの両方から選び、値は1箇所の定数に置く。timeout 未指定(`None`)のときはポーリングせずに `wait()` する — 期限が無いのに繰り返し起こす理由が無い。
+
+### Consequences
+
+- 良い点: 依存も `unsafe` も増えず、`Child` の所有権を保ったまま「超過 → kill → wait」を素直に書ける
+- トレードオフ: 完了の検出が最大でポーリング間隔ぶん遅れる。timeout の判定にも同じ粒度の誤差が乗るため、適合ケース(TC-port-command-runner-012 / 013)の timeout は間隔より十分大きく取る
+- トレードオフ: 待機中に呼び出しスレッドが定期的に起きる。tick は排他ロックを保持したままこの待機に入るので、間隔を短くしすぎると cron 実行での無駄が積み上がる
+- `kill` するのは起動した直接の子だけで、その子が起こした孫は残りうる。契約が要求するのは「起動されたプロセスは終了させられている」ことなので満たすが、判定コマンドが孫を残す設計であることを利用者に要求しない(残存は許容する)
+
+---
+
+## ADR-002: 実行単位の終了は同定子をそのまま渡せる外部コマンドで行い、同定できないときは何も殺さない
+
+### Status
+
+Proposed
+
+### Context
+
+`ProcessController::kill(ident: &KillIdent)` と `try_kill_remnants(ident)` は、プロセスグループ相当の実行単位を一括終了する。ADR-075 が決めたのはデタッチ起動・kill 同定子の**記録**・起動時刻の観測までで、終了操作そのものは未決だった。
+
+`KillIdent` は POSIX で `-<pgid>`、Windows で `<pid>` の文字列として**タスクファイルと pid ファイルに永続化**される(ADR-075)。ツールを再起動した後でも、この値だけで kill できることが契約である(TC-port-process-controller-012)。プロセスハンドルは保持できない。
+
+`try_kill_remnants` の期待結果には `NotIdentifiable` があり、「いかなるプロセスも終了させない(無関係なプロセスの誤殺がない)」ことまでが期待に含まれる(TC-port-process-controller-015)。
+
+### Decision
+
+**終了操作は外部コマンドの起動で行い、`KillIdent` の文字列をそのまま引数に渡す。** OS 依存の分岐は `adapter/process.rs` に閉じたままにする(ADR-075 と同じ隔離)。
+
+- POSIX: `kill` に負の PGID 表記を渡す。`KillIdent` はこの形式で作られているので、アダプターが文字列を組み直さない — 組み直すと、記録した値と実際に殺す対象がずれる経路ができる
+- Windows: プロセスツリーを対象とする終了コマンドに `<pid>` を渡す
+
+**`try_kill_remnants` は、実行単位のメンバーを列挙できたときにだけ終了を実行する。** 列挙には ADR-075 / ADR-076 が既に注入している同定情報の取得元を使う。列挙できない(取得機構が失敗する・実行単位が既に存在しない)場合は `NotIdentifiable` を返し、**終了コマンドを1度も起動しない**。列挙せずに同定子へ終了を投げる実装は、PGID が別の実行単位に再利用されていたときに無関係なプロセス群を殺す — `starttime` 照合で PID 再利用を防いでいるのと同じ危険が、PGID にもある。
+
+`kill` は呼び出し前提が「`IdentityCheck` が `Alive`」であり、照合はユースケースが済ませている。こちらは列挙を挟まずそのまま終了を実行し、失敗は `KillError::Failed { message }` として値で返す(分類には使わない)。
+
+### Consequences
+
+- 良い点: 記録した同定子と終了対象が構成上ずれない。取得元の注入(ADR-076)がそのまま終了側にも効き、適合ケースの `NotIdentifiable` を確定的に作れる
+- 良い点: 誤殺しない側に倒す判断がコードの分岐として現れるので、レビューで確認できる
+- トレードオフ: `try_kill_remnants` が列挙のぶん遅くなり、列挙と終了の間に生まれたプロセスは取り逃す。ベストエフォートの契約(結果は分類に影響しない)の範囲に収まる
+- トレードオフ: 終了コマンドの実体に依存する。既定は絶対パスで固定し(ADR-075 の取得元と同じ扱い)、構築時に注入できるようにして適合ケースが失敗状況を作れるようにする
+
+---
+
+## ADR-003: 共通手続き notify は通知に必要な3値と保存手段を分けて受け取り、Task と DegradedTask の両方から呼べる形にする
+
+### Status
+
+Proposed
+
+### Context
+
+共通手続き notify は `TASK_ID` / `WORKFLOW` / `TASK_STATUS` を env に組み、`Exited(0)` のときだけ `mark_notified(now)` → `save` する。呼び出し元は5つある — 上限超過3経路(`Tick::commit` の `Freeze::Frozen` の枝に集約済み)、`Branch::Notify` アーム、`TaskRecord::SnapshotUnreadable` かつ未通知 stopped の再通知。
+
+最後の1つだけ対象が `DegradedTask` で、保存は `save_degraded` になる(`spec/domains/task.md#degradedtaskスナップショット破損タスク`、PAGE-tick-007、TC-exec-tick-158)。ところが既存の集約点 `Tick::commit` は `&Task` 専用で、`DegradedTask` を通せない。
+
+`DegradedTask` を通せないまま放置すると、「スナップショット破損タスクを凍結 → notify_cmd 失敗」の後に再通知が永遠に行われず、requirements §8 の at-least-once が破れる。
+
+### Decision
+
+**通知の実行と `mark_notified` の保存を分ける。** 通知の実行は `TaskId` / `WorkflowName` / `StatusName` の3値だけを受け取る関数にし、その3値はどちらの型からも同じ形で取れる(`DegradedTask` はスナップショットを持たないが、この3つはいずれもスナップショット非依存のフィールドである — これが「通知は定義非依存」の実体)。保存は呼び出し側が `save` / `save_degraded` を選ぶ。
+
+`Task` を扱う3経路は引き続き `Tick::commit` を通し(`Freeze` の受け渡しは ADR-097 のまま)、`DegradedTask` の再通知だけが `save_degraded` の経路を持つ。共通化のためにトレイトで抽象化することはしない — 2つの型に共通の遷移は本スライスでは `mark_notified` の1つだけで、抽象を先に置くと #5 が足す `abort` / `retry` の差異(`retry` は `DegradedTask` では警告付きで受理される)を吸収しきれない。
+
+### Consequences
+
+- 良い点: 通知の env 構成と成否の解釈が1箇所に閉じ、保存の違いだけが呼び出し側に残る。破損時にも at-least-once が維持される
+- 良い点: `Tick::commit` の役割(保存 + 凍結の集計)が変わらないので、ADR-097 の判断がそのまま生きる
+- トレードオフ: 通知アームが `Task` 用と `DegradedTask` 用の2本になる。分岐は「どちらの保存を呼ぶか」だけで、通知の判断は共有される
+- #5 が `abort` を足すとき、`AbortTask` ユースケースが同じ関数を呼べる(そちらも `Task` / `DegradedTask` の両方を扱う)
+
+---
+
+## ADR-004: 手続きD 冒頭の不変条件3 の破れは、不変条件2 とは別の報告分類にする
+
+### Status
+
+Proposed
+
+### Context
+
+手続きDの冒頭は、`current_attempt` が None(不変条件2の破れ)に加えて `current_attempt.process` が None(不変条件3の破れ)を検査し、報告してスキップする(`spec/usecases/execution.md#手続きd-観測判定running`、TC-exec-tick-022)。
+
+既存の `TickIssue::MissingCurrentAttempt` は #2 が手続きCのために置いたもので、attempt 参照そのものが無い場合だけを指す。不変条件3 の破れをこれに相乗りさせるか、新しい分類を足すかを決める必要があった。
+
+ADR-096 は「遷移エラーの `MissingCurrentAttempt` と tick の報告分類の `MissingCurrentAttempt` は同じ事実の別文脈での報告」として重複を許したが、それは**同じ事実**だからである。
+
+### Decision
+
+**新しい分類を足す。** 不変条件2 と3 は破れの事実が違い、人間に求める修復も違う — 前者は attempt 参照そのものが失われている(run ディレクトリへの導線が無い)、後者は attempt はあるが同定情報が無い(pid ファイルから復元できる可能性がある)。同じ文言に畳むと、`cli::render` が出す案内が修復の入口を示せなくなる。
+
+### Consequences
+
+- 良い点: 表示から修復の手がかりが読み取れる。tick は書き込まずに人間へ委ねるので、報告の解像度がそのまま復旧の速さになる
+- トレードオフ: `TickIssue` の変種が1つ増える。分類の列挙は網羅 `match` で表示側が受けるため、足し忘れはコンパイルエラーになる
+
+---
+
+## ADR-005: 判定 completed の確定はサマリーの新しいフィールド `judged` にする
+
+### Status
+
+Proposed
+
+### Context
+
+ADR-092 は「**タスクファイルへの書き込みを行った経路は必ずサマリーのいずれかのフィールドを埋める**」を不変とし、ADR-094 はその不変を満たすために `confirmed_running` を1つ足した。
+
+本スライスが足す書き込み経路のうち、`skip_run` は `skipped_back`、`advance` は `transitioned`、`mark_notified` は `notified`、失敗の記録3種(`fail_run` / `record_judge_failure` と残存終了の報告)は `errors` に収まる。収まらないのは `complete_run` だけである — spec の出力 DTO に「判定が成功として確定した」を受けるフィールドが無い。
+
+`transitioned` は「タスクステータスが遷移したタスク」で、`advance` の結果を指す語として確定している。`complete_run` を混ぜると、1タスク1tick1ステップの2つのステップが同じフィールドに現れ、`advance` を行わない tick と行った tick を表示から区別できなくなる。
+
+放置すると、主経路である「exit 0 の観測」が毎回「処理対象のタスクはありませんでした。」と表示される。
+
+### Decision
+
+**フィールド `judged: Vec<TaskId>` を1つ足す。** 語義は「判定 completed を確定したタスク」で、`confirmed_running` と同じ扱い(spec の9フィールドに載らない正常な前進)にする。
+
+失敗の側を `errors` に載せる ADR-094 の判断はそのまま使う。判定の3値のうち `Skipped` は spec が `skipped_back` を用意しており、`Failed` は「記録した失敗」として `errors` の定義に収まる。フィールドが要るのは `Completed` だけになる。
+
+### Consequences
+
+- 良い点: ADR-092 の不変が本スライスの全経路で成立し、判定が確定した tick が必ず表示に現れる
+- 良い点: `transitioned` が spec の語義(ステータスの遷移)のまま残り、`advance` を入れた本スライスでも意味がぶれない
+- トレードオフ: 出力 DTO が spec から2フィールド分ずれる(`confirmed_running` と合わせて)。spec 追従の提起に1件足す
+- 表示は「判定確定」の行として `起動確認` と `遷移` の間に並ぶ。実行状態の遷移順と同じ並びになる
+
+---
+
+## ADR-006: 通知済みの凍結への再通知は専用の遷移エラーで拒否する
+
+### Status
+
+Proposed
+
+### Context
+
+`mark_notified` の前提は `Stopped { notified_at: None }` であり、状態の判別子(`ExecutionStateKind`)だけでは表せない。`TransitionError::InvalidState { expected, actual }` は判別子の組しか持たないため、通知済みの `Stopped` を拒否すると `expected = [stopped]` / `actual = stopped` という自己矛盾した報告になる。
+
+spec のエラー型は5種で、ADR-096 が「分類だけを持つ」ことを決めている。
+
+### Decision
+
+**変種 `AlreadyNotified` を足す。** `confirm_workspace` の再確定を拒否する `WorkspaceAlreadySet` と同じ形 — 「達成済みの操作を二度行おうとした」ことを、前提状態の不一致とは別の分類にする。
+
+tick の通知アームは `notified_at` が None のときだけ `mark_notified` を呼ぶので、この分類が実際に出るのは帳簿が並行に書き換わった場合に限る。それでも値として持つのは、ドメインの前提を型と値で閉じるため — 呼び出し側の事前検査に依存すると、#5 が足す `abort` / `retry` の経路で同じ検査を書き忘れても気づけない。
+
+### Consequences
+
+- 良い点: 「通知の前提を満たさない」の理由が表示から読み取れる(状態が違うのか、既に通知済みなのか)
+- 良い点: `DegradedTask::mark_notified` が同じ規則を共有でき、規則の実体を1つの関数に置ける
+- トレードオフ: `TransitionError` が spec の5種から6種になる。ADR-096 の「分類だけを持つ」性質は保たれるが、spec 追従の提起に1件足す
+
+---
+
+## ADR-007: 終了操作の実体も構築時に注入し、観測スイートの異常系を確定的に走らせる
+
+### Status
+
+Proposed
+
+### Context
+
+plan.md は TC-port-process-controller-010 / 013 / 015 / 016 を「実行環境が前提を作れないとスキップで終わる行」に数え、010 は `permission_restrictions_effective` を判定にすると見込んでいた(起動時刻の取得手段への読み取りを塞ぐ)。
+
+ところが ADR-076 が既に、同定情報の**取得元を構築時に注入**する形を作っている。存在しないパスを取得元にしたコントローラは、権限にも root の可否にも依存せず「取得機構そのものの失敗」を返す。
+
+### Decision
+
+**終了操作の実体にも同じ注入口(`TerminatorSource`)を置き、4行とも別ハンドルの注入で確定的に走らせる。**
+
+- 010(取得機構の失敗)/ 015(同定できない)→ 取得元を壊したコントローラ
+- 013 / 016(終了操作の失敗)→ 終了操作の実体を壊したコントローラ
+
+015 は「いかなるプロセスも終了させない」ことまでが期待なので、生存中の実行単位を作ってメンバーが生き残ることで観測する。列挙が失敗した時点で終了操作を1度も起動しない実装だけがこれを通る。
+
+スキップの宣言に残すのは、実行単位(プロセスグループ相当)そのものを作れない・その一部だけを終了させられないプラットフォームだけになる(011〜016 の6行)。
+
+### Consequences
+
+- 良い点: 権限操作にも root の可否にも依存せず、誤殺しないことの主張が常に走る
+- 良い点: 既定の実体は絶対パス(または PATH 解決の固定名)のままで、本番の構成は変わらない
+- トレードオフ: `SystemProcessController` に注入口が1つ増える。既定を持つ後付けのメソッド(`with_terminator_source`)にして、合成ルートの呼び出しは変えない
