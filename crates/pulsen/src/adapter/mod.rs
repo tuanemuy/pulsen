@@ -1,6 +1,7 @@
 //! ポートの実装。
 
 pub mod clock;
+pub mod command_runner;
 pub mod config_store;
 pub mod lock;
 pub mod process;

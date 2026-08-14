@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 
 use pulsen_domain::definition::CommandLine;
 use pulsen_domain::execution::{
-    ExitCode, Io, ProcessController, SpawnError, WrapperIdentity, WrapperLaunchSpec,
+    ExitCode, Io, KillError, ProcessController, RemnantOutcome, SpawnError, WrapperIdentity,
+    WrapperLaunchSpec,
 };
-use pulsen_domain::task::WorktreePath;
+use pulsen_domain::task::{KillIdent, Pid, ProcessStartTime, WorktreePath};
 
 /// 記録された呼び出し。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,21 @@ pub enum ProcessControllerCall {
         /// 標準エラーのリダイレクト先。
         stderr: PathBuf,
     },
+    /// `starttime_of`。
+    StarttimeOf {
+        /// 観測対象のプロセスID。
+        pid: Pid,
+    },
+    /// `kill`。
+    Kill {
+        /// 終了対象の実行単位。
+        ident: KillIdent,
+    },
+    /// `try_kill_remnants`。
+    TryKillRemnants {
+        /// 終了対象の実行単位。
+        ident: KillIdent,
+    },
 }
 
 /// メソッドごとにあらかじめ与えた結果を順に返すコントローラー。
@@ -42,6 +58,9 @@ pub struct ScriptedProcessController {
     spawn_wrapper: RefCell<VecDeque<Result<(), SpawnError>>>,
     own_identity: RefCell<VecDeque<Result<WrapperIdentity, Io>>>,
     run_agent: RefCell<VecDeque<ExitCode>>,
+    starttime_of: RefCell<VecDeque<Result<Option<ProcessStartTime>, Io>>>,
+    kill: RefCell<VecDeque<Result<(), KillError>>>,
+    try_kill_remnants: RefCell<VecDeque<RemnantOutcome>>,
     calls: RefCell<Vec<ProcessControllerCall>>,
 }
 
@@ -72,6 +91,27 @@ impl ScriptedProcessController {
     /// `run_agent` が返す終了結果の列を与える。
     pub fn with_run_agent(self, results: impl IntoIterator<Item = ExitCode>) -> Self {
         *self.run_agent.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `starttime_of` が返す結果の列を与える。
+    pub fn with_starttime_of(
+        self,
+        results: impl IntoIterator<Item = Result<Option<ProcessStartTime>, Io>>,
+    ) -> Self {
+        *self.starttime_of.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `kill` が返す結果の列を与える。
+    pub fn with_kill(self, results: impl IntoIterator<Item = Result<(), KillError>>) -> Self {
+        *self.kill.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `try_kill_remnants` が返す結果の列を与える。
+    pub fn with_try_kill_remnants(self, results: impl IntoIterator<Item = RemnantOutcome>) -> Self {
+        *self.try_kill_remnants.borrow_mut() = results.into_iter().collect();
         self
     }
 
@@ -119,6 +159,38 @@ impl ProcessController for ScriptedProcessController {
             });
         let Some(result) = self.run_agent.borrow_mut().pop_front() else {
             panic!("run_agent の結果を使い切った")
+        };
+        result
+    }
+
+    fn starttime_of(&self, pid: Pid) -> Result<Option<ProcessStartTime>, Io> {
+        self.calls
+            .borrow_mut()
+            .push(ProcessControllerCall::StarttimeOf { pid });
+        let Some(result) = self.starttime_of.borrow_mut().pop_front() else {
+            panic!("starttime_of の結果を使い切った")
+        };
+        result
+    }
+
+    fn kill(&self, ident: &KillIdent) -> Result<(), KillError> {
+        self.calls.borrow_mut().push(ProcessControllerCall::Kill {
+            ident: ident.clone(),
+        });
+        let Some(result) = self.kill.borrow_mut().pop_front() else {
+            panic!("kill の結果を使い切った")
+        };
+        result
+    }
+
+    fn try_kill_remnants(&self, ident: &KillIdent) -> RemnantOutcome {
+        self.calls
+            .borrow_mut()
+            .push(ProcessControllerCall::TryKillRemnants {
+                ident: ident.clone(),
+            });
+        let Some(result) = self.try_kill_remnants.borrow_mut().pop_front() else {
+            panic!("try_kill_remnants の結果を使い切った")
         };
         result
     }

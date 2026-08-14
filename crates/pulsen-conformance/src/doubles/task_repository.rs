@@ -10,16 +10,19 @@ use pulsen_domain::task::{
 
 /// あらかじめ与えた結果を順に返し、渡されたタスクを記録するリポジトリ。
 ///
-/// 扱うのは `create` / `list_active` / `save` の3メソッドにする — ここまでのユースケース
-/// (タスク登録・tick)が呼ぶのはこれらであり、残りに台本を持たせても検証する対象がない。
-/// 呼ばれた場合はテスト側の前提が崩れているため、値を返さずパニックさせる。
+/// 扱うのは `create` / `list_active` / `save` / `save_degraded` の4メソッドにする —
+/// ここまでのユースケース(タスク登録・tick)が呼ぶのはこれらであり、残りに台本を
+/// 持たせても検証する対象がない。呼ばれた場合はテスト側の前提が崩れているため、値を
+/// 返さずパニックさせる。
 #[derive(Debug, Default)]
 pub struct ScriptedTaskRepository {
     create: RefCell<VecDeque<Result<(), CreateError>>>,
     list_active: RefCell<VecDeque<Result<Vec<TaskEntry>, ReadError>>>,
     save: RefCell<VecDeque<Result<(), SaveError>>>,
+    save_degraded: RefCell<VecDeque<Result<(), SaveError>>>,
     created: RefCell<Vec<Task>>,
     saved: RefCell<Vec<Task>>,
+    saved_degraded: RefCell<Vec<DegradedTask>>,
 }
 
 impl ScriptedTaskRepository {
@@ -47,6 +50,20 @@ impl ScriptedTaskRepository {
     pub fn with_save(self, results: impl IntoIterator<Item = Result<(), SaveError>>) -> Self {
         *self.save.borrow_mut() = results.into_iter().collect();
         self
+    }
+
+    /// `save_degraded` が返す結果の列を与える。
+    pub fn with_save_degraded(
+        self,
+        results: impl IntoIterator<Item = Result<(), SaveError>>,
+    ) -> Self {
+        *self.save_degraded.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// これまでに `save_degraded` へ渡されたタスク。
+    pub fn saved_degraded(&self) -> Vec<DegradedTask> {
+        self.saved_degraded.borrow().clone()
     }
 
     /// これまでに `create` へ渡されたタスク。
@@ -82,8 +99,12 @@ impl TaskRepository for ScriptedTaskRepository {
         result
     }
 
-    fn save_degraded(&self, _task: &DegradedTask) -> Result<(), SaveError> {
-        panic!("このダブルは create / list_active / save のみを扱う")
+    fn save_degraded(&self, task: &DegradedTask) -> Result<(), SaveError> {
+        self.saved_degraded.borrow_mut().push(task.clone());
+        let Some(result) = self.save_degraded.borrow_mut().pop_front() else {
+            panic!("save_degraded の結果を使い切った")
+        };
+        result
     }
 
     fn find(&self, _id: &TaskId) -> Result<TaskLookup, ReadError> {

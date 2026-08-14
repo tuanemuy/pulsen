@@ -29,6 +29,11 @@ pub enum RunStoreCall {
         /// 対象の run ディレクトリ。
         run_dir: RunDirPath,
     },
+    /// `read_exit`。
+    ReadExit {
+        /// 対象の run ディレクトリ。
+        run_dir: RunDirPath,
+    },
     /// `write_invalidation_marker`。
     WriteInvalidationMarker {
         /// 対象の run ディレクトリ。
@@ -71,6 +76,7 @@ pub struct ScriptedRunStore {
     prepare_attempt: RefCell<VecDeque<Result<RunDirPath, Io>>>,
     read_pid_file: RefCell<VecDeque<Result<Option<PidFileContent>, RunFileError>>>,
     read_starttime: RefCell<VecDeque<Result<Option<StartTimeRecord>, RunFileError>>>,
+    read_exit: RefCell<VecDeque<Result<Option<ExitCode>, RunFileError>>>,
     write_invalidation_marker: RefCell<VecDeque<Result<(), Io>>>,
     marker_exists: RefCell<VecDeque<Result<bool, Io>>>,
     write_starttime: RefCell<VecDeque<Result<(), Io>>>,
@@ -109,6 +115,15 @@ impl ScriptedRunStore {
         results: impl IntoIterator<Item = Result<Option<StartTimeRecord>, RunFileError>>,
     ) -> Self {
         *self.read_starttime.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `read_exit` が返す結果の列を与える。
+    pub fn with_read_exit(
+        self,
+        results: impl IntoIterator<Item = Result<Option<ExitCode>, RunFileError>>,
+    ) -> Self {
+        *self.read_exit.borrow_mut() = results.into_iter().collect();
         self
     }
 
@@ -190,8 +205,14 @@ impl RunStore for ScriptedRunStore {
         result
     }
 
-    fn read_exit(&self, _run_dir: &RunDirPath) -> Result<Option<ExitCode>, RunFileError> {
-        panic!("このダブルは exit の読み取りを扱わない")
+    fn read_exit(&self, run_dir: &RunDirPath) -> Result<Option<ExitCode>, RunFileError> {
+        self.record(RunStoreCall::ReadExit {
+            run_dir: run_dir.clone(),
+        });
+        let Some(result) = self.read_exit.borrow_mut().pop_front() else {
+            panic!("read_exit の結果を使い切った")
+        };
+        result
     }
 
     fn write_invalidation_marker(&self, run_dir: &RunDirPath) -> Result<(), Io> {

@@ -14,6 +14,7 @@
 //! テスト側の不変条件違反であり、値として返すとテストが誤った前提のまま緑になる。
 
 mod clock;
+mod command_runner;
 mod lock;
 mod process;
 mod run_store;
@@ -26,6 +27,7 @@ mod worktree;
 mod tests;
 
 pub use clock::{FixedClock, SettableClock};
+pub use command_runner::{CommandRunnerCall, ScriptedCommandRunner};
 pub use lock::{LockOutcome, ScriptedExclusiveLock};
 pub use process::{ProcessControllerCall, ScriptedProcessController};
 pub use run_store::{RunStoreCall, ScriptedRunStore};
