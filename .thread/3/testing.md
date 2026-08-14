@@ -287,9 +287,11 @@ plan.md「テスト方針 — 手動確認」の表が定める制約を、本�
 
 `draft.yaml` / `broken-syntax.yaml` / `wtloss.yaml` / `repo2` を使う TC（TC-02 / 09 / 12 / 18）は本スライスの対象外なので、これらのフィクスチャは作成を省略してよい。対象に含まれる TC-20 は手順1 で `draft.yaml` を使うが、その手順が要求するのは「破損させない別のタスクが同じ tick に居ること」だけなので、エッジケース6 では `pipeline` の2件目で代替する。
 
-#### フィクスチャB — `spec/manual-tests/setup.md`（TC-09 / 10 / 11 / 35 / 37 / 38 / 39 / 47 用）
+#### フィクスチャB — `spec/manual-tests/setup.md`（TC-09 / 10 / 11 / 37 / 38 / 39 / 47 用）
 
 同ドキュメントの「事前準備」1〜3 と TC-01 手順1 を先行実行する（plan.md が TC-09 の前提として明示している）。フィクスチャA とは別のホームを使うので混ざらない。
+
+`setup.md` TC-35 はこのフィクスチャには含まない — `intervention.md` TC-15 と同じ「notify_cmd 未定義 → 後から定義して catch-up」を問うので、確認項目9 手順7〜10 の1系列（フィクスチャC）で消化する。
 
 ```sh
 export SETUP_HOME="$HOME/pulsen-manual-test"
@@ -411,7 +413,7 @@ EOF
 : > "$PMT/notify.log"
 ```
 
-`wf-fail` の `work` は `retries` を持たないため、既定のリトライ上限（未指定時の既定値）まで失敗を重ねてから凍結する。手順書は「目安 10 回の tick」としている。フィクスチャC を使う項目は `--home "$PMT/home"` を明示する。
+`wf-fail` の `work` は `retries` を持たないため、組み込みの既定リトライ上限 2（`WorkflowDefinition::DEFAULT_RETRY_LIMIT`。ADR-014）まで失敗を重ねてから凍結する。凍結は `attempt_count` 3 > 2 の tick で起きるので、1 attempt あたり3刻み（起動 → 起動確認 → 判定）× 3 attempt = **9回の tick** を要する（手順書の「目安 10 回」はこの9回を含む見積り）。フィクスチャC を使う項目は `--home "$PMT/home"` を明示する。
 
 ### デプロイ方法
 
@@ -502,7 +504,7 @@ EOF
   - 手順10: チェックの exit 1 が判定コマンドにより 10 へ写像され、`.execution.state` が `failed`・`.counters.attempt_count` が 1・`.task_status` は `watch` のまま。
   - 手順11: 障害解消後のチェックが exit 20 で終わって skipped となり、`.execution.state` が `pending`・`.counters.attempt_count` が **0 にリセット**されている（散発失敗の蓄積で凍結しない）。
   - 手順12: T19 の通知行は無い（凍結に至っていない）。
-- **確認ポイント:** 手順2〜4 を通じて `.task_status` が `work` から一切変化しないこと（失敗の履歴は実行状態と `attempt_count` にのみ表れる）。`.counters.spawn_fail_count` が終始 0 であること（`complete_run` / `skip_run` は `spawn_fail_count` を触らない）。`.last_failure` が failed の間だけ残り、completed の確定後に再導出の妨げにならないこと。
+- **確認ポイント:** 手順2〜4 を通じて `.task_status` が `work` から一切変化しないこと（失敗の履歴は実行状態と `attempt_count` にのみ表れる）。`.counters.spawn_fail_count` が終始 0 であること（`complete_run` / `skip_run` は `spawn_fail_count` を触らない）。`.last_failure` が `null` のまま動かないこと — `FailureNote` はツール操作の失敗（worktree 作成・削除、アーカイブ移動、spawn 失敗）と判定失敗だけを記録し、**エージェント実行自体の失敗は記録しない**（`spec/domains/task.md#failurenote`。`fail_run` は `last_failure` を触らない）。実行が失敗した要因は run ディレクトリの `exit` / `stderr.log` と tick の報告文から読む。
 
 ### 4. skipped によるポーリング周回（judge の exit 20）
 
@@ -553,7 +555,7 @@ EOF
 - **期待結果:**
   - 手順3: `exit` の `.code` が 20。pending 復帰（skipped）ではなく、`retries: 0` により `.execution` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。`.counters.attempt_count` が 1。
   - 手順4: `stopped <T23> exit20 work` の通知行が1行ある。
-  - 手順7: `exit` の `.code` が 127（コマンド不在の符号化）。`.execution.state` が `stopped` で `.execution.reason` は `retry_limit_exceeded`、`.counters.spawn_fail_count` は **0**、`.last_failure.kind` は `spawn_fail` ではない。
+  - 手順7: `exit` の `.code` が 127（コマンド不在の符号化）。`.execution.state` が `stopped` で `.execution.reason` は `retry_limit_exceeded`、`.counters.spawn_fail_count` は **0**、`.last_failure` は `null`（エージェント実行の失敗は `FailureNote` に記録されないので、`spawn_fail` としても残らない）。
   - 手順8: 通知行が1行ある。
 - **確認ポイント:** exit 20 の扱いが判定コマンドの有無で変わること（判定コマンドがあれば skipped、なければ failed。ADR-008）。TC-17 と TC-16（spawn 失敗）の経路の違いが `spawn_fail_count` と attempt の採番有無で識別できること — 起動不能でも attempt は採番され run ディレクトリが作られる。
 
@@ -599,21 +601,21 @@ EOF
   3. `grep "$T13" /tmp/pulsen-test/notify.log; echo $?`（この時点では無いこと）
   4. `pulsen tick` を2〜3秒間隔で3回（再起動 → spawn確認 → 判定）→ `cat "$PULSEN_HOME/state/tasks/$T13.json"`
   5. `grep "$T13" /tmp/pulsen-test/notify.log`
-  6. `ls "$PULSEN_HOME/worktrees/$T13"; git -C /tmp/pulsen-test/repo branch --list "pulsen/$T13"`
+  6. `ls -a "$PULSEN_HOME/worktrees/$T13"; git -C /tmp/pulsen-test/repo branch --list "pulsen/$T13"`
   7. `md5 -q "$PULSEN_HOME/state/tasks/$T13.json" 2>/dev/null || md5sum "$PULSEN_HOME/state/tasks/$T13.json"` → `pulsen tick; echo $?` → 同じチェックサムを再取得 → `grep -c "$T13" /tmp/pulsen-test/notify.log`
   8. `retries: 0` の境界: `pulsen add --workflow fail0 --repo /tmp/pulsen-test/repo` → `export T22=<task-id>` → `pulsen tick` を3回 → `cat "$PULSEN_HOME/state/tasks/$T22.json"`; `ls "$PULSEN_HOME/state/runs/$T22/"`; `grep "$T22" /tmp/pulsen-test/notify.log`
-  9. 通知内容の証跡（フィクスチャC）: `pulsen --home "$PMT/home" add --workflow wf-fail --repo "$PMT/repo"` → `export TI1=<task-id>` → `: > "$PMT/notify.log"` → `pulsen --home "$PMT/home" tick` を2〜3秒間隔で繰り返す（目安10回。途中で `cat "$PMT/notify.log"` と `cat "$PMT/home/state/tasks/$TI1.json"` を確認する）
-  10. stopped 到達後: `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TI1.json"`; `cat "$PMT/home/state/runs/$TI1/attempt-<最新>/stderr.log"`; `ls "$PMT/home/worktrees/$TI1"`
+  9. 通知内容の証跡（フィクスチャC）: `pulsen --home "$PMT/home" add --workflow wf-fail --repo "$PMT/repo"` → `export TI1=<task-id>` → `: > "$PMT/notify.log"` → `pulsen --home "$PMT/home" tick` を2〜3秒間隔で繰り返す（9回目の tick で凍結する。途中で `cat "$PMT/notify.log"` と `cat "$PMT/home/state/tasks/$TI1.json"` を確認する）
+  10. stopped 到達後: `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TI1.json"`; `cat "$PMT/home/state/runs/$TI1/attempt-<最新>/stderr.log"`; `ls -a "$PMT/home/worktrees/$TI1"`
   11. `pulsen --home "$PMT/home" tick; echo $?; wc -l < "$PMT/notify.log"`
 - **期待結果:**
   - 手順2: `.execution.state` が `failed`、`.counters.attempt_count` が **1（= 上限 1。等号では凍結しない）**、`.task_status` は `work` のまま。`exit` の `.code` が 1。
   - 手順3: 通知は無い（failed の間は通知されない）。
   - 手順4: `attempt_count` 2 > 1 により `.execution` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。tick サマリーの「凍結」と「通知」の両方に T13 が現れる。`.task_status` は `work` のまま。
   - 手順5: `stopped <T13> fail work` の行が**ちょうど1行**。
-  - 手順6: worktree もブランチも残っている（凍結タスクの調査材料は自動削除されない）。
+  - 手順6: worktree もブランチも残っている（凍結タスクの調査材料は自動削除されない）。`fail` は成果物を書かないので worktree の中身は `.git` だけで、`ls -a` でないと存在が見えない。
   - 手順7: exit code 0。タスクファイルのチェックサムが変わらず、通知行数も増えない（通知済みの stopped は再通知されない・書き込みも起きない）。
   - 手順8: `.execution.state` が `stopped` / `retry_limit_exceeded`、run ディレクトリは `attempt-1` のみ（failed を経た再実行なしの即時凍結）、通知行が1行。
-  - 手順9〜10: failed でリトライしている間は `notify.log` に行が増えず、stopped 到達の tick でちょうど1行 `TASK_ID=<TI1> WORKFLOW=wf-fail TASK_STATUS=work` が追記される。`stderr.log` に `boom` があり、凍結原因をログから特定できる。
+  - 手順9〜10: failed でリトライしている間は `notify.log` に行が増えず、stopped 到達の tick でちょうど1行 `TASK_ID=<TI1> WORKFLOW=wf-fail TASK_STATUS=work` が追記される。`stderr.log` に `boom` があり、凍結原因をログから特定できる。worktree は残っている（`wf-fail` も成果物を書かないので中身は `.git` だけ）。
   - 手順11: 行数が増えない。
 - **確認ポイント:** 通知が**凍結を保存した同じ tick 内**で起きること（次の tick に持ち越されない）。`notified_at` が `null` のまま残る tick が1つも無いこと（成功する notify_cmd の場合）。通知の環境変数3つがすべて非空で、`TASK_STATUS` が凍結時点のタスクステータス（`work`）であること。凍結後の tick が `.updated_at` を更新しないこと — 更新されるなら「凍結の判定を保存後の状態から導出している」疑い（ADR-097）。
 
@@ -649,16 +651,16 @@ EOF
 - **手順:**
   1. 必ず失敗する通知に差し替える: `sed -i.bak 's|^notify_cmd:.*|notify_cmd: ["sh", "-c", "exit 1"]|' "$PMT/home/config.yaml"; grep -n notify_cmd "$PMT/home/config.yaml"; : > "$PMT/notify.log"`
   2. `pulsen --home "$PMT/home" add --workflow wf-fail --repo "$PMT/repo"` → `export TI24=<task-id>`
-  3. `pulsen --home "$PMT/home" tick; echo $?` を2〜3秒間隔で繰り返し（目安10回）、`.execution.state` が `stopped` になるまで進める → `cat "$PMT/home/state/tasks/$TI24.json"`
+  3. `pulsen --home "$PMT/home" tick; echo $?` を2〜3秒間隔で繰り返し（9回目の tick で凍結する）、`.execution.state` が `stopped` になるまで進める → `cat "$PMT/home/state/tasks/$TI24.json"`
   4. `cat "$PMT/notify.log"`
-  5. 通知を成功する形に戻す: `cp "$PMT/config.bak" "$PMT/home/config.yaml"` → `pulsen --home "$PMT/home" tick; echo $?` → `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TI24.json"`
+  5. 通知を成功する形に戻す: `cp "$PMT/config.bak" "$PMT/home/config.yaml"; rm -f "$PMT/home/config.yaml.bak"`（手順1 の `sed -i.bak` が残す控え） → `pulsen --home "$PMT/home" tick; echo $?` → `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TI24.json"`
   6. `pulsen --home "$PMT/home" tick; echo $?; wc -l < "$PMT/notify.log"`
-  7. notify_cmd 未定義（setup TC-35 の読み替え）: `grep -v '^notify_cmd:' "$PMT/config.bak" > "$PMT/home/config.yaml"; grep -c notify_cmd "$PMT/home/config.yaml"` → `pulsen --home "$PMT/home" add --workflow wf-fail --repo "$PMT/repo"` → `export TI35=<task-id>` → `pulsen --home "$PMT/home" tick` を繰り返して stopped まで進める
+  7. notify_cmd 未定義（setup TC-35 の読み替え）: `grep -v '^notify_cmd:' "$PMT/config.bak" > "$PMT/home/config.yaml"; grep -c notify_cmd "$PMT/home/config.yaml"` → `pulsen --home "$PMT/home" add --workflow wf-fail --repo "$PMT/repo"` → `export TI35=<task-id>` → `pulsen --home "$PMT/home" tick` を繰り返して stopped まで進める（同じく9回）
   8. `cat "$PMT/home/state/tasks/$TI35.json"`; `wc -l < "$PMT/notify.log"`
   9. catch-up: `cp "$PMT/config.bak" "$PMT/home/config.yaml"` → `pulsen --home "$PMT/home" tick; echo $?` → `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TI35.json"`
   10. `pulsen --home "$PMT/home" tick; echo $?; wc -l < "$PMT/notify.log"`
 - **期待結果:**
-  - 手順3: 凍結の tick は exit code **0** で完了する（通知の失敗は tick 全体を落とさない）。サマリーの「凍結」に TI24 が現れ、「通知」には現れない。通知の失敗が報告として読める形で出る。
+  - 手順3: 凍結の tick は exit code **0** で完了する（通知の失敗は tick 全体を落とさない）。サマリーの「凍結」に TI24 が現れ、「通知」には現れない。通知の失敗は報告4見出しのうち**「スキップ」**に `凍結を通知できません(…)。次の tick が再通知します` として出る（`TickIssue::NotifyFailed` はタスクファイルに何も残さない結末なので「失敗を記録」ではない。`crates/pulsen/src/cli/render.rs`）。
   - 手順3・4: `.execution.notified_at` が `null` のまま。`notify.log` は空。
   - 手順5: 次の tick で `notify.log` に `TASK_ID=<TI24>` の行が1行追加され、`.execution.notified_at` に時刻が入る。サマリーの「通知」に TI24 が現れる（「凍結」には現れない — 通知アームの保存は `Freeze::NotFrozen`。ADR-097）。
   - 手順6: 行が増えない。
@@ -681,34 +683,34 @@ EOF
   5. `ps -p "$P14"; echo $?; pgrep -f 'sleep 120'; echo $?`
   6. `ls "$PULSEN_HOME/state/runs/$T14/attempt-1/"`
   7. `pulsen tick` を2回（再起動 → spawn確認）→ 10秒以上待って `pulsen tick` → `cat "$PULSEN_HOME/state/tasks/$T14.json"`
-  8. `grep "$T14" /tmp/pulsen-test/notify.log; ls "$PULSEN_HOME/worktrees/$T14"`
+  8. `grep "$T14" /tmp/pulsen-test/notify.log; ls -a "$PULSEN_HOME/worktrees/$T14"`
 - **期待結果:**
   - 手順3: 2回とも exit code 0 で、チェックサムが変わらない（未超過の `KeepRunning` は書き込みを1回も起こさない）。サマリーに T14 は現れない。
   - 手順4: `.execution.state` が `failed`、`.counters.attempt_count` が 1（= 上限のため凍結しない）、`.task_status` は `work` のまま。
   - 手順5: 対象の `sleep 120` が残っていない（`ps` が非0 / `pgrep` が該当なし）— プロセスグループ相当の実行単位が終了している。
   - 手順6: `exit` ファイルは存在しない（kill されたのでラッパーは書けない）。`pid` / `starttime` は残っている。
   - 手順7: attempt 2 も timeout kill され、`attempt_count` 2 > 1 で `.execution.state` が `stopped` / `retry_limit_exceeded` / `notified_at` あり。
-  - 手順8: 通知行が1行。worktree は保持されている。
+  - 手順8: 通知行が1行。worktree は保持されている（`sleeper` は成果物を書かないので中身は `.git` だけ）。
 - **確認ポイント:** kill が**タスクファイルに記録された `kill_ident` を使って**行われ、無関係なプロセスを巻き込んでいないこと（手順5 の前に `pgrep -f sleep` で他の sleep が無いことを確認しておくと差が読める。ADR-002 / ADR-015）。`kill_ident` はそのまま渡されるのではなく境界で `terminate::UnitTarget` に parse して組み直され、成否は終了コマンドの終了ステータスではなく実行単位の消滅の観測（`TERMINATION_GRACE` 2秒 / `TERMINATION_POLL` 50ms）で決まり、猶予のうちに消えなければ強い終了へ昇格する — ADR-015 が ADR-002 のこの3点を置き換えている。昇格の段は `terminate::ESCALATES` が宣言し、本確認を行う POSIX は真（`-TERM` → `-KILL` の2段。待ちの上限は 2秒 × 2 = 4秒）、昇格を持たないプラットフォームは偽で2段目を起動しない（待ちの上限は 2秒）。経過の起点が `starttime.wall` であること — tick 実行時刻や `recorded_at` を起点にすると手順3 の連続 tick で早期 kill が起きる。手順4 の tick が「kill → fail_run」の順で1ステップだけ進むこと。
 
 ### 11. exit 記録なしのプロセス死亡の検出と自動リトライ
 
 - **対応する受け入れ基準:** AC-6
-- **対応する手順書:** `task-execution.md` TC-21 手順1〜5（手順2 の PID はタスクファイル直読で得る。手順6 の `abort` 片付けは #5）
+- **対応する手順書:** `task-execution.md` TC-21 手順1〜5（手順1 に確認ポイント用の2件目を足す。手順2 の PID はタスクファイル直読で得る。手順6 の `abort` 片付けは #5）
 - **前提:** 確認項目10 の直後。
 - **目的:** exit ファイルが無いままプロセスが死亡した実行（外部からの `kill -9` で OOM・マシン再起動を代替再現）を、`starttime_of` が `Ok(None)` または `ident` 不一致を返す経路で `DiedWithoutExit` と分類し、`try_kill_remnants` をベストエフォートで試みてから `fail_run` すること、次の tick が新しい attempt で自動再起動することを確認する。
 - **手順:**
-  1. `pulsen add --workflow longrun --repo /tmp/pulsen-test/repo; echo $?` → `export T21=<task-id>`
-  2. `pulsen tick` を2〜3秒間隔で2回（起動 → spawn確認）→ `cat "$PULSEN_HOME/state/tasks/$T21.json"` から `export P21=<.current_attempt.process.pid>`、`kill_ident` の値も控える
-  3. `kill -9 -- "-$P21"; echo $?`（プロセスグループごと強制終了。`kill_ident` が `-<pgid>` 形式であることをタスクファイルで確認してから実行する）
+  1. `longrun` を**2件**登録する: `pulsen add --workflow longrun --repo /tmp/pulsen-test/repo; echo $?` → `export T21=<task-id>`、`pulsen add --workflow longrun --repo /tmp/pulsen-test/repo; echo $?` → `export T21B=<task-id>`（2件目は確認ポイントが要求する対照 — `try_kill_remnants` が巻き込んでよいのは T21 の実行単位だけであることを、無傷で残る他タスクの `sleep 600` で見る）
+  2. `pulsen tick` を2〜3秒間隔で2回（起動 → spawn確認）→ `cat "$PULSEN_HOME/state/tasks/$T21.json"` から `export P21=<.current_attempt.process.pid>`、`kill_ident` の値も控える。T21B も同じ2 tick で `running` になる
+  3. `pgrep -fl 'sleep 600'`（この時点の一覧を控える。T21 と T21B の2件）→ `kill -9 -- "-$P21"; echo $?`（T21 のプロセスグループだけを強制終了。`kill_ident` が `-<pgid>` 形式であることをタスクファイルで確認してから実行する）
   4. `ls "$PULSEN_HOME/state/runs/$T21/attempt-1/"`（`exit` が無いこと）
   5. `pulsen tick; echo $?` → `cat "$PULSEN_HOME/state/tasks/$T21.json"`
   6. `pulsen tick; echo $?` → `cat "$PULSEN_HOME/state/tasks/$T21.json"`; `ls "$PULSEN_HOME/state/runs/$T21/"`
 - **期待結果:**
   - 手順4: `pid` / `starttime` はあるが `exit` は無い。
   - 手順5: exit code 0。`.execution.state` が `failed`、`.counters.attempt_count` が 1。`attempt-1/exit` は依然として存在しない（tick は run ディレクトリに書かない）。残存終了の結果は報告として現れうるが、状態の分類には影響しない。
-  - 手順6: 新しい attempt 番号 2 で自動的に再起動される（`.execution.state` が `launching`、`run_dir` が `.../attempt-2`）。利用者の操作は不要。
-- **確認ポイント:** exit が無いときにだけ生存観測が行われること（確認項目1・3 のように exit が Some のケースでは `starttime_of` を呼ばずに判定へ進む。2段規則）。`try_kill_remnants` が誤って無関係なプロセスを終了させていないこと（手順3 の直前に `pgrep -f 'sleep 600'` の一覧を控え、tick 後に**他タスク由来の sleep が残っている**ことを確認する）。この確認以降 T21 は `timeout: none` のまま `sleep 600` を再実行し続けるため、後続項目のサマリーに現れ続けることを織り込む。
+  - 手順6: 新しい attempt 番号 2 で自動的に再起動される（`.execution.state` が `launching`、`run_dir` が `.../attempt-2`）。利用者の操作は不要。T21B は `running` のまま無傷で、その `sleep 600` も残っている。
+- **確認ポイント:** exit が無いときにだけ生存観測が行われること（確認項目1・3 のように exit が Some のケースでは `starttime_of` を呼ばずに判定へ進む。2段規則）。`try_kill_remnants` が誤って無関係なプロセスを終了させていないこと（手順3 で控えた一覧と比べ、tick 後に**T21B 由来の `sleep 600` が残っている**ことを確認する）。この確認以降 T21 / T21B は `timeout: none` のまま `sleep 600` を再実行し続けるため、後続項目のサマリーに現れ続けることを織り込む。
 
 ## エッジケース・異常系
 
@@ -719,6 +721,7 @@ EOF
 ### 1. スナップショットのみ破損した未通知 stopped への再通知
 
 - **対応する受け入れ基準:** AC-4（`SnapshotUnreadable` 経路の at-least-once。PAGE-tick-007）
+- **対応する手順書:** なし（`spec/manual-tests/` に対応する手順が無く、PAGE-tick-007 から起こした確認。前提のフィクスチャを担当する側が実行する）
 - **前提:** フィクスチャC。本スライスには `abort` が無いため、未通知 stopped のタスクを**タスクファイルの直編集**で作る。
 - **目的:** タスク属性は読めるがスナップショットが読めない縮退状態でも、`Stopped { notified_at: None }` に対しては再通知**だけ**は行われること（`save_degraded` で `notified_at` が残り、スナップショットは元の内容のまま温存されること）、それ以外の縮退タスクは従来どおり報告のみでスキップされることを確認する。
 - **手順:**
@@ -785,7 +788,7 @@ EOF
 
 - **対応する受け入れ基準:** AC-4（判定失敗の分類）、AC-6 に隣接する時間の扱い
 - **対応する手順書:** `setup.md` TC-39 手順1〜3 と手順4 の `judge_timeout` の復元
-- **前提:** フィクスチャB。
+- **前提:** フィクスチャB。**フィクスチャB の最後に実行する**（記載順ではこれがフィクスチャB の最終項目） — T39 は判定が決着しないまま `running` で残り、`judge_timeout` を 60s に戻したあとは以降のフィクスチャB の tick を毎回 60秒ブロックする。本スライスには `abort` が無く途中で止められない（#5）ので、T39 を作るのは以降 tick を打たない位置に置く。
 - **目的:** 判定コマンドが応答しないとき、`CommandRunner` の timeout が効いて `TimedOut` として判定失敗に落ちること、その間 tick が排他ロックを保持したままブロックすること（ADR-018 が承知のうえで置いた設計）を確認する。
 - **手順:**
   1. `sed -i.bak 's/^judge_timeout: 60s$/judge_timeout: 5s/' "$SETUP_HOME/config.yaml"; grep -n judge_timeout "$SETUP_HOME/config.yaml"`
@@ -808,7 +811,7 @@ EOF
   3. `pulsen add --workflow "$SETUP_WORK/judge-hang.yaml" --repo "$SETUP_REPO"; echo $?` → `export T39=<task-id>`
   4. `pulsen tick`（起動）→ 数秒待って `pulsen tick`（spawn確認）→ 2〜3秒待って `time pulsen tick; echo $?`（判定）
   5. `cat "$SETUP_HOME/state/tasks/$T39.json"`; `pgrep -f 'sleep 180'; echo $?`
-  6. 復元（必ず実行する）: `cp "$SETUP_WORK/config.bak" "$SETUP_HOME/config.yaml"; grep -n judge_timeout "$SETUP_HOME/config.yaml"`
+  6. 復元（必ず実行する）: `cp "$SETUP_WORK/config.bak" "$SETUP_HOME/config.yaml"; rm -f "$SETUP_HOME/config.yaml.bak"; grep -n judge_timeout "$SETUP_HOME/config.yaml"`
 - **期待結果:** 手順4 の3回目の tick が **5秒強ブロック**してから exit code 0 で返る。手順5 で `.counters.judge_attempt_count` が 1、`.execution.state` は `running` のまま。`pgrep` が該当なし（非0）で、`tick` が返った時点で判定コマンドのプロセスが残っていない（timeout 超過時に**起動した直接の子**を終了させる契約。TC-port-command-runner-012）。
 - **期待結果の補足:** 判定コマンドを `sh -c` で包まないのは、契約が保証するのが直接の子までで、その子が起こした孫の残存は許容されているため（ADR-001）。`sh` を挟むと、`-c` の単一コマンドを exec に畳まない実体で孫が残り、契約どおりの実装が不合格に見える。`180` は他のフィクスチャが使う `sleep 120` / `sleep 600` と重ならない値として選んでいる（`pgrep` が他タスク由来のプロセスを拾わない）。
 - **確認ポイント:** ブロック時間が `judge_timeout`（5s）に対して過大でないこと — ポーリング間隔の粒度ぶんの誤差は許容するが、桁が違えば `try_wait` のポーリング実装（ADR-001）が疑わしい。判定コマンドの残存が無いこと。復元を忘れると後続の判定がすべて5秒で切られる。
@@ -816,6 +819,7 @@ EOF
 ### 4. 手動修復で不変条件が破れたタスクの報告とスキップ
 
 - **対応する受け入れ基準:** AC-6 に隣接する手続きD 冒頭の検査（TC-exec-tick-022）
+- **対応する手順書:** なし（`spec/manual-tests/` に対応する手順が無く、TC-exec-tick-022 から起こした確認。前提のフィクスチャを担当する側が実行する）
 - **前提:** フィクスチャA。`running` なのに `current_attempt` / `current_attempt.process` が無い状態を直編集で作る。
 - **目的:** 不変条件2（`current_attempt` が Some）と不変条件3（`current_attempt.process` が Some）の破れを、報告してスキップすること・タスクファイルに書き込まないこと・パニックしないことを確認する。
 - **手順:**
@@ -846,7 +850,8 @@ EOF
 
 ### 5. run ファイル(exit)の破損での滞留
 
-- **対応する受け入れ基準:** AC-2 / AC-6 の前段（`read_exit` の `RunFileError`）
+- **対応する受け入れ基準:** AC-2 / AC-6 の前段（`read_exit` の `RunFileError`。TC-exec-tick-104）
+- **対応する手順書:** なし（`spec/manual-tests/` に対応する手順が無く、TC-exec-tick-104 から起こした確認。前提のフィクスチャを担当する側が実行する）
 - **前提:** フィクスチャA。エージェント完了後の `exit` を壊して tick を打つ。
 - **目的:** `RunStore::read_exit` が `Corrupt` を返す状況で、tick が報告してスキップし、**書き込みを1回も起こさない**ことを確認する（判定も遷移も行われない）。
 - **手順:**
@@ -912,4 +917,4 @@ EOF
 
   worktree を作ったリポジトリごと削除するので `git worktree prune` は不要。残留プロセスの確認は、kill / try_kill_remnants が実行単位を取り逃していないことの確認を兼ねる。
 
-- **落とした手順の記帳:** 本スライスに無いコマンド（`ls` / `show` / `abort` / `retry` / `set-status`）と終端処理（#6）を要する手順は実行していない。カバーしたのは `spec/manual-tests/task-execution.md` TC-03(手順1〜9・11・12)・TC-05(手順1〜4・6 と手順5 の遷移まで)・TC-06・TC-07(手順1〜5)・TC-13・TC-14・TC-15・TC-17・TC-19(手順1〜5)・TC-20(手順1〜4・6。手順1 の2件目を `pipeline` に置き換え)・TC-21(手順1〜5)・TC-22・TC-23、`spec/manual-tests/setup.md` TC-09・TC-10(手順1〜4)・TC-11(手順1〜4)・TC-35(読み替え)・TC-37(手順1〜3)・TC-38(手順1〜2)・TC-39(手順1〜3・4の復元)・TC-47(手順1〜2)、`spec/manual-tests/intervention.md` TC-01(手順1〜3・5・7・8)・TC-15(読み替え)・TC-24(読み替え)。`intervention.md` TC-15 と `setup.md` TC-35 は同じ「notify_cmd 未定義 → 後から定義して catch-up」を問うので、確認項目9 手順7〜10 の1系列で両方を消化した(TC-15 手順2 の `abort` は上限超過での凍結に読み替え)。**落とした手順は Issue のチェックリストにチェックを付けず、見送った旨と理由を Issue #3 のコメントに残す**（Issue 完了条件 / steps.md ステップ15）。
+- **落とした手順の記帳:** 本スライスに無いコマンド（`ls` / `show` / `abort` / `retry` / `set-status`）と終端処理（#6）を要する手順は実行していない。カバーしたのは `spec/manual-tests/task-execution.md` TC-03(手順1〜9・11・12)・TC-05(手順1〜4・6 と手順5 の遷移まで)・TC-06・TC-07(手順1〜5)・TC-13・TC-14・TC-15・TC-17・TC-19(手順1〜5)・TC-20(手順1〜4・6。手順1 の2件目を `pipeline` に置き換え)・TC-21(手順1〜5。手順1 に対照用の2件目を足した)・TC-22・TC-23、`spec/manual-tests/setup.md` TC-09・TC-10(手順1〜4)・TC-11(手順1〜4)・TC-35(読み替え)・TC-37(手順1〜3)・TC-38(手順1〜2)・TC-39(手順1〜3・4の復元)・TC-47(手順1〜2)、`spec/manual-tests/intervention.md` TC-01(手順1〜3・5・7・8)・TC-15(読み替え)・TC-24(読み替え)。`intervention.md` TC-15 と `setup.md` TC-35 は同じ「notify_cmd 未定義 → 後から定義して catch-up」を問うので、確認項目9 手順7〜10 の1系列で両方を消化した(TC-15 手順2 の `abort` は上限超過での凍結に読み替え)。**落とした手順は Issue のチェックリストにチェックを付けず、見送った旨と理由を Issue #3 のコメントに残す**（Issue 完了条件 / steps.md ステップ15）。
