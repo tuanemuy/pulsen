@@ -757,6 +757,11 @@ pub fn agent_probe() -> Option<PathBuf> {
     example_program("agent_probe")
 }
 
+/// 判定コマンド・通知コマンドのテスト用実行ファイル。
+pub fn judge_probe() -> Option<PathBuf> {
+    example_program("judge_probe")
+}
+
 /// 出力ディレクトリの `examples/` にある実行ファイル。
 pub fn example_program(name: &str) -> Option<PathBuf> {
     let binary = Path::new(env!("CARGO_BIN_EXE_pulsen"));

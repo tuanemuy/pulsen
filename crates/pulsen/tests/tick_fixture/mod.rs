@@ -12,19 +12,19 @@ use std::path::PathBuf;
 
 use pulsen::application::tick::{Tick, TickError, TickOutcome, TickSummary};
 use pulsen_conformance::doubles::{
-    LockOutcome, ScriptedExclusiveLock, ScriptedProcessController, ScriptedRunStore,
-    ScriptedTaskRepository, ScriptedWorktreeManager, SettableClock,
+    LockOutcome, ScriptedCommandRunner, ScriptedExclusiveLock, ScriptedProcessController,
+    ScriptedRunStore, ScriptedTaskRepository, ScriptedWorktreeManager, SettableClock,
 };
 use pulsen_domain::definition::{
-    AgentInput, AgentName, GlobalConfig, GlobalConfigInput, ModelName, Prompt, RawAgentDefinition,
-    RawCommand, SkillName, StatusDefinition, StatusName, WorkflowDefinition, WorkflowName,
-    WorkflowSnapshot,
+    AgentInput, AgentName, DurationSpec, GlobalConfig, GlobalConfigInput, ModelName, PlainCommand,
+    Prompt, RawAgentDefinition, RawCommand, SkillName, StatusDefinition, StatusName, TimeoutSpec,
+    WorkflowDefinition, WorkflowName, WorkflowSnapshot,
 };
 use pulsen_domain::task::{
     AttemptNumber, AttemptRef, BranchName, DegradedTask, DegradedTaskFields, ExecutionState,
     KillIdent, Pid, ProcessIdent, ProcessStartTime, RepoPath, RetryCounters, RunDirPath, SaveError,
-    StartTimeRecord, StateRoot, Target, Task, TaskEntry, TaskFields, TaskId, TaskRecord, Timestamp,
-    WorkspacePlanner, WorktreeRoot,
+    StartTimeRecord, StateRoot, StopReason, Target, Task, TaskEntry, TaskFields, TaskId,
+    TaskRecord, Timestamp, WorkspacePlanner, WorktreeRoot,
 };
 
 /// 既定のタスクID。
@@ -116,6 +116,16 @@ pub fn pid_content() -> pulsen_domain::execution::PidFileContent {
     pulsen_domain::execution::PidFileContent::new(Pid::new(4242), kill_ident())
 }
 
+/// 記録済み starttime と一致する観測値(照合が `Alive` になる)。
+pub fn observed_starttime() -> ProcessStartTime {
+    starttime().ident().clone()
+}
+
+/// 記録済み starttime と食い違う観測値(PID 再利用の再現)。
+pub fn reused_starttime() -> ProcessStartTime {
+    ProcessStartTime::parse("Wed Aug 12 09:30:00 2026".to_owned()).expect("受理される")
+}
+
 pub fn kill_ident() -> KillIdent {
     KillIdent::parse("-4242".to_owned()).expect("受理される")
 }
@@ -130,7 +140,9 @@ pub struct AgentRunSpec<'a> {
     pub input: AgentInput,
     pub agent: Option<&'a str>,
     pub model: Option<&'a str>,
+    pub timeout: Option<TimeoutSpec>,
     pub retries: Option<u32>,
+    pub judge: Option<PlainCommand>,
     pub next: &'a str,
 }
 
@@ -140,7 +152,9 @@ impl Default for AgentRunSpec<'_> {
             input: prompt("実装して"),
             agent: None,
             model: None,
+            timeout: None,
             retries: None,
+            judge: None,
             next: "done",
         }
     }
@@ -159,11 +173,21 @@ pub fn agent_run(spec: AgentRunSpec) -> StatusDefinition {
         input: spec.input,
         agent: spec.agent.map(agent_name),
         model: spec.model.map(model_name),
-        timeout: None,
+        timeout: spec.timeout,
         retries: spec.retries,
-        judge: None,
+        judge: spec.judge,
         next: status(spec.next),
     }
+}
+
+/// トークン列からコマンドを組む。
+pub fn command(text: &str) -> PlainCommand {
+    PlainCommand::parse_text(text).expect("受理される")
+}
+
+/// 秒数から timeout を組む。
+pub fn timeout_secs(seconds: u64) -> TimeoutSpec {
+    TimeoutSpec::Limited(DurationSpec::parse(&format!("{seconds}s")).expect("受理される"))
 }
 
 pub fn model_name(name: &str) -> ModelName {
@@ -246,6 +270,24 @@ pub fn config_with(
     .expect("受理される")
 }
 
+/// 通知コマンドを定義したグローバル設定。
+pub fn config_notifying(notify_cmd: &str) -> GlobalConfig {
+    GlobalConfig::parse(GlobalConfigInput {
+        notify_cmd: Some(command(notify_cmd)),
+        ..GlobalConfigInput::default()
+    })
+    .expect("受理される")
+}
+
+/// 判定の上限を指定したグローバル設定。通知コマンドは定義しない。
+pub fn config_judging(judge_attempt_limit: u32) -> GlobalConfig {
+    GlobalConfig::parse(GlobalConfigInput {
+        judge_attempt_limit: Some(judge_attempt_limit),
+        ..GlobalConfigInput::default()
+    })
+    .expect("受理される")
+}
+
 /// タスク1件を組み立てる。既定は「起動待ち・エージェント実行ステータス・未確定」。
 pub struct TaskBuilder {
     fields: TaskFields,
@@ -303,6 +345,41 @@ impl TaskBuilder {
         self
     }
 
+    /// 起動確認済みにする(同定情報つきの attempt とワークスペースを揃える)。
+    pub fn running(self, number: u32) -> Self {
+        let raw = self.fields.id.as_str().to_owned();
+        let mut task = self.workspace().execution(ExecutionState::Running);
+        task.fields.current_attempt = Some(AttemptRef::rehydrate(
+            attempt_number(number),
+            run_dir(&raw, number),
+            Some(process_ident()),
+        ));
+        task
+    }
+
+    /// 判定確定(成功)にする。
+    pub fn completed(self, number: u32) -> Self {
+        self.workspace()
+            .attempt(number)
+            .execution(ExecutionState::Completed)
+    }
+
+    /// 未通知の凍結にする。
+    pub fn stopped(self, reason: StopReason) -> Self {
+        self.execution(ExecutionState::Stopped {
+            reason,
+            notified_at: None,
+        })
+    }
+
+    /// 通知済みの凍結にする。
+    pub fn stopped_notified(self, reason: StopReason, at: Timestamp) -> Self {
+        self.execution(ExecutionState::Stopped {
+            reason,
+            notified_at: Some(at),
+        })
+    }
+
     /// カウンタを `(attempt_count, judge_attempt_count, spawn_fail_count)` で与える。
     pub fn counters(mut self, attempt_count: u32, judge: u32, spawn_fail: u32) -> Self {
         self.fields.counters = RetryCounters::rehydrate(attempt_count, judge, spawn_fail);
@@ -321,13 +398,22 @@ impl TaskBuilder {
 
 /// スナップショットだけが読めないタスクの走査結果。
 pub fn degraded_entry(raw: &str, snapshot_error: &str) -> TaskEntry {
+    degraded_entry_with(raw, snapshot_error, ExecutionState::Pending)
+}
+
+/// 実行状態を指定した、スナップショットだけが読めないタスクの走査結果。
+pub fn degraded_entry_with(
+    raw: &str,
+    snapshot_error: &str,
+    execution: ExecutionState,
+) -> TaskEntry {
     TaskEntry::Record(TaskRecord::SnapshotUnreadable(DegradedTask::rehydrate(
         DegradedTaskFields {
             id: task_id(raw),
             workflow_name: workflow_name(),
             target: target(),
             task_status: status("queued"),
-            execution: ExecutionState::Pending,
+            execution,
             workspace: None,
             current_attempt: None,
             counters: RetryCounters::initial(),
@@ -354,6 +440,7 @@ pub fn repository(entries: Vec<TaskEntry>) -> ScriptedTaskRepository {
     ScriptedTaskRepository::new()
         .with_list_active(std::iter::repeat_n(Ok(entries), SCAN_BUDGET))
         .with_save(std::iter::repeat_n(Ok(()), SAVE_BUDGET))
+        .with_save_degraded(std::iter::repeat_n(Ok(()), SAVE_BUDGET))
 }
 
 /// 走査結果を与え、最初の保存が失敗するリポジトリ。
@@ -385,6 +472,7 @@ pub struct Harness {
     pub worktrees: ScriptedWorktreeManager,
     pub runs: ScriptedRunStore,
     pub processes: ScriptedProcessController,
+    pub commands: ScriptedCommandRunner,
 }
 
 impl Harness {
@@ -402,6 +490,7 @@ impl Harness {
             worktrees: ScriptedWorktreeManager::new(),
             runs: ScriptedRunStore::new(),
             processes: ScriptedProcessController::new(),
+            commands: ScriptedCommandRunner::new(),
         }
     }
 
@@ -417,6 +506,7 @@ impl Harness {
             &self.worktrees,
             &self.runs,
             &self.processes,
+            &self.commands,
         )
         .execute()
     }

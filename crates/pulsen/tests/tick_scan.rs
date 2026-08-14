@@ -3,10 +3,9 @@
 //! ポートはすべてテストダブルに差し替える(ADR-028)。ロック機構の異常・走査自体の失敗は
 //! 実アダプターでは外から作れないため、分岐の網羅はここで行う。
 //!
-//! 本スライスで配線しないアーム(Cleanup / Running / Completed / Stopped)に、何が起きるか
-//! の期待は持たせない — 書くと Issue #3 / #6 がアームを埋めた時点で書き換えになる(ADR-101)。
-//! 「エージェントを起動しない」ことだけは主張する — 実行中・終端処理待ちのタスクに対して
-//! 2本目のラッパーが起動する誤りは、本スライスのマーカープロトコルでは防げない。
+//! 手続きごとの振る舞いは `tick_launch` / `tick_confirm_spawn` / `tick_observe` /
+//! `tick_notify` にある。ここで扱うのは走査レベルの性質 — 分岐の選択・1件の失敗が
+//! 残りを止めないこと・「1タスク1tick1ステップ」・書き込みを起こさない tick の冪等性。
 
 mod tick_fixture;
 
@@ -19,8 +18,9 @@ use pulsen_domain::execution::RunFileError;
 use pulsen_domain::task::{ExecutionState, ExecutionStateKind, ReadError, StopReason};
 
 use tick_fixture::{
-    Harness, NOW, TASK, absolute, after, at, corrupt_entry, degraded_entry, pid_content,
-    repository, run_dir, starttime, task, task_id,
+    Harness, NOW, TASK, absolute, after, at, config_notifying, corrupt_entry, degraded_entry,
+    degraded_entry_with, observed_starttime, pid_content, repository, run_dir, starttime, task,
+    task_id,
 };
 
 #[test]
@@ -140,51 +140,65 @@ fn 待機ステータスのタスクには起動待ちでも失敗確定でも�
 }
 
 #[test]
-fn 配線していない分岐のタスクにはエージェントを起動せず書き込みもしない() {
-    let unwired = [
-        ("running", "queued", ExecutionState::Running),
-        ("completed", "queued", ExecutionState::Completed),
-        (
-            "stopped",
-            "queued",
-            ExecutionState::Stopped {
-                reason: StopReason::RetryLimitExceeded,
-                notified_at: None,
-            },
-        ),
-        ("cleanup", "done", ExecutionState::Pending),
-    ];
+fn 判定確定のタスクは次のステータスへ遷移して起動待ちへ戻る() {
+    let harness = Harness {
+        tasks: repository(vec![task(TASK).completed(1).entry()]),
+        ..Harness::new()
+    };
+    harness.clock.set(after(10));
 
-    for (label, status, execution) in unwired {
-        let harness = Harness {
-            tasks: repository(vec![
-                task(TASK)
-                    .status(status)
-                    .workspace()
-                    .execution(execution)
-                    .attempt(1)
-                    .entry(),
-            ]),
-            ..Harness::new()
-        };
+    let summary = harness.completed();
 
-        let summary = harness.completed();
+    assert_eq!(summary.transitioned, vec![task_id(TASK)]);
+    let saved = harness.saved(TASK);
+    assert_eq!(saved.task_status().as_str(), "done");
+    assert_eq!(saved.execution(), &ExecutionState::Pending);
+    assert_eq!(saved.updated_at(), after(10));
+    assert!(
+        harness.processes.calls().is_empty(),
+        "遷移の tick はエージェントを起動しない(1タスク1tick1ステップ)"
+    );
+}
 
-        assert!(summary.is_empty(), "{label}: サマリーに現れない");
-        assert!(harness.tasks.saved().is_empty(), "{label}: 書き込まない");
-        assert!(
-            harness.worktrees.calls().is_empty(),
-            "{label}: worktree 操作を行わない"
-        );
-        assert!(
-            harness.runs.calls().is_empty(),
-            "{label}: run ファイルに触れない"
-        );
-        assert!(
-            harness.processes.calls().is_empty(),
-            "{label}: ラッパーを起動しない"
-        );
-    }
+#[test]
+fn 通知済みの凍結には何もしない() {
+    let harness = Harness {
+        config: config_notifying("notify"),
+        tasks: repository(vec![
+            task(TASK)
+                .stopped_notified(StopReason::RetryLimitExceeded, at(NOW))
+                .entry(),
+        ]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert!(summary.is_empty(), "サマリーに現れない");
+    assert!(harness.tasks.saved().is_empty(), "書き込みは発生しない");
+    assert!(
+        harness.commands.calls().is_empty(),
+        "再通知は未通知のものだけを対象とする"
+    );
+}
+
+#[test]
+fn 終端処理のステータスは配線されるまで何も起こさない() {
+    let harness = Harness {
+        tasks: repository(vec![
+            task(TASK).status("done").workspace().attempt(1).entry(),
+        ]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert!(summary.is_empty(), "サマリーに現れない");
+    assert!(harness.tasks.saved().is_empty(), "書き込まない");
+    assert!(
+        harness.worktrees.calls().is_empty(),
+        "worktree 操作を行わない"
+    );
 }
 
 #[test]
@@ -297,6 +311,7 @@ fn 実行可能なタスクが複数あればすべて起動される() {
 fn 状態が変化しないタスク群には連続実行しても書き込みが発生しない() {
     let waiting = "20260812t090000-waiting2";
     let launching = "20260812t090000-launchg2";
+    let running = "20260812t090000-running2";
     let harness = Harness {
         tasks: repository(vec![
             task(waiting).status("waiting").entry(),
@@ -305,10 +320,16 @@ fn 状態が変化しないタスク群には連続実行しても書き込み�
                 .launching(at(NOW))
                 .attempt(1)
                 .entry(),
+            task(running).running(1).entry(),
         ]),
         runs: ScriptedRunStore::new()
             .with_read_pid_file([Ok(None), Ok(None)])
-            .with_read_starttime([Ok(None), Ok(None)]),
+            .with_read_starttime([Ok(None), Ok(None)])
+            .with_read_exit([Ok(None), Ok(None)]),
+        processes: ScriptedProcessController::new().with_starttime_of([
+            Ok(Some(observed_starttime())),
+            Ok(Some(observed_starttime())),
+        ]),
         ..Harness::new()
     };
     harness.clock.set(after(10));
@@ -316,6 +337,84 @@ fn 状態が変化しないタスク群には連続実行しても書き込み�
     assert!(harness.completed().is_empty(), "1回目");
     assert!(harness.completed().is_empty(), "2回目も同じ判断になる");
     assert!(harness.tasks.saved().is_empty(), "書き込みは発生しない");
+}
+
+#[test]
+fn スナップショット破損の凍結以外は定義依存の判断をすべてスキップして報告する() {
+    for (label, execution) in [
+        ("pending", ExecutionState::Pending),
+        ("running", ExecutionState::Running),
+        ("completed", ExecutionState::Completed),
+        (
+            "notified",
+            ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: Some(at(NOW)),
+            },
+        ),
+    ] {
+        let harness = Harness {
+            config: config_notifying("notify"),
+            tasks: repository(vec![degraded_entry_with(TASK, "statuses が空", execution)]),
+            ..Harness::new()
+        };
+
+        let summary = harness.completed();
+
+        assert_eq!(
+            summary.errors,
+            vec![TickIssue::SnapshotUnreadable {
+                task_id: task_id(TASK),
+                message: "statuses が空".to_owned(),
+            }],
+            "{label}"
+        );
+        assert!(harness.tasks.saved().is_empty(), "{label}: 書き込まない");
+        assert!(
+            harness.tasks.saved_degraded().is_empty(),
+            "{label}: 縮退した保存も行わない"
+        );
+        assert!(
+            harness.commands.calls().is_empty(),
+            "{label}: 通知も行わない"
+        );
+    }
+}
+
+#[test]
+fn 起動確認済みなのに同定情報がないタスクは報告してスキップする() {
+    let missing_attempt = "20260812t090000-noattemp";
+    let harness = Harness {
+        tasks: repository(vec![
+            task(missing_attempt)
+                .workspace()
+                .execution(ExecutionState::Running)
+                .entry(),
+            task(TASK)
+                .workspace()
+                .execution(ExecutionState::Running)
+                .attempt(1)
+                .entry(),
+        ]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        summary.errors,
+        vec![
+            TickIssue::MissingCurrentAttempt {
+                task_id: task_id(missing_attempt),
+            },
+            TickIssue::MissingProcessIdent {
+                task_id: task_id(TASK),
+            },
+        ],
+        "不変条件2の破れと3の破れは別の分類として報告される"
+    );
+    assert!(harness.tasks.saved().is_empty(), "書き込まない");
+    assert!(harness.runs.calls().is_empty(), "run ファイルにも触れない");
 }
 
 /// 報告が指すタスクID。破損したタスクファイルはIDを持たない。
@@ -333,6 +432,13 @@ fn issue_task(issue: &TickIssue) -> Option<String> {
         | TickIssue::PrepareAttemptFailed { task_id, .. }
         | TickIssue::SpawnFailed { task_id, .. }
         | TickIssue::SpawnNotObserved { task_id, .. }
+        | TickIssue::MissingProcessIdent { task_id }
+        | TickIssue::ObservationFailed { task_id, .. }
+        | TickIssue::KillFailed { task_id, .. }
+        | TickIssue::RemnantsUnhandled { task_id, .. }
+        | TickIssue::JudgeFailed { task_id, .. }
+        | TickIssue::RunFailed { task_id, .. }
+        | TickIssue::NotifyFailed { task_id, .. }
         | TickIssue::SaveFailed { task_id, .. } => Some(task_id.as_str().to_owned()),
     }
 }
