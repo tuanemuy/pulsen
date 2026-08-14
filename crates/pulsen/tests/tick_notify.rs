@@ -7,7 +7,7 @@ mod tick_fixture;
 
 use pulsen::application::tick::TickIssue;
 use pulsen_conformance::doubles::{
-    ScriptedCommandRunner, ScriptedRunStore, ScriptedTaskRepository,
+    RecordSeq, ScriptedCommandRunner, ScriptedRunStore, ScriptedTaskRepository,
 };
 use pulsen_domain::execution::{CommandCompletion, ExitCode};
 use pulsen_domain::task::{
@@ -27,6 +27,57 @@ fn succeeding() -> ScriptedCommandRunner {
 /// 未通知の凍結を1件だけ持つ走査結果。
 fn frozen_entries() -> Vec<pulsen_domain::task::TaskEntry> {
     vec![task(TASK).stopped(StopReason::RetryLimitExceeded).entry()]
+}
+
+/// 通知の共通手続きで観測できる出来事。
+#[derive(Debug, PartialEq, Eq)]
+enum NotifyStep {
+    /// 未通知の凍結を保存した。
+    SavedFrozen,
+    /// 通知コマンドを起動した。
+    RanNotifyCmd,
+    /// 通知時刻を追記して保存した。
+    SavedNotifiedAt,
+    /// 凍結以外の内容を保存した。
+    SavedOther,
+}
+
+/// 保存と通知コマンドの起動を、起きた順に1本の列へ並べる。
+///
+/// 順序の契約(凍結を書く → 通知を実行する → 通知時刻を追記する)はポートをまたぐため、
+/// ダブルごとの列を別々に見ても「どちらが先か」は主張できない。共有の採番で並べ直して
+/// はじめて、通知を先に起動する実装を落とせる。
+fn notify_steps(harness: &Harness) -> Vec<NotifyStep> {
+    let saves = harness
+        .tasks
+        .saved_in_order()
+        .into_iter()
+        .map(|(seq, task)| {
+            let step = match task.execution() {
+                ExecutionState::Stopped {
+                    notified_at: None, ..
+                } => NotifyStep::SavedFrozen,
+                ExecutionState::Stopped {
+                    notified_at: Some(_),
+                    ..
+                } => NotifyStep::SavedNotifiedAt,
+                ExecutionState::Pending
+                | ExecutionState::Launching { .. }
+                | ExecutionState::Running
+                | ExecutionState::Completed
+                | ExecutionState::Failed => NotifyStep::SavedOther,
+            };
+            (seq, step)
+        });
+    let notifications = harness
+        .commands
+        .calls_in_order()
+        .into_iter()
+        .map(|(seq, _)| (seq, NotifyStep::RanNotifyCmd));
+
+    let mut steps = saves.chain(notifications).collect::<Vec<(RecordSeq, _)>>();
+    steps.sort_by_key(|(seq, _)| *seq);
+    steps.into_iter().map(|(_, step)| step).collect()
 }
 
 #[test]
@@ -96,25 +147,21 @@ fn 通知は凍結の保存が済んでから実行され成功してはじめ�
         vec![task_id(TASK)],
         "同じ tick で通知する"
     );
-    let saved = harness.tasks.saved();
-    assert_eq!(saved.len(), 2, "凍結の保存と通知の追記で2回書く");
     assert_eq!(
-        saved[0].execution(),
+        notify_steps(&harness),
+        vec![
+            NotifyStep::SavedFrozen,
+            NotifyStep::RanNotifyCmd,
+            NotifyStep::SavedNotifiedAt,
+        ],
+        "凍結を書いてから通知し、成功してはじめて通知時刻を追記する"
+    );
+    assert_eq!(
+        harness.saved(TASK).execution(),
         &ExecutionState::Stopped {
             reason: StopReason::RetryLimitExceeded,
-            notified_at: None,
-        },
-        "先に書く凍結は未通知である"
-    );
-    assert!(
-        matches!(
-            saved[1].execution(),
-            ExecutionState::Stopped {
-                notified_at: Some(_),
-                ..
-            }
-        ),
-        "通知が成功した後にだけ通知時刻が追記される"
+            notified_at: Some(at(NOW)),
+        }
     );
 }
 
@@ -264,23 +311,40 @@ fn スナップショットが読めない未通知の凍結にも再通知が�
 }
 
 #[test]
-fn 凍結を離脱したタスクは通知の対象にならない() {
+fn 通知の対象は未通知の凍結だけである() {
+    // 通知アームに入るのは凍結だけで、そのうち通知済みのものは何もしない。ほかの実行状態は
+    // 別の手続きへ分岐するため、通知コマンドの起動にも凍結の書き戻しにも至らない。
     for (label, execution) in [
         ("起動待ち", ExecutionState::Pending),
         ("失敗確定", ExecutionState::Failed),
+        (
+            "通知済みの凍結",
+            ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: Some(at(NOW)),
+            },
+        ),
     ] {
         let harness = Harness {
             config: config_notifying("notify"),
             tasks: repository(vec![task(TASK).workspace().execution(execution).entry()]),
             ..Harness::new()
         };
-        // 起動へ進まないよう、エージェント定義を持たない設定にしていないため、
-        // 走査の結果として通知が起きないことだけを見る。
-        let _ = harness.run();
 
+        let summary = harness.completed();
+
+        assert!(summary.notified.is_empty(), "{label}: 通知として記録しない");
         assert!(
             harness.commands.calls().is_empty(),
             "{label}: 通知コマンドを起動しない"
+        );
+        assert!(
+            harness
+                .tasks
+                .saved()
+                .iter()
+                .all(|task| task.execution_kind() != ExecutionStateKind::Stopped),
+            "{label}: 凍結として書き戻さない"
         );
     }
 }

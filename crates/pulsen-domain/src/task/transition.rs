@@ -29,7 +29,8 @@ pub enum TransitionError {
         /// 呼び出し時のタスクステータス。
         status: StatusName,
     },
-    /// 手動修復で破られた不変条件2 — 起動記録済みなのに現在 attempt が無い。
+    /// 手動修復で破られた不変条件2・3 — 遷移の前提となる現在 attempt、またはその同定情報が
+    /// 失われている。
     MissingCurrentAttempt,
     /// 通知済みの凍結への再通知記録(`WorkspaceAlreadySet` と同じく「達成済み」の拒否)。
     AlreadyNotified,

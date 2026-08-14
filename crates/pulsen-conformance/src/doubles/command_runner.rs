@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 use pulsen_domain::definition::{DurationSpec, PlainCommand};
 use pulsen_domain::execution::{CommandCompletion, CommandRunner};
 
+use super::RecordSeq;
+
 /// 記録された呼び出し。
 ///
 /// 判定と通知は同じポートに乗るため、「どのコマンドをどの環境変数とどの timeout で
@@ -27,7 +29,7 @@ pub struct CommandRunnerCall {
 #[derive(Debug, Default)]
 pub struct ScriptedCommandRunner {
     run: RefCell<VecDeque<CommandCompletion>>,
-    calls: RefCell<Vec<CommandRunnerCall>>,
+    calls: RefCell<Vec<(RecordSeq, CommandRunnerCall)>>,
 }
 
 impl ScriptedCommandRunner {
@@ -44,6 +46,15 @@ impl ScriptedCommandRunner {
 
     /// これまでに受け取った呼び出し。
     pub fn calls(&self) -> Vec<CommandRunnerCall> {
+        self.calls
+            .borrow()
+            .iter()
+            .map(|(_, call)| call.clone())
+            .collect()
+    }
+
+    /// これまでに受け取った呼び出しを、ほかのダブルの記録と並べられる採番つきで返す。
+    pub fn calls_in_order(&self) -> Vec<(RecordSeq, CommandRunnerCall)> {
         self.calls.borrow().clone()
     }
 }
@@ -55,11 +66,14 @@ impl CommandRunner for ScriptedCommandRunner {
         env: &[(String, String)],
         timeout: Option<&DurationSpec>,
     ) -> CommandCompletion {
-        self.calls.borrow_mut().push(CommandRunnerCall {
-            cmd: cmd.clone(),
-            env: env.to_vec(),
-            timeout: timeout.copied(),
-        });
+        self.calls.borrow_mut().push((
+            RecordSeq::next(),
+            CommandRunnerCall {
+                cmd: cmd.clone(),
+                env: env.to_vec(),
+                timeout: timeout.copied(),
+            },
+        ));
         let Some(result) = self.run.borrow_mut().pop_front() else {
             panic!("run の結果を使い切った")
         };

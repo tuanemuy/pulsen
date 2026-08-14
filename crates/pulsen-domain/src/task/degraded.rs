@@ -267,17 +267,47 @@ mod tests {
         );
     }
 
+    /// 実行状態の6値。前提状態の検査を状態ごとに網羅するために使う。
+    fn every_execution_state() -> [ExecutionState; ExecutionStateKind::COUNT] {
+        [
+            ExecutionState::Pending,
+            ExecutionState::Launching { recorded_at: now() },
+            ExecutionState::Running,
+            ExecutionState::Completed,
+            ExecutionState::Failed,
+            ExecutionState::Stopped {
+                reason: StopReason::Aborted,
+                notified_at: None,
+            },
+        ]
+    }
+
     #[test]
     fn 凍結していないスナップショット破損タスクには通知を記録できない() {
-        let task = DegradedTask::rehydrate(fields());
-
-        assert_eq!(
-            task.mark_notified(later()),
-            Err(TransitionError::InvalidState {
-                expected: &[ExecutionStateKind::Stopped],
-                actual: ExecutionStateKind::Pending,
+        for execution in every_execution_state() {
+            let kind = execution.kind();
+            let result = DegradedTask::rehydrate(DegradedTaskFields {
+                execution,
+                ..fields()
             })
-        );
+            .mark_notified(later());
+
+            match kind {
+                ExecutionStateKind::Stopped => assert!(result.is_ok(), "{kind:?}"),
+                ExecutionStateKind::Pending
+                | ExecutionStateKind::Launching
+                | ExecutionStateKind::Running
+                | ExecutionStateKind::Completed
+                | ExecutionStateKind::Failed => assert_eq!(
+                    result,
+                    Err(TransitionError::InvalidState {
+                        expected: &[ExecutionStateKind::Stopped],
+                        actual: kind,
+                    }),
+                    "{kind:?}"
+                ),
+            }
+        }
     }
 
     #[test]

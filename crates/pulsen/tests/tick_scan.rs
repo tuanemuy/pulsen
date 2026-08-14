@@ -382,6 +382,40 @@ fn スナップショット破損の凍結以外は定義依存の判断をす�
 }
 
 #[test]
+fn 通知コマンドが未定義でもスナップショット破損の未通知凍結は報告される() {
+    let harness = Harness {
+        tasks: repository(vec![degraded_entry_with(
+            TASK,
+            "statuses が空",
+            ExecutionState::Stopped {
+                reason: StopReason::RetryLimitExceeded,
+                notified_at: None,
+            },
+        )]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::SnapshotUnreadable {
+            task_id: task_id(TASK),
+            message: "statuses が空".to_owned(),
+        }],
+        "修復が必要である事実は通知の成否と独立に報告される"
+    );
+    assert!(
+        harness.commands.calls().is_empty(),
+        "通知コマンドが未定義なら通知は行わない"
+    );
+    assert!(
+        harness.tasks.saved_degraded().is_empty(),
+        "「通知した」という虚偽の記録を作らない"
+    );
+}
+
+#[test]
 fn 起動確認済みなのに同定情報がないタスクは報告してスキップする() {
     let missing_attempt = "20260812t090000-noattemp";
     let harness = Harness {
@@ -423,6 +457,7 @@ fn issue_task(issue: &TickIssue) -> Option<String> {
         TickIssue::CorruptTaskFile { .. } => None,
         TickIssue::SnapshotUnreadable { task_id, .. }
         | TickIssue::MissingCurrentAttempt { task_id }
+        | TickIssue::MissingWorkspace { task_id }
         | TickIssue::Transition { task_id, .. }
         | TickIssue::RunFileUnreadable { task_id, .. }
         | TickIssue::InconsistentRunFiles { task_id, .. }

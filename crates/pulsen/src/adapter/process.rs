@@ -164,11 +164,19 @@ impl SystemProcessController {
         if output.status.success() {
             return Ok(());
         }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
         Err(KillError::Failed {
             message: format!(
                 "実行単位 ({}) を終了できない: {}",
                 ident.as_str(),
-                String::from_utf8_lossy(&output.stderr).trim()
+                // 終了操作の実体は失敗しても何も書かないことがある。原因が空文字列になると
+                // 運用者が何も読めないので、そのときは終了ステータスを添える。
+                if detail.is_empty() {
+                    output.status.to_string()
+                } else {
+                    detail.to_owned()
+                }
             ),
         })
     }
@@ -271,9 +279,11 @@ impl ProcessController for SystemProcessController {
     }
 
     fn try_kill_remnants(&self, ident: &KillIdent) -> RemnantOutcome {
-        // **列挙できたときだけ**終了を実行する。同定子へ無条件に投げる実装は、実行単位の
-        // 識別子が再利用されていたときに無関係なプロセス群を殺す — starttime 照合で PID
-        // 再利用を防いでいるのと同じ危険が、実行単位の側にもある(ADR-002)。
+        // **列挙できたときだけ**終了を実行する。これが分離するのは「実行単位が既に消滅して
+        // いる」場合で、そこへ終了を投げずに `NotIdentifiable` を返す。ポートの入力が
+        // `KillIdent` だけである以上、その識別子が別の実行単位へ再利用されていることは
+        // ここでは検出できない — starttime 照合が PID 再利用に対して持つ強さは無い
+        // (ADR-002)。
         match identity::unit_is_live(&self.identity_source, ident) {
             Ok(true) => match self.terminate(ident) {
                 Ok(()) => RemnantOutcome::Killed,
@@ -485,10 +495,16 @@ mod terminate {
         PathBuf::from("/bin/kill")
     }
 
-    /// シグナルを先に置いて、同定子が単独のオプションとして解釈されないようにする。
+    /// シグナルの後に `--` を置き、以降をオペランドとして渡す。
+    ///
+    /// 同定子は `-<pgid>` の形をしていてオプションと字面で区別できない。`--` が無いと
+    /// 実体によって解釈が割れ、procps-ng の `kill` は対象を終了させたうえで終了ステータス
+    /// 1 を返す一方、不在のグループには 0 を返す(実測) — 成否がどちらの向きにも反転する。
     pub fn command(source: &TerminatorSource, ident: &KillIdent) -> Command {
         let mut command = Command::new(source.as_path());
-        command.args(["-TERM", ident.as_str()]).stdin(Stdio::null());
+        command
+            .args(["-TERM", "--", ident.as_str()])
+            .stdin(Stdio::null());
         command
     }
 }
@@ -561,7 +577,7 @@ mod identity {
     /// `lstart` の表現はロケールとタイムゾーンで変わる(実測: 既定 `水 8/12 20:04:53 2026`
     /// / `LC_ALL=C` `Wed Aug 12 20:04:53 2026` / `LC_ALL=C TZ=UTC` `Wed Aug 12 11:04:53
     /// 2026`)。記録した tick と照合する tick で環境が違えば、生存中のプロセスを Dead と
-    /// 誤判定して同一 worktree での並走に至るため、取得時の環境をここで固定する。
+    /// 誤判定して同一 worktree での並走に至るため、取得は環境を固定して行う。
     pub fn observe(source: &IdentitySource, pid: Pid) -> Result<Option<ObservedProcess>, Io> {
         let output = identity_command(source, pid)
             .output()
@@ -611,14 +627,14 @@ mod identity {
 
     /// 実行単位にメンバーが1つでも生きているか。
     ///
-    /// 列挙できたことが「誤殺なく同定できた」の実質になる。同定子から PGID を復元できない、
-    /// 列挙が空・異常終了する — いずれも同定できなかったものとして扱い、終了は行わない。
+    /// 分けられるのは「実行単位が既に消滅している」場合だけで、同定子から復元した PGID が
+    /// 別の実行単位へ再利用されていれば生存として返る。同定子から PGID を復元できない・
+    /// 列挙が空 — いずれも同定できなかったものとして扱い、終了は行わない。
     pub fn unit_is_live(source: &IdentitySource, ident: &KillIdent) -> Result<bool, Io> {
         let Some(pgid) = ident.as_str().strip_prefix('-') else {
             return Ok(false);
         };
-        let output = Command::new(source.as_path())
-            .args(["-o", "pid=", "-g", pgid])
+        let output = unit_command(source, pgid)
             .output()
             .map_err(|error| Io::Failed {
                 message: format!(
@@ -626,16 +642,38 @@ mod identity {
                     source.as_path().display()
                 ),
             })?;
+        // 該当が無いときは終了ステータス非0・stdout 空になる(`observe` と同じ規則)。
+        // 出力を伴う異常終了は列挙元そのものの失敗なので、静かな `Ok(false)` に畳まない —
+        // 畳むと壊れた取得元が残存終了を恒久的に無効化しても何も報告されない。
+        if !output.status.success() && !output.stdout.is_empty() {
+            return Err(Io::Failed {
+                message: format!("実行単位の列挙が異常終了した ({})", ident.as_str()),
+            });
+        }
         Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
     }
 
     /// 環境を固定した取得コマンド。
     fn identity_command(source: &IdentitySource, pid: Pid) -> Command {
-        let mut command = Command::new(source.as_path());
+        let mut command = fixed_env_command(source);
+        command.args(["-o", "lstart=,pgid=", "-p", &pid.get().to_string()]);
         command
-            .args(["-o", "lstart=,pgid=", "-p", &pid.get().to_string()])
-            .env("LC_ALL", "C")
-            .env("TZ", "UTC");
+    }
+
+    /// 環境を固定した列挙コマンド。
+    fn unit_command(source: &IdentitySource, pgid: &str) -> Command {
+        let mut command = fixed_env_command(source);
+        command.args(["-o", "pid=", "-g", pgid]);
+        command
+    }
+
+    /// 取得元を、出力表現を左右する環境変数を固定して起動する。
+    ///
+    /// 同定情報を読む経路をすべてこの環境に通す。記録した tick と照合する tick で表現が
+    /// 変われば、生存中のプロセスを Dead と誤判定して同一 worktree での並走に至る。
+    fn fixed_env_command(source: &IdentitySource) -> Command {
+        let mut command = Command::new(source.as_path());
+        command.env("LC_ALL", "C").env("TZ", "UTC");
         // 周囲の設定が残ると `LC_ALL` / `TZ` の指定より優先されうる。
         command.env_remove("LANG");
         command.env_remove("LC_TIME");
@@ -679,20 +717,69 @@ mod identity {
         }
 
         #[test]
-        fn 取得はロケールとタイムゾーンを固定した環境で行われる() {
-            let command = identity_command(&source(), Pid::new(1));
+        fn 取得元を叩く経路はどれもロケールとタイムゾーンを固定した環境で行われる() {
+            for command in [
+                identity_command(&source(), Pid::new(1)),
+                unit_command(&source(), "1"),
+            ] {
+                let fixed: Vec<_> = command.get_envs().collect();
+                assert!(fixed.contains(&(
+                    std::ffi::OsStr::new("LC_ALL"),
+                    Some(std::ffi::OsStr::new("C"))
+                )));
+                assert!(fixed.contains(&(
+                    std::ffi::OsStr::new("TZ"),
+                    Some(std::ffi::OsStr::new("UTC"))
+                )));
+                assert!(fixed.contains(&(std::ffi::OsStr::new("LANG"), None)));
+                assert!(fixed.contains(&(std::ffi::OsStr::new("LC_TIME"), None)));
+            }
+        }
 
-            let fixed: Vec<_> = command.get_envs().collect();
-            assert!(fixed.contains(&(
-                std::ffi::OsStr::new("LC_ALL"),
-                Some(std::ffi::OsStr::new("C"))
-            )));
-            assert!(fixed.contains(&(
-                std::ffi::OsStr::new("TZ"),
-                Some(std::ffi::OsStr::new("UTC"))
-            )));
-            assert!(fixed.contains(&(std::ffi::OsStr::new("LANG"), None)));
-            assert!(fixed.contains(&(std::ffi::OsStr::new("LC_TIME"), None)));
+        #[test]
+        fn 壊した列挙元では不在ではなく機構の失敗になる() {
+            let broken = IdentitySource::new(PathBuf::from("/no/such/identity-source"));
+            let ident = KillIdent::parse("-1".to_owned()).expect("形式を満たす");
+
+            assert!(matches!(
+                unit_is_live(&broken, &ident),
+                Err(Io::Failed { .. })
+            ));
+        }
+
+        /// 指定の標準出力と終了ステータスだけを返す列挙元を置く。
+        fn fake_source(
+            dir: &tempfile::TempDir,
+            name: &str,
+            stdout: &str,
+            code: u8,
+        ) -> IdentitySource {
+            use std::os::unix::fs::PermissionsExt;
+
+            let path = dir.path().join(name);
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\nprintf '{stdout}'\nexit {code}\n"),
+            )
+            .expect("書き出せる");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("実行権を与えられる");
+            IdentitySource::new(path)
+        }
+
+        #[test]
+        fn 列挙元の異常終了は出力の有無で不在と機構の失敗に分かれる() {
+            let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
+            let ident = KillIdent::parse("-1".to_owned()).expect("形式を満たす");
+
+            assert_eq!(
+                unit_is_live(&fake_source(&dir, "silent", "", 1), &ident),
+                Ok(false)
+            );
+            assert!(matches!(
+                unit_is_live(&fake_source(&dir, "noisy", "usage: ps", 1), &ident),
+                Err(Io::Failed { .. })
+            ));
         }
 
         #[test]
@@ -1120,8 +1207,10 @@ mod identity {
 
     /// 実行単位にメンバーが1つでも生きているか。
     ///
-    /// 同定子は pid そのものなので、観測できれば実行単位は生きている。観測の三値は
-    /// そのまま「同定できた / できなかった / 機構が失敗した」に対応する。
+    /// 同定子はラッパー自身の pid であり、`try_kill_remnants` の呼び出し前提はそのラッパーが
+    /// 死亡した後なので、この観測は常に `Ok(None)` → `NotIdentifiable` になる。実行単位を
+    /// ラッパーと別に辿り直す手段(ジョブオブジェクト)を持たない現在の設計の帰結で、
+    /// `taskkill /T` はツリーの根が死んでいれば効かないため誤殺には至らない。
     pub fn unit_is_live(source: &IdentitySource, ident: &KillIdent) -> Result<bool, Io> {
         let Ok(pid) = ident.as_str().parse::<u32>() else {
             return Ok(false);

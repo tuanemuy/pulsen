@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use pulsen_domain::definition::{
-    AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, WorkflowLoadError,
-    WorkflowParseError, WorkflowStructureError,
+    AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, TimeoutSpec,
+    WorkflowLoadError, WorkflowParseError, WorkflowStructureError,
 };
 use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
 use pulsen_domain::task::{
@@ -16,7 +16,7 @@ use pulsen_domain::task::{
 };
 
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
-use crate::application::tick::{TickError, TickIssue, TickSummary};
+use crate::application::tick::{RemnantsLeft, RunFailureCause, TickError, TickIssue, TickSummary};
 
 use super::add::AddError;
 use super::tick::TickCommandError;
@@ -105,8 +105,8 @@ fn issue_outcome(issue: &TickIssue) -> IssueOutcome {
         | TickIssue::SpawnNotObserved { .. }
         | TickIssue::JudgeFailed { .. }
         | TickIssue::RunFailed { .. }
-        // 残存終了の報告は、同じ tick で記録した実行の失敗に添える文脈として並べる
-        // (保存できたときにだけ積まれる)。
+        // 残存終了は実行の失敗を確定させる tick でだけ試みる。人間の後始末を促す報告と
+        // して、その失敗の記録と同じ見出しに並べる。
         | TickIssue::RemnantsUnhandled { .. } => IssueOutcome::Recorded,
         TickIssue::PrepareAttemptFailed { .. } | TickIssue::SpawnFailed { .. } => {
             IssueOutcome::LaunchUnsettled
@@ -116,6 +116,7 @@ fn issue_outcome(issue: &TickIssue) -> IssueOutcome {
         | TickIssue::MissingCurrentAttempt { .. }
         | TickIssue::MissingProcessIdent { .. }
         | TickIssue::Transition { .. }
+        | TickIssue::MissingWorkspace { .. }
         | TickIssue::RunFileUnreadable { .. }
         | TickIssue::InconsistentRunFiles { .. }
         | TickIssue::MarkerWriteFailed { .. }
@@ -217,16 +218,22 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: timeout を超えた実行を終了させられません({message})",
             task_id.as_str()
         ),
-        TickIssue::RemnantsUnhandled { task_id, message } => {
-            format!("{}: {message}", task_id.as_str())
+        TickIssue::RemnantsUnhandled { task_id, remnants } => {
+            format!("{}: {}", task_id.as_str(), remnants_left(remnants))
         }
         TickIssue::JudgeFailed { task_id, detail } => format!(
             "{}: 判定できず判定失敗として記録しました({detail})",
             task_id.as_str()
         ),
-        TickIssue::RunFailed { task_id, message } => {
-            format!("{}: 実行の失敗を記録しました({message})", task_id.as_str())
-        }
+        TickIssue::RunFailed { task_id, cause } => format!(
+            "{}: 実行の失敗を記録しました({})",
+            task_id.as_str(),
+            run_failure_cause(cause)
+        ),
+        TickIssue::MissingWorkspace { task_id } => format!(
+            "{}: 判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)",
+            task_id.as_str()
+        ),
         TickIssue::NotifyFailed { task_id, message } => format!(
             "{}: 凍結を通知できません({message})。次の tick が再通知します",
             task_id.as_str()
@@ -236,6 +243,42 @@ fn tick_issue(issue: &TickIssue) -> String {
             task_id.as_str(),
             save_error(error)
         ),
+    }
+}
+
+/// 実行を失敗として確定させた根拠。判断した主体が読めるように書く。
+fn run_failure_cause(cause: &RunFailureCause) -> String {
+    match cause {
+        RunFailureCause::DefaultJudgement { exit } => {
+            format!("実行が終了コード {} で終了しました", exit.get())
+        }
+        RunFailureCause::JudgeCommand { exit } => format!(
+            "判定コマンドが失敗と判定しました(実行の終了コードは {})",
+            exit.get()
+        ),
+        RunFailureCause::TimedOut {
+            timeout: TimeoutSpec::Limited(limit),
+        } => format!(
+            "実行が timeout({}秒)を超えたため終了させました",
+            limit.seconds()
+        ),
+        // 無制限の timeout では超過が成立しないため、終了させた事実だけを述べる。
+        RunFailureCause::TimedOut {
+            timeout: TimeoutSpec::Unlimited,
+        } => "実行を終了させました".to_owned(),
+        RunFailureCause::DiedWithoutExit => "実行が終了コードを残さずに終わりました".to_owned(),
+    }
+}
+
+/// ベストエフォートの残存終了のあとに残った後始末。OS ツールでの後始末を促す。
+fn remnants_left(remnants: &RemnantsLeft) -> String {
+    match remnants {
+        RemnantsLeft::NotIdentifiable => {
+            "残存プロセスを誤殺なく同定できませんでした(終了操作は行っていません)".to_owned()
+        }
+        RemnantsLeft::Failed { message } => {
+            format!("残存プロセスを終了できませんでした: {message}")
+        }
     }
 }
 
@@ -649,7 +692,8 @@ fn push_field(out: &mut String, label: &str, value: &str) {
 mod tests {
     use std::path::PathBuf;
 
-    use pulsen_domain::definition::{NameError, StatusName, WorkflowName};
+    use pulsen_domain::definition::{DurationSpec, NameError, StatusName, WorkflowName};
+    use pulsen_domain::execution::ExitCode;
     use pulsen_domain::task::{BranchName, BranchNameError, TaskId};
 
     use super::*;
@@ -1055,6 +1099,84 @@ mod tests {
              スキップ(1件):\n    \
              - 20260812t101112-ijkl9012: pid ファイルがあるのに starttime ファイルが\
              ありません(ラッパーは starttime を先に書く)"
+        );
+    }
+
+    #[test]
+    fn 実行の失敗の根拠は判断した主体が読める形で示される() {
+        let failed = |cause: RunFailureCause| {
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::RunFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    cause,
+                }],
+                ..TickSummary::default()
+            })
+        };
+
+        assert!(
+            failed(RunFailureCause::DefaultJudgement {
+                exit: ExitCode::new(1),
+            })
+            .ends_with("実行の失敗を記録しました(実行が終了コード 1 で終了しました)"),
+        );
+        assert!(
+            failed(RunFailureCause::JudgeCommand {
+                exit: ExitCode::new(0),
+            })
+            .ends_with(
+                "実行の失敗を記録しました(判定コマンドが失敗と判定しました(実行の終了コードは 0))"
+            ),
+            "エージェントの終了コードが 0 でも判定コマンドの判断として読める"
+        );
+        assert!(
+            failed(RunFailureCause::TimedOut {
+                timeout: TimeoutSpec::Limited(DurationSpec::parse("60s").expect("受理される")),
+            })
+            .ends_with("実行の失敗を記録しました(実行が timeout(60秒)を超えたため終了させました)"),
+        );
+        assert!(
+            failed(RunFailureCause::DiedWithoutExit)
+                .ends_with("実行の失敗を記録しました(実行が終了コードを残さずに終わりました)"),
+        );
+    }
+
+    #[test]
+    fn 残存プロセスの後始末は同定できたかで書き分けられる() {
+        let remnants = |remnants: RemnantsLeft| {
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::RemnantsUnhandled {
+                    task_id: task("20260812t101112-abcd1234"),
+                    remnants,
+                }],
+                ..TickSummary::default()
+            })
+        };
+
+        assert!(
+            remnants(RemnantsLeft::NotIdentifiable)
+                .ends_with("残存プロセスを誤殺なく同定できませんでした(終了操作は行っていません)"),
+        );
+        assert!(
+            remnants(RemnantsLeft::Failed {
+                message: "終了操作を起動できない".to_owned(),
+            })
+            .ends_with("残存プロセスを終了できませんでした: 終了操作を起動できない"),
+        );
+    }
+
+    #[test]
+    fn ワークスペースの未確定は修復すべき場所を示す() {
+        assert!(
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::MissingWorkspace {
+                    task_id: task("20260812t101112-abcd1234"),
+                }],
+                ..TickSummary::default()
+            })
+            .ends_with(
+                "判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)"
+            ),
         );
     }
 

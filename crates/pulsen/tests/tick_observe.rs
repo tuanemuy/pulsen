@@ -6,7 +6,7 @@
 
 mod tick_fixture;
 
-use pulsen::application::tick::{TickIssue, TickSummary};
+use pulsen::application::tick::{RemnantsLeft, RunFailureCause, TickIssue, TickSummary};
 use pulsen_conformance::doubles::{
     ProcessControllerCall, ScriptedCommandRunner, ScriptedProcessController, ScriptedRunStore,
     ScriptedTaskRepository,
@@ -16,13 +16,15 @@ use pulsen_domain::execution::{
     CommandCompletion, ExitCode, KillError, RemnantOutcome, RunFileError,
 };
 use pulsen_domain::task::{
-    ExecutionState, ExecutionStateKind, RetryCounters, SaveError, StopReason, WorkspacePlanner,
+    AttemptRef, ExecutionState, ExecutionStateKind, RetryCounters, SaveError, StopReason, Task,
+    TaskEntry, TaskFields, TaskRecord, WorkspacePlanner,
 };
 
 use tick_fixture::{
-    AgentRunSpec, Harness, TASK, after, agent_run, command, config_judging, kill_ident,
-    observed_starttime, repository, reused_starttime, run_dir, snapshot_with, task, task_id,
-    timeout_secs, worktree_root,
+    AgentRunSpec, Harness, NOW, TASK, after, agent_run, at, attempt_number, command,
+    config_judging, kill_ident, observed_starttime, process_ident, repository,
+    repository_failing_save, reused_starttime, run_dir, snapshot_with, status, target, task,
+    task_id, timeout_secs, workflow_name, worktree_root,
 };
 
 /// exit ファイルの読み取りだけを台本に持つストア。
@@ -59,6 +61,31 @@ fn judged_status(judge: &str) -> StatusDefinition {
         judge: Some(command(judge)),
         ..AgentRunSpec::default()
     })
+}
+
+/// workspace が未確定のまま起動確認済みになったタスク(不変条件4の破れ)。
+///
+/// 起動確認済みのタスクを組む経路は必ず workspace を確定させるため、ここだけ帳簿を直に組む。
+fn running_without_workspace(judge: StatusDefinition) -> TaskEntry {
+    let task = Task::rehydrate(TaskFields {
+        id: task_id(TASK),
+        workflow_name: workflow_name(),
+        target: target(),
+        snapshot: snapshot_with(Some("claude"), None, judge),
+        task_status: status("queued"),
+        execution: ExecutionState::Running,
+        workspace: None,
+        current_attempt: Some(AttemptRef::rehydrate(
+            attempt_number(1),
+            run_dir(TASK, 1),
+            Some(process_ident()),
+        )),
+        counters: RetryCounters::initial(),
+        last_failure: None,
+        updated_at: at(NOW),
+    })
+    .expect("不変条件1を満たす");
+    TaskEntry::Record(TaskRecord::Intact(task))
 }
 
 #[test]
@@ -226,6 +253,60 @@ fn 判定自体が壊れていれば起動確認済みのまま判定のカウ�
             summary.errors
         );
     }
+}
+
+#[test]
+fn 判定コマンドを持つステータスでworkspaceが未確定なら判定を起動せず報告する() {
+    let harness = Harness {
+        tasks: repository(vec![running_without_workspace(judged_status("judge"))]),
+        runs: exit_of(Some(0)),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert_eq!(
+        summary.errors,
+        vec![TickIssue::MissingWorkspace {
+            task_id: task_id(TASK),
+        }]
+    );
+    assert!(
+        harness.commands.calls().is_empty(),
+        "判定コマンドへ渡す文脈が揃わないので起動しない"
+    );
+    assert!(harness.tasks.saved().is_empty(), "書き込まない");
+}
+
+#[test]
+fn 実行の失敗の根拠は判断した主体ごとに区別される() {
+    let default_judgement = running_with(exit_of(Some(1))).completed();
+    assert!(
+        default_judgement.errors.contains(&TickIssue::RunFailed {
+            task_id: task_id(TASK),
+            cause: RunFailureCause::DefaultJudgement {
+                exit: ExitCode::new(1),
+            },
+        }),
+        "{:?}",
+        default_judgement.errors
+    );
+
+    let mut judged = running_status(judged_status("judge"), exit_of(Some(0)));
+    judged.commands =
+        ScriptedCommandRunner::new().with_run([CommandCompletion::Exited(ExitCode::new(10))]);
+    let by_command = judged.completed();
+
+    assert!(
+        by_command.errors.contains(&TickIssue::RunFailed {
+            task_id: task_id(TASK),
+            cause: RunFailureCause::JudgeCommand {
+                exit: ExitCode::new(0),
+            },
+        }),
+        "判定コマンドが失敗と判定した場合、実行の終了コード 0 は失敗の根拠にならない({:?})",
+        by_command.errors
+    );
 }
 
 #[test]
@@ -441,7 +522,7 @@ fn 生存していてtimeoutを超えていればkillしてから失敗にする
         .with_kill([Ok(())]);
     harness.clock.set(after(60));
 
-    harness.completed();
+    let summary = harness.completed();
 
     assert_eq!(
         harness.processes.calls().pop(),
@@ -450,6 +531,16 @@ fn 生存していてtimeoutを超えていればkillしてから失敗にする
         })
     );
     assert_eq!(harness.saved(TASK).execution(), &ExecutionState::Failed);
+    assert!(
+        summary.errors.contains(&TickIssue::RunFailed {
+            task_id: task_id(TASK),
+            cause: RunFailureCause::TimedOut {
+                timeout: timeout_secs(60),
+            },
+        }),
+        "{:?}",
+        summary.errors
+    );
 }
 
 #[test]
@@ -578,16 +669,31 @@ fn 終了コードを残さず死亡した実行は残存終了を試みてか�
         "残存終了は失敗の確定より先に試みる"
     );
     assert_eq!(harness.saved(TASK).execution(), &ExecutionState::Failed);
-    assert!(reported_run_failure(&summary), "{:?}", summary.errors);
+    assert!(
+        summary.errors.contains(&TickIssue::RunFailed {
+            task_id: task_id(TASK),
+            cause: RunFailureCause::DiedWithoutExit,
+        }),
+        "{:?}",
+        summary.errors
+    );
 }
 
 #[test]
 fn 残存終了の結末は報告されるだけで分類に影響しない() {
-    for outcome in [
-        RemnantOutcome::NotIdentifiable,
-        RemnantOutcome::Failed {
-            message: "終了操作が失敗した".to_owned(),
-        },
+    for (outcome, remnants) in [
+        (
+            RemnantOutcome::NotIdentifiable,
+            RemnantsLeft::NotIdentifiable,
+        ),
+        (
+            RemnantOutcome::Failed {
+                message: "終了操作が失敗した".to_owned(),
+            },
+            RemnantsLeft::Failed {
+                message: "終了操作が失敗した".to_owned(),
+            },
+        ),
     ] {
         let mut harness = running_with(exit_of(None));
         harness.processes = ScriptedProcessController::new()
@@ -602,14 +708,45 @@ fn 残存終了の結末は報告されるだけで分類に影響しない() {
             "{outcome:?}"
         );
         assert!(
-            summary
-                .errors
-                .iter()
-                .any(|issue| matches!(issue, TickIssue::RemnantsUnhandled { .. })),
-            "{outcome:?}: 報告される({:?})",
+            summary.errors.contains(&TickIssue::RemnantsUnhandled {
+                task_id: task_id(TASK),
+                remnants,
+            }),
+            "{outcome:?}: 後始末の残り方まで報告される({:?})",
             summary.errors
         );
     }
+}
+
+#[test]
+fn 保存に失敗しても残存の結末は報告される() {
+    let mut harness = Harness {
+        tasks: repository_failing_save(vec![task(TASK).running(1).entry()]),
+        runs: exit_of(None),
+        ..Harness::new()
+    };
+    harness.processes = ScriptedProcessController::new()
+        .with_starttime_of([Ok(None)])
+        .with_try_kill_remnants([RemnantOutcome::NotIdentifiable]);
+
+    let summary = harness.completed();
+
+    assert!(
+        summary.errors.contains(&TickIssue::RemnantsUnhandled {
+            task_id: task_id(TASK),
+            remnants: RemnantsLeft::NotIdentifiable,
+        }),
+        "残存プロセスの有無はタスクファイルを書けたかと直交する({:?})",
+        summary.errors
+    );
+    assert!(
+        summary
+            .errors
+            .iter()
+            .any(|issue| matches!(issue, TickIssue::SaveFailed { .. })),
+        "書けなかったこと自体も報告される({:?})",
+        summary.errors
+    );
 }
 
 #[test]

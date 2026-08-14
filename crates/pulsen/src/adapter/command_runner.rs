@@ -70,11 +70,7 @@ impl CommandRunner for SystemCommandRunner {
 fn wait(mut child: Child) -> CommandCompletion {
     match child.wait() {
         Ok(status) => CommandCompletion::Exited(ExitCode::new(encode(&status))),
-        // 起動には成功しているので「終了しなかった」ではない。結末を値で表す契約のもとで
-        // 残る受け皿はここだけであり、判定・通知はどちらも「実行が壊れた」として扱う。
-        Err(error) => CommandCompletion::FailedToStart {
-            message: format!("終了を待てない: {error}"),
-        },
+        Err(error) => wait_failed(&mut child, &error),
     }
 }
 
@@ -83,23 +79,34 @@ fn wait(mut child: Child) -> CommandCompletion {
 /// `Child` の所有権を持ったまま待つことで、超過時に終了させる手段が残る。別スレッドへ
 /// move して待たせると、期限は測れても契約(「timeout 後に生存していない」)を満たせない。
 fn wait_until(mut child: Child, limit: Duration) -> CommandCompletion {
-    let deadline = Instant::now() + limit;
+    // 期限を絶対時刻(`Instant::now() + limit`)で持たない。`DurationSpec` は上限のない秒数を
+    // 受理するため、加算は溢れでパニックしうる。経過時間との比較なら全域で定義される。
+    let started = Instant::now();
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return CommandCompletion::Exited(ExitCode::new(encode(&status))),
             Ok(None) => {}
-            Err(error) => {
-                return CommandCompletion::FailedToStart {
-                    message: format!("終了を待てない: {error}"),
-                };
-            }
+            Err(error) => return wait_failed(&mut child, &error),
         }
-        if Instant::now() >= deadline {
+        if started.elapsed() >= limit {
             // 終了させたうえで回収する。回収しないとゾンビが残り、次の観測が生存と読む。
             let _ = child.kill();
             let _ = child.wait();
             return CommandCompletion::TimedOut;
         }
         std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// 待機そのものが失敗したときの結末。
+///
+/// 起動には成功しているので「終了しなかった」ではない。結末を値で表す契約のもとで残る
+/// 受け皿はここだけであり、判定・通知はどちらも「実行が壊れた」として扱う。畳んだうえで
+/// 子は始末する — 終了させて回収しないと、待てなくなった子が生き残りゾンビが残る。
+fn wait_failed(child: &mut Child, error: &std::io::Error) -> CommandCompletion {
+    let _ = child.kill();
+    let _ = child.wait();
+    CommandCompletion::FailedToStart {
+        message: format!("終了を待てない: {error}"),
     }
 }

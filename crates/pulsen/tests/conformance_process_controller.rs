@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use pulsen::adapter::clock::SystemClock;
@@ -455,22 +456,18 @@ const PERMISSION_CASES: [&str; 2] = [
     "tc_port_process_controller_025",
 ];
 
-/// シグナルによる終了を作れないプラットフォームでのみスキップされるケース。
-const SIGNAL_CASES: [&str; 1] = ["tc_port_process_controller_024"];
-
 /// この環境でスキップを許容するケース。
 ///
 /// 取得機構の失敗(TC-005)は取得元の注入で作れるため、権限にも root の可否にも依存せず
-/// 走る(ADR-076)。`agent_probe` の不在は許容しない — 作り忘れを緑にしないため。
+/// 走る(ADR-076)。exit コードを持たない終了(TC-024)が要求するのは `agent_command` の提供
+/// だけで、期待も「非0の符号化値」までなので(ADR-082)、前提を作れない環境が無い。
+/// `agent_probe` の不在は許容しない — 作り忘れを緑にしないため。
 fn allowed_skips() -> Vec<&'static str> {
-    let mut allowed = Vec::new();
-    if !pulsen_conformance::permission_restrictions_effective() {
-        allowed.extend(PERMISSION_CASES);
+    if pulsen_conformance::permission_restrictions_effective() {
+        Vec::new()
+    } else {
+        PERMISSION_CASES.to_vec()
     }
-    if !cfg!(unix) {
-        allowed.extend(SIGNAL_CASES);
-    }
-    allowed
 }
 
 pulsen_conformance::process_controller_identity_conformance!(
@@ -486,26 +483,91 @@ pulsen_conformance::process_controller_spawn_conformance!(
     Vec::new()
 );
 
-/// 実行単位を作れない(単体のプロセスを終了させられない)環境でのみスキップされるケース。
+/// 実行単位そのものを作れない環境でのみスキップされるケース。
 ///
-/// 取得機構の失敗(TC-010)・終了操作の失敗(TC-013 / TC-016)・同定手段の喪失(TC-015)は
-/// いずれも別のコントローラの注入で確定的に作れるため、権限にも root の可否にも依存しない
-/// (ADR-076 と同じ手)。
-const EXECUTION_UNIT_CASES: [&str; 6] = [
+/// 取得機構の失敗(TC-010)は取得元の注入だけで作れる。前提を作れない環境が無いため、この
+/// 集合には現れない。終了操作の失敗(TC-013)と同定手段の喪失(TC-015)も注入で確定的に作れる
+/// が、その操作を向ける実行単位そのものは要る(ADR-076)。
+const EXECUTION_UNIT_CASES: [&str; 4] = [
     "tc_port_process_controller_011",
     "tc_port_process_controller_012",
     "tc_port_process_controller_013",
-    "tc_port_process_controller_014",
     "tc_port_process_controller_015",
+];
+
+/// 実行単位は作れるが、その一部だけを終了させられない環境でスキップされるケース。
+const PARTIAL_TERMINATION_CASES: [&str; 2] = [
+    "tc_port_process_controller_014",
     "tc_port_process_controller_016",
 ];
 
-/// 観測スイートでスキップを許容するケース。
-fn observation_allowed_skips() -> Vec<&'static str> {
-    if cfg!(unix) {
-        Vec::new()
+/// 実行単位のフィクスチャをこの環境で組めるか。
+///
+/// 区別を4つに分ける根拠は ADR-073 の基準 — 許容集合に入れてよいのは、スキップにしたときに
+/// 「なぜ走らなかったか」と「次に何をすればよいか」がその宣言だけから定まる能力に限る。
+/// 実行ファイルの不在は原因も回避方法も一意(example をビルドする形で実行する)なので、
+/// 能力側には置かない。
+enum ExecutionUnitCapability {
+    /// 実行単位を起こせ、その一部だけを終了させられる。
+    Partitionable,
+    /// 実行単位は起こせるが、その一部だけを終了させる手段が無い。
+    WholeOnly,
+    /// 実行単位そのものを起こせない。この観測は原因を1つに定めず、実行単位を作れない環境と
+    /// フィクスチャ側の退行を区別しない(ADR-073 の `SignalTimedOut` と同じ性質)。
+    Unavailable,
+    /// フィクスチャの実行ファイル(`examples/agent_probe` / `examples/spawn_probe`)が無い。
+    ProgramMissing,
+}
+
+/// 実行単位を1度だけ実際に起こして能力を決める。
+///
+/// 判定はフィクスチャが本番で踏む手順そのもの(実行単位を起こし、その一部だけを終了させる)で
+/// 行うため、判定と実際のスキップが食い違わない(ADR-055 の `permission_restrictions_effective`
+/// と同じ性質)。フィクスチャの実行ファイルは適用側のテストターゲットからしか解決できないので、
+/// probe はスイートではなくここに置く(ADR-073 の置き場所の基準)。
+fn execution_unit_capability() -> &'static ExecutionUnitCapability {
+    static CAPABILITY: OnceLock<ExecutionUnitCapability> = OnceLock::new();
+
+    CAPABILITY.get_or_init(probe_execution_unit)
+}
+
+fn probe_execution_unit() -> ExecutionUnitCapability {
+    if example_program("agent_probe").is_none() || example_program("spawn_probe").is_none() {
+        return ExecutionUnitCapability::ProgramMissing;
+    }
+    // 滞留の解放はハーネスの `Drop` が書くため、判定が終わるまで保持する。
+    let harness = SystemProcessControllerHarness::new();
+    let Some(unit) = harness.spawn_unit() else {
+        return ExecutionUnitCapability::Unavailable;
+    };
+    let partitionable = unit
+        .members
+        .first()
+        .is_some_and(|wrapper| terminate_one(*wrapper).is_some());
+    // 判定には入れない後始末。滞留の上限を待たずに実行単位を畳む。
+    let _ = harness.controller.kill(&unit.kill_ident);
+
+    if partitionable {
+        ExecutionUnitCapability::Partitionable
     } else {
-        EXECUTION_UNIT_CASES.to_vec()
+        ExecutionUnitCapability::WholeOnly
+    }
+}
+
+/// 観測スイートでスキップを許容するケース。
+///
+/// 宣言はプラットフォームではなく実測した能力から組む(ADR-055)。実行ファイルの不在は許容
+/// しない — 作り忘れを緑にしないため(HOOKS.md / ADR-068 / ADR-073)。
+fn observation_allowed_skips() -> Vec<&'static str> {
+    match execution_unit_capability() {
+        ExecutionUnitCapability::Partitionable => Vec::new(),
+        ExecutionUnitCapability::WholeOnly => PARTIAL_TERMINATION_CASES.to_vec(),
+        ExecutionUnitCapability::Unavailable => {
+            let mut allowed = EXECUTION_UNIT_CASES.to_vec();
+            allowed.extend(PARTIAL_TERMINATION_CASES);
+            allowed
+        }
+        ExecutionUnitCapability::ProgramMissing => Vec::new(),
     }
 }
 

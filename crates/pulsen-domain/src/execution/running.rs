@@ -29,6 +29,30 @@ pub enum RunningDecision {
     DiedWithoutExit,
 }
 
+/// exit を残していない running タスクの分類結果(2 段目)。
+///
+/// `RunningDecision` から `Judge` を除いた 3 値。生存の観測からは判定が導かれないことを、
+/// 返り値の型そのものが述べる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliveDecision {
+    /// 生存・timeout 未超過 — 何もしない。
+    KeepRunning,
+    /// 生存・timeout 超過 — kill してから失敗にする。
+    KillOnTimeout,
+    /// 死亡 — 残存の終了をベストエフォートで試みてから失敗にする。
+    DiedWithoutExit,
+}
+
+impl From<AliveDecision> for RunningDecision {
+    fn from(decision: AliveDecision) -> Self {
+        match decision {
+            AliveDecision::KeepRunning => Self::KeepRunning,
+            AliveDecision::KillOnTimeout => Self::KillOnTimeout,
+            AliveDecision::DiedWithoutExit => Self::DiedWithoutExit,
+        }
+    }
+}
+
 /// PID 再利用対策の起動時刻照合(純粋)。
 pub struct IdentityCheck;
 
@@ -51,8 +75,8 @@ impl IdentityCheck {
 ///
 /// 分類は 2 段で行う。exit ファイルがあれば実行は終了しており、生存観測は**不要かつ
 /// 行わない**(観測の一過性の失敗で判定を遅延させない)。1 段目(exit の有無)は
-/// 観測を行うユースケース側にあり、この型が受け持つのは 2 段目だけ — だから
-/// `classify_alive` は `Judge` を返さない。
+/// 観測を行うユースケース側にあり、この型が受け持つのは 2 段目だけ — 返り値を
+/// `AliveDecision` に絞ることで、その規則を型で担保する。
 pub struct RunningClassifier;
 
 impl RunningClassifier {
@@ -66,16 +90,16 @@ impl RunningClassifier {
         started_wall: &Timestamp,
         timeout: &TimeoutSpec,
         now: &Timestamp,
-    ) -> RunningDecision {
+    ) -> AliveDecision {
         match aliveness {
-            Aliveness::Dead => RunningDecision::DiedWithoutExit,
+            Aliveness::Dead => AliveDecision::DiedWithoutExit,
             Aliveness::Alive => match timeout {
-                TimeoutSpec::Unlimited => RunningDecision::KeepRunning,
+                TimeoutSpec::Unlimited => AliveDecision::KeepRunning,
                 TimeoutSpec::Limited(limit) => {
                     if now.elapsed_since(started_wall) > limit.seconds() {
-                        RunningDecision::KillOnTimeout
+                        AliveDecision::KillOnTimeout
                     } else {
-                        RunningDecision::KeepRunning
+                        AliveDecision::KeepRunning
                     }
                 }
             },
@@ -138,7 +162,7 @@ mod tests {
                     &limited("60s"),
                     &after(elapsed),
                 ),
-                RunningDecision::KeepRunning,
+                AliveDecision::KeepRunning,
                 "{elapsed}秒"
             );
         }
@@ -153,7 +177,7 @@ mod tests {
                 &limited("60s"),
                 &after(61),
             ),
-            RunningDecision::KillOnTimeout
+            AliveDecision::KillOnTimeout
         );
     }
 
@@ -166,7 +190,7 @@ mod tests {
                 &TimeoutSpec::Unlimited,
                 &after(86_400),
             ),
-            RunningDecision::KeepRunning
+            AliveDecision::KeepRunning
         );
     }
 
@@ -179,7 +203,7 @@ mod tests {
                 &limited("60s"),
                 &after(-3600),
             ),
-            RunningDecision::KeepRunning
+            AliveDecision::KeepRunning
         );
     }
 
@@ -193,7 +217,7 @@ mod tests {
                     &timeout,
                     &after(1),
                 ),
-                RunningDecision::DiedWithoutExit,
+                AliveDecision::DiedWithoutExit,
                 "{timeout:?}"
             );
         }
@@ -210,5 +234,19 @@ mod tests {
             RunningDecision::KillOnTimeout,
             RunningDecision::DiedWithoutExit
         );
+    }
+
+    #[test]
+    fn 生存の分類は判定以外の3値へそのまま対応する() {
+        for (alive, expected) in [
+            (AliveDecision::KeepRunning, RunningDecision::KeepRunning),
+            (AliveDecision::KillOnTimeout, RunningDecision::KillOnTimeout),
+            (
+                AliveDecision::DiedWithoutExit,
+                RunningDecision::DiedWithoutExit,
+            ),
+        ] {
+            assert_eq!(RunningDecision::from(alive), expected, "{alive:?}");
+        }
     }
 }

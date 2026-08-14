@@ -556,33 +556,54 @@ impl Task {
         }
     }
 
-    /// 起動確認済みであることを検査する。
+    /// 起動確認済みであり、現在 attempt と同定情報が揃っていることを検査する。
+    ///
+    /// 実行状態の判別子だけでは足りない — 不変条件2・3 は手動修復で破られたまま
+    /// デコードを通り得るため、判定を確定する遷移がここで前提として検査する。
+    /// 同定情報を欠いた `Running` を通すと、観測していない実行の結末を確定してしまう。
     fn ensure_running(&self) -> Result<(), TransitionError> {
         match self.execution {
-            ExecutionState::Running => Ok(()),
+            ExecutionState::Running => {}
             ExecutionState::Pending
             | ExecutionState::Launching { .. }
             | ExecutionState::Completed
             | ExecutionState::Failed
-            | ExecutionState::Stopped { .. } => Err(TransitionError::InvalidState {
-                expected: RUNNING,
-                actual: self.execution.kind(),
-            }),
+            | ExecutionState::Stopped { .. } => {
+                return Err(TransitionError::InvalidState {
+                    expected: RUNNING,
+                    actual: self.execution.kind(),
+                });
+            }
+        }
+
+        match self.current_attempt.as_ref().and_then(AttemptRef::process) {
+            Some(_) => Ok(()),
+            None => Err(TransitionError::MissingCurrentAttempt),
         }
     }
 
-    /// 判定確定(成功)であることを検査する。
+    /// 判定確定(成功)であり、現在 attempt が残っていることを検査する。
+    ///
+    /// 不変条件5(attempt番号の単調増加)は現在 attempt から次番号を導出することで
+    /// 成り立つため、失われたまま `Pending` へ戻すと次の起動記録が既存の番号を採番し直す。
     fn ensure_completed(&self) -> Result<(), TransitionError> {
         match self.execution {
-            ExecutionState::Completed => Ok(()),
+            ExecutionState::Completed => {}
             ExecutionState::Pending
             | ExecutionState::Launching { .. }
             | ExecutionState::Running
             | ExecutionState::Failed
-            | ExecutionState::Stopped { .. } => Err(TransitionError::InvalidState {
-                expected: COMPLETED,
-                actual: self.execution.kind(),
-            }),
+            | ExecutionState::Stopped { .. } => {
+                return Err(TransitionError::InvalidState {
+                    expected: COMPLETED,
+                    actual: self.execution.kind(),
+                });
+            }
+        }
+
+        match self.current_attempt {
+            Some(_) => Ok(()),
+            None => Err(TransitionError::MissingCurrentAttempt),
         }
     }
 }
@@ -760,6 +781,16 @@ mod tests {
         )
     }
 
+    /// 同定情報を取り込んだ attempt(不変条件3を満たす起動確認済みの現在 attempt)。
+    fn identified_attempt(number: u32) -> AttemptRef {
+        let number = AttemptNumber::parse(number).expect("受理される");
+        AttemptRef::rehydrate(
+            number,
+            RunDirPath::derive(&state_root(), &task_id(), number),
+            Some(process()),
+        )
+    }
+
     fn process() -> ProcessIdent {
         ProcessIdent::new(
             Pid::new(4242),
@@ -791,12 +822,15 @@ mod tests {
         Task::rehydrate(fields).expect("不変条件1を満たす")
     }
 
-    /// ワークスペースと attempt が揃った、実行状態だけが異なるタスク。
+    /// ワークスペースと同定情報つきの attempt が揃った、実行状態だけが異なるタスク。
+    ///
+    /// どの実行状態でも不変条件2・3 を満たすので、前提の検査のうち実行状態の判別だけを
+    /// 状態ごとに主張できる。
     fn ready_task(execution: ExecutionState) -> Task {
         task_of(TaskFields {
             execution,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             ..fields()
         })
     }
@@ -1543,7 +1577,7 @@ mod tests {
         let task = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(2, 1, 3),
             ..fields()
         });
@@ -1557,7 +1591,7 @@ mod tests {
             "spawn_fail_count は触らない"
         );
         assert_eq!(completed.task_status(), &status("queued"));
-        assert_eq!(completed.current_attempt(), Some(&attempt(1)));
+        assert_eq!(completed.current_attempt(), Some(&identified_attempt(1)));
         assert_eq!(completed.updated_at(), later());
     }
 
@@ -1566,7 +1600,7 @@ mod tests {
         let task = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(2, 1, 3),
             ..fields()
         });
@@ -1612,7 +1646,7 @@ mod tests {
         let task = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(0, 2, 3),
             ..fields()
         });
@@ -1635,7 +1669,7 @@ mod tests {
         let over_limit = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(1, 0, 0),
             ..fields()
         })
@@ -1696,7 +1730,7 @@ mod tests {
         let task = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(1, 0, 2),
             ..fields()
         });
@@ -1727,7 +1761,7 @@ mod tests {
         let at_limit = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(0, 2, 0),
             ..fields()
         })
@@ -1739,7 +1773,7 @@ mod tests {
         let over_limit = task_of(TaskFields {
             execution: ExecutionState::Running,
             workspace: Some(workspace()),
-            current_attempt: Some(attempt(1)),
+            current_attempt: Some(identified_attempt(1)),
             counters: RetryCounters::rehydrate(0, 3, 0),
             ..fields()
         })
@@ -1779,6 +1813,65 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[test]
+    fn 現在attemptを失った起動確認済みタスクからは実行の結末を確定できない() {
+        let broken = || {
+            task_of(TaskFields {
+                execution: ExecutionState::Running,
+                workspace: Some(workspace()),
+                current_attempt: None,
+                ..fields()
+            })
+        };
+
+        assert_eq!(
+            broken().complete_run(later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
+        assert_eq!(
+            broken().skip_run(later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
+        assert_eq!(
+            broken().fail_run(2, later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
+        assert_eq!(
+            broken().record_judge_failure("判定できない".to_owned(), 3, later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
+    }
+
+    #[test]
+    fn 同定情報を失った起動確認済みタスクからは実行の結末を確定できない() {
+        let broken = || {
+            task_of(TaskFields {
+                execution: ExecutionState::Running,
+                workspace: Some(workspace()),
+                current_attempt: Some(attempt(1)),
+                ..fields()
+            })
+        };
+
+        assert_eq!(
+            broken().complete_run(later()),
+            Err(TransitionError::MissingCurrentAttempt),
+            "観測していない実行の結末は確定できない"
+        );
+        assert_eq!(
+            broken().skip_run(later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
+        assert_eq!(
+            broken().fail_run(2, later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
+        assert_eq!(
+            broken().record_judge_failure("判定できない".to_owned(), 3, later()),
+            Err(TransitionError::MissingCurrentAttempt)
+        );
     }
 
     #[test]
@@ -1849,6 +1942,22 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[test]
+    fn 現在attemptを失った判定確定タスクはステータスを進められない() {
+        let task = task_of(TaskFields {
+            execution: ExecutionState::Completed,
+            workspace: Some(workspace()),
+            current_attempt: None,
+            ..fields()
+        });
+
+        assert_eq!(
+            task.advance(later()),
+            Err(TransitionError::MissingCurrentAttempt),
+            "起動待ちへ戻すと次の起動記録が既存の attempt 番号を採番し直す"
+        );
     }
 
     #[test]
@@ -1940,7 +2049,7 @@ mod tests {
     }
 
     #[test]
-    fn 遷移の前提の破れは5種を区別する() {
+    fn 遷移の前提の破れは変種ごとに区別される() {
         let errors = [
             TransitionError::InvalidState {
                 expected: RUNNING,
@@ -1952,6 +2061,7 @@ mod tests {
                 status: status("queued"),
             },
             TransitionError::MissingCurrentAttempt,
+            TransitionError::AlreadyNotified,
         ];
 
         for (index, left) in errors.iter().enumerate() {

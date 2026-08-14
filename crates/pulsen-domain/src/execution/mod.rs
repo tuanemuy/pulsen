@@ -15,11 +15,11 @@ pub use judgement::JudgementService;
 pub use launching::{
     InconsistentRunFiles, LaunchingClassifier, LaunchingDecision, LaunchingRecheck,
 };
-pub use notification::NotificationService;
+pub use notification::{NotificationService, NotifyOutcome};
 pub use port::{
     CommandRunner, ExclusiveLock, Io, KillError, LockError, LockGuard, ProcessController,
     RemnantOutcome, RunFileError, RunStore, SpawnError, TargetError, WorktreeError,
     WorktreeManager, WrapperIdentity, WrapperLaunchSpec,
 };
-pub use running::{Aliveness, IdentityCheck, RunningClassifier, RunningDecision};
+pub use running::{AliveDecision, Aliveness, IdentityCheck, RunningClassifier, RunningDecision};
 pub use value::{CommandCompletion, ExitCode, JudgeConclusion, JudgeOutcome, PidFileContent};

@@ -12,21 +12,22 @@
 
 use pulsen_domain::definition::{StatusName, WorkflowName};
 use pulsen_domain::execution::{
-    CommandCompletion, CommandRunner, ExclusiveLock, NotificationService, ProcessController,
-    RunStore, WorktreeManager,
+    CommandRunner, ExclusiveLock, NotificationService, NotifyOutcome, ProcessController, RunStore,
+    WorktreeManager,
 };
 use pulsen_domain::task::{Clock, DegradedTask, Task, TaskId, TaskRepository};
 
 use super::{Freeze, Persisted, Tick, TickIssue, TickSummary};
 
-/// 通知の結末。
+/// 通知を実行したか。
+///
+/// 成否の解釈はドメイン(`NotificationService`)にあり、ここに残るのは
+/// 「そもそも通知を実行する構成か」という配線の分岐だけ。
 enum Delivery {
-    /// 通知が成功した。
-    Sent,
     /// notify_cmd が未定義。通知も `notified_at` の記録も行わない。
     NotConfigured,
-    /// 通知が失敗した。`notified_at` を書かず、次の tick が再通知する。
-    Failed(String),
+    /// 通知を実行した。
+    Attempted(NotifyOutcome),
 }
 
 impl<R, L, K, W, S, P, C> Tick<'_, R, L, K, W, S, P, C>
@@ -46,16 +47,20 @@ where
             // 「通知した」という虚偽の記録を作らない。後から notify_cmd が定義されれば、
             // 次の tick が未通知の stopped として検出して catch-up する。
             Delivery::NotConfigured => {}
-            Delivery::Failed(message) => report_failure(id, message, summary),
-            Delivery::Sent => match task.mark_notified(self.clock.now()) {
-                // 凍結の計上は遷移を呼んだ側が行う(ADR-097)。ここで `Frozen` を通すと、
-                // 過去の凍結が catch-up のたびに再計上される。
-                Ok(notified) => match self.commit(&notified, Freeze::NotFrozen, summary) {
-                    Persisted::Saved => summary.notified.push(id),
-                    Persisted::Failed => {}
-                },
-                Err(error) => self.report_transition(id, error, summary),
-            },
+            Delivery::Attempted(NotifyOutcome::Failed { detail }) => {
+                report_failure(id, detail, summary)
+            }
+            Delivery::Attempted(NotifyOutcome::Delivered) => {
+                match task.mark_notified(self.clock.now()) {
+                    // 凍結の計上は遷移を呼んだ側が行う(ADR-097)。ここで `Frozen` を通すと、
+                    // 過去の凍結が catch-up のたびに再計上される。
+                    Ok(notified) => match self.commit(&notified, Freeze::NotFrozen, summary) {
+                        Persisted::Saved => summary.notified.push(id),
+                        Persisted::Failed => {}
+                    },
+                    Err(error) => self.report_transition(id, error, summary),
+                }
+            }
         }
     }
 
@@ -67,16 +72,20 @@ where
         let id = task.id().clone();
         match self.deliver(&id, task.workflow_name(), task.task_status()) {
             Delivery::NotConfigured => {}
-            Delivery::Failed(message) => report_failure(id, message, summary),
-            Delivery::Sent => match task.mark_notified(self.clock.now()) {
-                Ok(notified) => match self.tasks.save_degraded(&notified) {
-                    Ok(()) => summary.notified.push(id),
-                    Err(error) => summary
-                        .errors
-                        .push(TickIssue::SaveFailed { task_id: id, error }),
-                },
-                Err(error) => self.report_transition(id, error, summary),
-            },
+            Delivery::Attempted(NotifyOutcome::Failed { detail }) => {
+                report_failure(id, detail, summary)
+            }
+            Delivery::Attempted(NotifyOutcome::Delivered) => {
+                match task.mark_notified(self.clock.now()) {
+                    Ok(notified) => match self.tasks.save_degraded(&notified) {
+                        Ok(()) => summary.notified.push(id),
+                        Err(error) => summary
+                            .errors
+                            .push(TickIssue::SaveFailed { task_id: id, error }),
+                    },
+                    Err(error) => self.report_transition(id, error, summary),
+                }
+            }
         }
     }
 
@@ -89,24 +98,13 @@ where
             return Delivery::NotConfigured;
         };
         let env = NotificationService::notify_env(id, workflow, status);
+        let completion =
+            self.commands
+                .run(notify_cmd, &env, Some(&NotificationService::NOTIFY_TIMEOUT));
 
-        match self
-            .commands
-            .run(notify_cmd, &env, Some(&NotificationService::NOTIFY_TIMEOUT))
-        {
-            CommandCompletion::Exited(code) if code.is_success() => Delivery::Sent,
-            CommandCompletion::Exited(code) => Delivery::Failed(format!(
-                "通知コマンドが終了コード {} で終了しました",
-                code.get()
-            )),
-            CommandCompletion::TimedOut => Delivery::Failed(format!(
-                "通知コマンドが {} 秒のうちに終了しませんでした",
-                NotificationService::NOTIFY_TIMEOUT.seconds()
-            )),
-            CommandCompletion::FailedToStart { message } => {
-                Delivery::Failed(format!("通知コマンドを起動できませんでした: {message}"))
-            }
-        }
+        Delivery::Attempted(NotificationService::interpret_notify_completion(
+            &completion,
+        ))
     }
 }
 

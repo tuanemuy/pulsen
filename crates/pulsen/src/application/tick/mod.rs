@@ -17,10 +17,10 @@ mod observe;
 
 use std::path::PathBuf;
 
-use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition};
+use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition, TimeoutSpec};
 use pulsen_domain::execution::{
-    CommandRunner, ExclusiveLock, InconsistentRunFiles, LockError, ProcessController, RunFileError,
-    RunStore, WorktreeManager,
+    CommandRunner, ExclusiveLock, ExitCode, InconsistentRunFiles, LockError, ProcessController,
+    RemnantOutcome, RunFileError, RunStore, WorktreeManager,
 };
 use pulsen_domain::task::{
     AttemptNumber, Clock, ExecutionState, ExecutionStateKind, ReadError, SaveError, StateRoot,
@@ -174,8 +174,8 @@ pub enum TickIssue {
     RemnantsUnhandled {
         /// 対象のタスク。
         task_id: TaskId,
-        /// 原因の説明。
-        message: String,
+        /// 残った後始末。
+        remnants: RemnantsLeft,
     },
     /// 判定自体が壊れており、判定失敗として記録した。
     JudgeFailed {
@@ -189,7 +189,16 @@ pub enum TickIssue {
         /// 対象のタスク。
         task_id: TaskId,
         /// 失敗と判断した根拠。
-        message: String,
+        cause: RunFailureCause,
+    },
+    /// 判定コマンドを持つステータスなのに workspace が未確定(不変条件4の破れ)。
+    ///
+    /// 遷移の前提の破れと分けるのは、遷移関数を一度も呼んでいないため — 起きたのは
+    /// 「判定コマンドへ渡す `WORKSPACE` を組めなかった」であり、修復も帳簿の
+    /// `workspace` を埋めることになる。
+    MissingWorkspace {
+        /// 対象のタスク。
+        task_id: TaskId,
     },
     /// 凍結を通知できなかった。`notified_at` は書いていない。
     NotifyFailed {
@@ -205,6 +214,57 @@ pub enum TickIssue {
         /// 保存の失敗。
         error: SaveError,
     },
+}
+
+/// 実行を失敗として確定させた根拠。
+///
+/// 「誰が失敗と判断したか」を分類として持つ — デフォルト判定と判定コマンドを畳むと、
+/// 判定コマンドが失敗と判定した場合にエージェント側の終了コードが失敗の根拠として
+/// 読めてしまう(エージェントが 0 で終わっていても失敗になりうる)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunFailureCause {
+    /// 判定コマンドを持たないステータスのデフォルト判定が、非 0 終了を失敗とした。
+    DefaultJudgement {
+        /// 実行の終了コード。
+        exit: ExitCode,
+    },
+    /// 判定コマンドが失敗と判定した。
+    JudgeCommand {
+        /// 実行の終了コード。判定コマンドが受け取った材料であり、失敗の根拠ではない。
+        exit: ExitCode,
+    },
+    /// timeout を超えた実行を終了させた。
+    TimedOut {
+        /// 適用されていた timeout。
+        timeout: TimeoutSpec,
+    },
+    /// 終了コードを残さずに死亡していた。
+    DiedWithoutExit,
+}
+
+/// ベストエフォートの残存終了のあとに残った後始末。
+///
+/// `RemnantOutcome::Killed` は後始末を残さないため、この分類には現れない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemnantsLeft {
+    /// 実行単位を同定できず、いかなるプロセスも終了させていない。
+    NotIdentifiable,
+    /// 同定できたが終了操作が失敗した。
+    Failed {
+        /// 原因の説明。
+        message: String,
+    },
+}
+
+impl RemnantsLeft {
+    /// 残存終了の結末のうち、報告を要するものだけを取り出す。
+    fn of(outcome: RemnantOutcome) -> Option<Self> {
+        match outcome {
+            RemnantOutcome::Killed => None,
+            RemnantOutcome::NotIdentifiable => Some(Self::NotIdentifiable),
+            RemnantOutcome::Failed { message } => Some(Self::Failed { message }),
+        }
+    }
 }
 
 /// tick パスの結果。
@@ -341,10 +401,18 @@ where
                     .errors
                     .push(TickIssue::CorruptTaskFile { path, message });
             }
-            // 定義依存の判断はすべてスキップして報告する。ただし未通知の凍結への再通知は
-            // 定義に依存しない(必要な3値はスナップショット非依存のフィールドから得られる)
-            // ため行う — 欠くと、破損したタスクの凍結が永久に通知されない。
+            // 定義依存の判断はすべてスキップして報告する。報告は実行状態によらない —
+            // 修復が要るという事実は通知の成否と独立で、報告を欠くと notify_cmd 未定義の
+            // 破損タスクが毎 tick 無言で消える。
+            //
+            // ただし未通知の凍結への再通知は定義に依存しない(必要な3値はスナップショット
+            // 非依存のフィールドから得られる)ため行う — 欠くと、破損したタスクの凍結が
+            // 永久に通知されない。
             TaskEntry::Record(TaskRecord::SnapshotUnreadable(degraded)) => {
+                summary.errors.push(TickIssue::SnapshotUnreadable {
+                    task_id: degraded.id().clone(),
+                    message: degraded.snapshot_error().to_owned(),
+                });
                 match degraded.execution() {
                     ExecutionState::Stopped {
                         notified_at: None, ..
@@ -357,10 +425,7 @@ where
                     | ExecutionState::Stopped {
                         notified_at: Some(_),
                         ..
-                    } => summary.errors.push(TickIssue::SnapshotUnreadable {
-                        task_id: degraded.id().clone(),
-                        message: degraded.snapshot_error().to_owned(),
-                    }),
+                    } => {}
                 }
             }
             TaskEntry::Record(TaskRecord::Intact(task)) => self.dispatch(task, summary),
@@ -378,11 +443,9 @@ where
             Branch::Cleanup => {}
             Branch::Observe => self.observe(task, summary),
             Branch::Advance => self.advance(task, summary),
-            Branch::Notify { notified } => {
-                if !notified {
-                    self.notify(task, summary);
-                }
-            }
+            Branch::Notify => self.notify(task, summary),
+            // 再通知は未通知のものだけを対象とする。
+            Branch::AlreadyNotified => {}
         }
     }
 
@@ -505,11 +568,10 @@ enum Branch {
     Observe,
     /// 次ステータスへの遷移。
     Advance,
-    /// 凍結の通知。
-    Notify {
-        /// 通知済みか。済みなら何もしない(再通知は未通知のものだけ)。
-        notified: bool,
-    },
+    /// 未通知の凍結の通知。
+    Notify,
+    /// 通知済みの凍結 — 何もしない。
+    AlreadyNotified,
 }
 
 /// タスクの分岐を決める。
@@ -527,8 +589,12 @@ fn branch_of(task: &Task) -> Branch {
         },
         ExecutionState::Running => Branch::Observe,
         ExecutionState::Completed => Branch::Advance,
-        ExecutionState::Stopped { notified_at, .. } => Branch::Notify {
-            notified: notified_at.is_some(),
-        },
+        ExecutionState::Stopped {
+            notified_at: None, ..
+        } => Branch::Notify,
+        ExecutionState::Stopped {
+            notified_at: Some(_),
+            ..
+        } => Branch::AlreadyNotified,
     }
 }

@@ -8,6 +8,8 @@ use pulsen_domain::task::{
     TaskLookup, TaskRepository,
 };
 
+use super::RecordSeq;
+
 /// あらかじめ与えた結果を順に返し、渡されたタスクを記録するリポジトリ。
 ///
 /// 扱うのは `create` / `list_active` / `save` / `save_degraded` の4メソッドにする —
@@ -21,7 +23,7 @@ pub struct ScriptedTaskRepository {
     save: RefCell<VecDeque<Result<(), SaveError>>>,
     save_degraded: RefCell<VecDeque<Result<(), SaveError>>>,
     created: RefCell<Vec<Task>>,
-    saved: RefCell<Vec<Task>>,
+    saved: RefCell<Vec<(RecordSeq, Task)>>,
     saved_degraded: RefCell<Vec<DegradedTask>>,
 }
 
@@ -78,6 +80,15 @@ impl ScriptedTaskRepository {
     /// tick の主張は「何が永続化されたか」なので、成否によらず渡された値を残す。
     /// 「1件も書き込まれない」という主張も、この列が空であることとして書ける。
     pub fn saved(&self) -> Vec<Task> {
+        self.saved
+            .borrow()
+            .iter()
+            .map(|(_, task)| task.clone())
+            .collect()
+    }
+
+    /// これまでに `save` へ渡されたタスクを、ほかのダブルの記録と並べられる採番つきで返す。
+    pub fn saved_in_order(&self) -> Vec<(RecordSeq, Task)> {
         self.saved.borrow().clone()
     }
 }
@@ -92,7 +103,9 @@ impl TaskRepository for ScriptedTaskRepository {
     }
 
     fn save(&self, task: &Task) -> Result<(), SaveError> {
-        self.saved.borrow_mut().push(task.clone());
+        self.saved
+            .borrow_mut()
+            .push((RecordSeq::next(), task.clone()));
         let Some(result) = self.save.borrow_mut().pop_front() else {
             panic!("save の結果を使い切った")
         };

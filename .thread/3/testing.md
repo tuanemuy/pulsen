@@ -52,7 +52,7 @@ grep -rn '#\[allow(unsafe_code)\]' crates/
 grep -n -A 3 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/Cargo.toml
 ```
 
-- 1つ目: `crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs` / `adapter/process.rs` / `adapter/task_repository.rs` の3ファイルだけであること（現状は 4 / 10 / 1 件）。新設の `adapter/command_runner.rs` がヒットしないこと — CommandRunner は `run_agent` と同じ符号化関数を共有し、OS 依存分岐を自前で持たない（plan.md AC-7）。`crates/pulsen-conformance/src/lib.rs` の2件は適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない。
+- 1つ目: `crates/pulsen-domain/` が1件もヒットせず、`crates/pulsen/src/` 側のヒットが `util/atomic.rs` / `adapter/process.rs` / `adapter/task_repository.rs` の3ファイルだけであること。合否はこの**ファイル集合**で判定する — 件数は本スライスの実装で増える（`adapter/process.rs` に `kill` / `try_kill_remnants` / `starttime_of` が入り、現在は 4 / 12 / 1 件）。新設の `adapter/command_runner.rs` がヒットしないこと — CommandRunner は `run_agent` と同じ符号化関数を共有し、OS 依存分岐を自前で持たない（plan.md AC-7）。`crates/pulsen-conformance/src/lib.rs` の2件は適合ハーネスが権限制限の効き目を probe する分岐で、本番の実行経路には乗らない。
 - 2つ目: `crates/pulsen/src/adapter/process.rs` の1件（Windows ハンドル抑止モジュール。ADR-100）だけであること。
 - 3つ目: `pulsen-domain` の `[dependencies]` が空のまま（次行がコメントまたは `[lints.rust]`）で、`pulsen` の本番依存が `pulsen-domain` / `clap` / `getrandom` / `serde` / `serde_json` / `serde_yaml_ng` / `tempfile` から増えていないこと（ADR-023 の6クレート + 内部クレート）。
 
@@ -60,8 +60,8 @@ grep -n -A 3 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/C
 
 plan.md「テスト方針 — 手動確認」の表が定める制約を、本書の全項目に共通の前提として先に置く。
 
-- **`show` / `ls` が読む値は `state/tasks/<task-id>.json` の直読で代替する**（#4）。run ディレクトリのファイルは JSON なので、`cat exit` の期待値は `0` ではなく `{"code":0}` になる（ADR-080）。
-- **`abort` / `retry` / `set-status` を使う手順は実行しない**（#5）。`abort` を前提とする2つの TC（setup TC-35 / intervention TC-24）は、**上限超過での凍結に読み替える**。
+- **`show` / `ls` が読む値は `state/tasks/<task-id>.json` の直読で代替する**（#4）。run ディレクトリのファイルは JSON なので、`cat exit` の出力は `0` ではなく `.code` に終了コードを持つ**整形 JSON**（2スペース字下げの3行・末尾に改行なし）になる（ADR-080。`crates/pulsen/src/adapter/run_store.rs` の `encode` が `to_vec_pretty`）。本書の期待結果は綴りではなく `jq '.code'` で読める値で書く。
+- **`abort` / `retry` / `set-status` を使う手順は実行しない**（#5）。`abort` を前提とする3つの TC（setup TC-35 / intervention TC-15 / intervention TC-24）は、**上限超過での凍結に読み替える**。
 - **終端処理（クリーンアップ・アーカイブ）は行われない**（#6。`Branch::Cleanup` は引き続き未配線。`.thread/2/adr.md` ADR-101）。`done` などのクリーンアップステータスに到達したタスクは `pending` のまま滞留し、tick のサマリーにも報告にも現れない。これは異常ではない。
 - **復元手順は実行範囲外でも必ず実行する**: task-execution TC-03 手順12（`pipeline.yaml` の prompt を戻す）、setup TC-39 手順4（`judge_timeout: 60s` に戻す）、setup TC-35 手順4（`notify_cmd` を戻す）。復元しないと後続の TC の期待が必ず外れる。
 - 手順書は**記載順の実行**を前提にしている（`spec/manual-tests/task-execution.md`「実行上の注意」）。本書の項目も記載順に実行し、各項目の冒頭にその項目が前提とする状態を明記してある。
@@ -72,7 +72,7 @@ plan.md「テスト方針 — 手動確認」の表が定める制約を、本�
 
 手動確認は3つの手順書に由来するので、フィクスチャも手順書ごとに分ける。パスは各手順書の記載どおりに保つ（読み替えによる取り違えを避けるため）。
 
-#### フィクスチャA — `spec/manual-tests/task-execution.md`（TC-03 / 05 / 06 / 07 / 13 / 14 / 15 / 17 / 19 / 21 / 22 / 23 用）
+#### フィクスチャA — `spec/manual-tests/task-execution.md`（TC-03 / 05 / 06 / 07 / 13 / 14 / 15 / 17 / 19 / 20 / 21 / 22 / 23 用）
 
 同ドキュメントの「事前準備」1〜6 をそのまま実行する。
 
@@ -281,9 +281,11 @@ plan.md「テスト方針 — 手動確認」の表が定める制約を、本�
     cat /tmp/pulsen-test/notify.log
     ```
 
-    JSON の項目を絞って見たい場合は `jq` を使ってよい（`/usr/bin/jq` を Issue #1 の確認で確認済み。devShell には含まれないためシステムの `jq` を使う）。手順書が `pulsen show` で読む値と直読の対応は次のとおり — 実行状態 = `.execution.state`、タスクステータス = `.task_status`、attempt_count / judge_attempt_count / spawn_fail_count = `.counters.*`、attempt 番号・runディレクトリ = `.current_attempt.number` / `.current_attempt.run_dir`、PID・kill同定子 = `.current_attempt.process.pid` / `.kill_ident`、凍結要因 = `.execution.reason`、通知済み時刻 = `.execution.notified_at`、直近の失敗要因 = `.last_failure`。
+    JSON の項目を絞って見たい場合は `jq` を使ってよい（`/usr/bin/jq` を Issue #1 の確認で確認済み。devShell には含まれないためシステムの `jq` を使う）。手順書が `pulsen show` で読む値と直読の対応は次のとおり — 実行状態 = `.execution.state`、タスクステータス = `.task_status`、attempt_count / judge_attempt_count / spawn_fail_count = `.counters.*`、attempt 番号・runディレクトリ = `.current_attempt.number` / `.current_attempt.run_dir`、PID・kill同定子 = `.current_attempt.process.pid` / `.current_attempt.process.kill_ident`、凍結要因 = `.execution.reason`、通知済み時刻 = `.execution.notified_at`、直近の失敗要因 = `.last_failure.kind` / `.last_failure.message`（`crates/pulsen/src/adapter/task_file.rs` の DTO）。
 
-`draft.yaml` / `broken-syntax.yaml` / `wtloss.yaml` / `repo2` は本スライスの対象 TC（TC-02 / 09 / 12 / 18 / 20）に属さないため作成を省略してよい。
+`.execution` は `state` をタグに持つ直和なので、**`.execution.state` の値は状態名の文字列**（`pending` / `launching` / `running` / `completed` / `failed` / `stopped`）で、`reason` / `notified_at` / `recorded_at` は `.execution` の同じ階層に並ぶ。オブジェクト全体を照合したいときは `.execution` を、状態名だけを見たいときは `.execution.state` を指す。
+
+`draft.yaml` / `broken-syntax.yaml` / `wtloss.yaml` / `repo2` を使う TC（TC-02 / 09 / 12 / 18）は本スライスの対象外なので、これらのフィクスチャは作成を省略してよい。対象に含まれる TC-20 は手順1 で `draft.yaml` を使うが、その手順が要求するのは「破損させない別のタスクが同じ tick に居ること」だけなので、エッジケース6 では `pipeline` の2件目で代替する。
 
 #### フィクスチャB — `spec/manual-tests/setup.md`（TC-09 / 10 / 11 / 35 / 37 / 38 / 39 / 47 用）
 
@@ -359,7 +361,7 @@ EOF
 
 フィクスチャB を使う項目は `--home "$SETUP_HOME"` を明示するか、そのシェルで `export PULSEN_HOME="$SETUP_HOME"` に切り替えてから実行する。
 
-#### フィクスチャC — `spec/manual-tests/intervention.md`（TC-01 / TC-24 用）
+#### フィクスチャC — `spec/manual-tests/intervention.md`（TC-01 / TC-15 / TC-24 用）
 
 同ドキュメント「テストデータ」を、本スライスで使う範囲（`wf-fail` と notify_cmd の証跡）に絞って作る。`<PMT>` は絶対パスに展開して書き込む（YAML 内では環境変数が展開されない）。
 
@@ -443,8 +445,8 @@ EOF
   11. `pulsen tick; echo $?; cat "$PULSEN_HOME/state/tasks/$T3.json"`（`done` 到達後の tick）
   12. 復元（後続項目のため必ず実行する）: `cp /tmp/pulsen-test/pipeline.bak /tmp/pulsen-test/home/workflows/pipeline.yaml && rm -f /tmp/pulsen-test/home/workflows/pipeline.yaml.orig && grep -n 'echo planning' /tmp/pulsen-test/home/workflows/pipeline.yaml`
 - **期待結果:**
-  - 手順5: `exit` の内容は `{"code":0}`（ADR-080 により JSON）。
-  - 手順6: サマリーに T3 が「起動確認」ではなく判定側の結果として現れ、`.execution.state` が `completed`。**`.task_status` はまだ `queued`**（遷移は次の tick）。`.counters` は全0のまま。
+  - 手順5: `exit` の `.code` が 0（ADR-080 により整形 JSON）。
+  - 手順6: サマリーの**「判定確定」**に T3 が現れ（「起動確認」ではない）、`.execution.state` が `completed`。**`.task_status` はまだ `queued`**（遷移は次の tick）。`.counters` は全0のまま。
   - 手順7: サマリーの「遷移」に T3 が現れ、`.task_status` が `planned`、`.execution.state` が `pending`、`.counters.attempt_count` と `.counters.judge_attempt_count` が 0。`.current_attempt` は attempt-1 のまま残っていてよい。
   - 手順8: `planning` が出力され、`edited-should-not-appear` は出ていない（スナップショットが使われた証拠）。
   - 手順9: 同じ4刻みで `implemented` → `done` まで進み、runディレクトリは `attempt-1` 〜 `attempt-3` の3つになる。
@@ -489,7 +491,7 @@ EOF
   11. `rm /tmp/pulsen-test/check-broken` → `pulsen tick` を2〜3秒間隔で3回（再起動 → spawn確認 → 判定）→ `cat "$PULSEN_HOME/state/tasks/$T19.json"`
   12. `grep "$T19" /tmp/pulsen-test/notify.log; echo $?`
 - **期待結果:**
-  - 手順2: `.execution.state` が `failed`、`.counters.attempt_count` が 1、`.task_status` は `work` のまま。`attempt-1/exit` は `{"code":1}`。
+  - 手順2: `.execution.state` が `failed`、`.counters.attempt_count` が 1、`.task_status` は `work` のまま。`attempt-1/exit` の `.code` が 1。サマリーの「失敗を記録」に T5 が現れる。
   - 手順3: `.execution.state` が `launching`、`.current_attempt.number` が 2、`run_dir` が `.../attempt-2`。worktree に `done.marker` が残っている（worktree はリトライ間で引き継がれる）。
   - 手順4: マーカー検出により exit 0 → `.execution.state` が `completed` で `.counters.attempt_count` が **0 にリセット**されている。
   - 手順5: `.task_status` が `done`・`.execution.state` が `pending`（アーカイブは #6 のため起きない）。
@@ -549,9 +551,9 @@ EOF
   7. `cat "$PULSEN_HOME/state/runs/$T17/attempt-1/exit"; echo; cat "$PULSEN_HOME/state/tasks/$T17.json"`
   8. `grep "$T17" /tmp/pulsen-test/notify.log`
 - **期待結果:**
-  - 手順3: `exit` は `{"code":20}`。`.execution.state` は pending 復帰（skipped）ではなく、`retries: 0` により `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。`.counters.attempt_count` が 1。
+  - 手順3: `exit` の `.code` が 20。pending 復帰（skipped）ではなく、`retries: 0` により `.execution` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。`.counters.attempt_count` が 1。
   - 手順4: `stopped <T23> exit20 work` の通知行が1行ある。
-  - 手順7: `exit` は `{"code":127}`（コマンド不在の符号化）。`.execution.state` が `stopped` で `reason` は `retry_limit_exceeded`、`.counters.spawn_fail_count` は **0**、`.last_failure` は `spawn_fail` ではない。
+  - 手順7: `exit` の `.code` が 127（コマンド不在の符号化）。`.execution.state` が `stopped` で `.execution.reason` は `retry_limit_exceeded`、`.counters.spawn_fail_count` は **0**、`.last_failure.kind` は `spawn_fail` ではない。
   - 手順8: 通知行が1行ある。
 - **確認ポイント:** exit 20 の扱いが判定コマンドの有無で変わること（判定コマンドがあれば skipped、なければ failed。ADR-008）。TC-17 と TC-16（spawn 失敗）の経路の違いが `spawn_fail_count` と attempt の採番有無で識別できること — 起動不能でも attempt は採番され run ディレクトリが作られる。
 
@@ -582,7 +584,7 @@ EOF
   3. `pulsen add --workflow "$SETUP_WORK/sigkill.yaml" --repo "$SETUP_REPO"; echo $?` → `export T47=<task-id>`
   4. `pulsen tick` を2〜3秒間隔で3回（起動 → spawn確認 → 判定）
   5. `cat "$SETUP_HOME/state/runs/$T47/attempt-1/exit"; echo; tail -n 3 "$SETUP_HOME/judge.log"; cat "$SETUP_HOME/state/tasks/$T47.json"`
-- **期待結果:** `exit` に `{"code":137}` 相当の非0値（128+9）が記録され、`judge.log` の当該行が `exit=137` になっている。判定コマンドの exit 10 により `.execution.state` が `failed` でリトライ待ち（`.counters.attempt_count` が 1）。
+- **期待結果:** `exit` の `.code` が 137 相当の非0値（128+9）で、`judge.log` の当該行が `exit=137` になっている。判定コマンドの exit 10 により `.execution.state` が `failed` でリトライ待ち（`.counters.attempt_count` が 1）。
 - **確認ポイント:** `EXIT_CODE` が10進文字列としてそのまま渡ること（符号ビットや `-9` のような表現になっていないこと）。この確認以降 T47 は failed → 再起動を繰り返すため、後続項目のサマリーに現れ続けることを織り込む（`abort` が無いので止められない。#5）。
 
 ### 7. リトライ上限の等号と超過 — 凍結と at-least-once 通知
@@ -604,9 +606,9 @@ EOF
   10. stopped 到達後: `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TI1.json"`; `cat "$PMT/home/state/runs/$TI1/attempt-<最新>/stderr.log"`; `ls "$PMT/home/worktrees/$TI1"`
   11. `pulsen --home "$PMT/home" tick; echo $?; wc -l < "$PMT/notify.log"`
 - **期待結果:**
-  - 手順2: `.execution.state` が `failed`、`.counters.attempt_count` が **1（= 上限 1。等号では凍結しない）**、`.task_status` は `work` のまま。`exit` は `{"code":1}`。
+  - 手順2: `.execution.state` が `failed`、`.counters.attempt_count` が **1（= 上限 1。等号では凍結しない）**、`.task_status` は `work` のまま。`exit` の `.code` が 1。
   - 手順3: 通知は無い（failed の間は通知されない）。
-  - 手順4: `attempt_count` 2 > 1 により `.execution.state` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。tick サマリーの「凍結」と「通知」の両方に T13 が現れる。`.task_status` は `work` のまま。
+  - 手順4: `attempt_count` 2 > 1 により `.execution` が `{"state":"stopped","reason":"retry_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。tick サマリーの「凍結」と「通知」の両方に T13 が現れる。`.task_status` は `work` のまま。
   - 手順5: `stopped <T13> fail work` の行が**ちょうど1行**。
   - 手順6: worktree もブランチも残っている（凍結タスクの調査材料は自動削除されない）。
   - 手順7: exit code 0。タスクファイルのチェックサムが変わらず、通知行数も増えない（通知済みの stopped は再通知されない・書き込みも起きない）。
@@ -633,7 +635,7 @@ EOF
 - **期待結果:**
   - 手順3: `.counters.judge_attempt_count` が 1、`.execution.state` は **`running` のまま**、`.counters.attempt_count` は 0、`.last_failure.kind` が `judge_fail`。
   - 手順4: `judge_attempt_count` が 2 → 3（3 = 上限。等号では凍結しない）。実行状態は `running` のまま。
-  - 手順5: `judge_attempt_count` 4 > 3 で `.execution.state` が `{"state":"stopped","reason":"judge_limit_exceeded","notified_at":"<RFC3339>"}`。
+  - 手順5: `judge_attempt_count` 4 > 3 で `.execution` が `{"state":"stopped","reason":"judge_limit_exceeded","notified_at":"<RFC3339 UTC>"}`。
   - 手順6: run ディレクトリは `attempt-1` のみ、`.counters.attempt_count` は 0 のまま（エージェントの再実行が一度も行われていない）。
   - 手順7・8: 通知行が1行追記されている。setup 側も同じ経路（judge スクリプトの exit 1）で `judge_limit_exceeded` に至る。
 - **確認ポイント:** 判定失敗のたびに判定コマンドが**再実行**されること（`judge.log` の行が tick ごとに増える）— エージェントは再起動しないが判定はやり直す、という非対称がこの経路の要。凍結の `reason` が `retry_limit_exceeded` ではなく `judge_limit_exceeded` であること。判定の冪等性（同じ exit・同じ定義に対して毎回同じ結論）が tick を跨いで保たれること。
@@ -641,7 +643,7 @@ EOF
 ### 9. 通知の失敗と再通知 / notify_cmd 未定義と catch-up
 
 - **対応する受け入れ基準:** AC-4（at-least-once）
-- **対応する手順書:** `intervention.md` TC-24（**手順2 の `abort` を上限超過での凍結に読み替える**）、`setup.md` TC-35（同じ読み替え。手順4 の `notify_cmd` 復元は必ず行う）
+- **対応する手順書:** `intervention.md` TC-24（**手順2 の `abort` を上限超過での凍結に読み替える**）、`intervention.md` TC-15（同じ読み替え。手順3 の `show` は直読。手順7〜10 がこの TC の筋そのものを消化する）、`setup.md` TC-35（同じ読み替え。手順4 の `notify_cmd` 復元は必ず行う）
 - **前提:** フィクスチャC。フィクスチャA / B とは独立に実行できる。
 - **目的:** notify_cmd が非0で終わったときに `notified_at` が残らず、次の tick が同じ判断を再導出して再通知すること、通知済みになった後は再通知されないこと、notify_cmd 未定義なら通知も `notified_at` の記録も行わず、後から定義すると次の tick が catch-up することを確認する。
 - **手順:**
@@ -735,8 +737,19 @@ EOF
   4. `pulsen --home "$PMT/home" tick; echo $?`
   5. `cat "$PMT/notify.log"`; `cat "$PMT/home/state/tasks/$TD.json"`
   6. `pulsen --home "$PMT/home" tick; echo $?; wc -l < "$PMT/notify.log"`
-  7. 対照（stopped 以外の縮退。TC-exec-tick-020）: `jq '.snapshot.statuses = "broken"' "$PMT/td.bak" > "$PMT/td2.json"` の内容を新しいタスクIDのファイルとして置くか、`.execution` を `pending` に戻した状態で同じ tick を打ち、報告のみでスキップされることを確認する
-- **期待結果:** 手順4 は exit code 0。手順5 で `notify.log` に `TASK_ID=<TD> WORKFLOW=wf-fail TASK_STATUS=work` の行が1行追加され、タスクファイルの `.execution.notified_at` に時刻が入り、**`.snapshot.statuses` は `"broken"` のまま**温存されている。手順6 で行が増えない。手順7 の pending な縮退タスクはスキップとして報告されるだけで、書き込みも通知も起きない。
+  7. 対照（stopped 以外の縮退。TC-exec-tick-020）。同じ TD を `pending` に戻して打ち直す — タスクIDはファイル名と内容の両方に現れるので、`td.bak` をファイル名だけ変えて置くと同一 task_id のタスクファイルが2つできてしまう:
+
+      ```sh
+      jq '.execution = {"state":"pending"}' "$PMT/home/state/tasks/$TD.json" > "$PMT/td.pending" \
+        && mv "$PMT/td.pending" "$PMT/home/state/tasks/$TD.json"
+      grep -c '"broken"' "$PMT/home/state/tasks/$TD.json"
+      md5 -q "$PMT/home/state/tasks/$TD.json" 2>/dev/null || md5sum "$PMT/home/state/tasks/$TD.json"
+      pulsen --home "$PMT/home" tick; echo $?
+      md5 -q "$PMT/home/state/tasks/$TD.json" 2>/dev/null || md5sum "$PMT/home/state/tasks/$TD.json"
+      wc -l < "$PMT/notify.log"
+      ```
+
+- **期待結果:** 手順4 は exit code 0。手順5 で `notify.log` に `TASK_ID=<TD> WORKFLOW=wf-fail TASK_STATUS=work` の行が1行追加され、タスクファイルの `.execution.notified_at` に時刻が入り、**`.snapshot.statuses` は `"broken"` のまま**温存されている。手順6 で行が増えない。手順7 は exit code 0 で、TD が「スキップ」の見出しに「埋め込まれたワークフロー定義を読めません」として報告され、チェックサムも `notify.log` の行数も変わらない（pending の縮退タスクには再通知の経路が無い）。
 - **期待結果の補足:** 通知に必要な3値（`TASK_ID` / `WORKFLOW` / `TASK_STATUS`）はいずれもスナップショット非依存の属性から取れる。取れずに報告へ落ちるなら、`DegradedTask` への通知経路が実装されていない。
 - **確認ポイント:** 保存が `save_degraded` 経由で行われ、破損したスナップショットが正規化・上書きされていないこと（上書きされると利用者が直すべき情報が失われる）。tick が縮退タスクを `stopped` にし直さないこと。
 
@@ -848,7 +861,7 @@ EOF
 ### 6. 1タスクの失敗が他タスクを止めない・冪等な連続 tick
 
 - **対応する受け入れ基準:** AC-2 / AC-4 / AC-6 に共通する走査レベルの性質（TC-exec-tick-023 / 024）
-- **対応する手順書:** `task-execution.md` TC-20 手順1〜4・6 の再確認（Issue #2 でカバー済みの経路が本スライスで壊れていないこと）
+- **対応する手順書:** `task-execution.md` TC-20 手順1〜4・6（手順1 の2件目は `draft.yaml` の代わりに `pipeline` で登録する。手順3 の期待のうちアーカイブは #6 のため確認しない。手順5 の `ls` と手順7 の `set-status` は #4 / #5）
 - **前提:** フィクスチャA（ここまでの項目で running / failed / stopped / pending が混在した状態）。
 - **目的:** 読めないタスクファイル・縮退タスクが混ざっても他タスクの判定・遷移・通知が同一 tick で進むこと、状態が変わらないタスク群に対する連続 tick が書き込みを1回も起こさないことを確認する。
 - **手順:**
@@ -876,13 +889,13 @@ EOF
 
 - **起動・spawn確認（Issue #2 の主経路）:** `Tick` にジェネリック引数 `C: CommandRunner` が増え、`cli::wire` がランナーを構築するようになる（steps.md ステップ8）。`.thread/2/testing.md` の確認項目2（worktree・ブランチ・launching 記録・runディレクトリ）と確認項目3（spawn確認と猶予内の冪等性）をスポットチェックとして再実行し、Issue #2 時点と同じ結果になることを確認する。特に `SystemCommandRunner` の構築失敗で `tick` 全体が落ちないこと、`add` がランナーを必要としないままであること。
 
-- **サマリー表示の追随:** `render_tick` の見出しは「起動 / 起動確認 / 遷移 / 実行待ちへ復帰 / 凍結 / 通知 / 終端処理」の順に並ぶ（`crates/pulsen/src/cli/render.rs`）。本スライスで初めて値が入るのは「遷移」「実行待ちへ復帰」「通知」の3つ。値の無いフィールドが見出しごと出ないこと（ADR-101）、書き込みを行った tick が必ずサマリーに現れること（ADR-092）を、確認項目1（遷移）・4（実行待ちへ復帰）・7〜9（通知）で併せて確認する。`archived` / `gc_deleted` / `gc_errors` は引き続き値の入る経路を持たない（#6）。
+- **サマリー表示の追随:** `cli::render::tick_summary` の項目行は「起動 / 起動確認 / 判定確定 / 遷移 / 実行待ちへ復帰 / 凍結 / 通知 / 終端処理 / gcで削除 / gcで削除できず」の順に並び、そのあとに報告の3見出しが続く（`crates/pulsen/src/cli/render.rs`）。本スライスで初めて値が入るのは**「判定確定」「遷移」「実行待ちへ復帰」「通知」の4つ**（「判定確定」は completed を確定したタスクだけが並ぶ。failed は「失敗を記録」、skipped は「実行待ちへ復帰」に出る）。値の無い項目が行ごと出ないこと、書き込みを行った tick が必ずサマリーに現れること（ADR-092）を、確認項目1（判定確定・遷移）・4（実行待ちへ復帰）・7〜9（通知）で併せて確認する。`archived` / `gc_deleted` / `gc_errors` は引き続き値の入る経路を持たない（#6）。
 
 - **`pulsen --help` の表示:** サブコマンドは `add` / `tick` / `help` のみで、`wrapper` は現れない（ADR-077）。`ls` / `show` / `abort` / `retry` / `set-status` が増えていないこと（#4 / #5）。`pulsen tick --help` に引数が無く、`--home` が global フラグとして現れること。
 
 - **ロックの保持と cron 運用:** 判定・通知は排他ロックを保持したまま同期実行される（ADR-018）。エッジケース3 で tick が5秒強ブロックすることを実測済み。加えて、`.thread/2/testing.md` エッジケース6（滞留するエージェントを起動したまま次の tick を打つ = ロックFDの非継承）を再実行し、判定コマンド・通知コマンドの起動でもロックFDが継承されていないことを確認する — 継承していると、判定コマンドが長い間すべての tick がロック競合でスキップされる。
 
-- **ラッパー（`pulsen wrapper`）:** 本スライスはラッパーを変更しない。確認項目1・10・11 で `exit` / `pid` / `starttime` が Issue #2 と同じ形（`{"code":<n>}` / `{"pid":<n>,"kill_ident":"..."}` / `{"ident":"...","wall":"..."}`）で書かれることをもって影響なしとする。
+- **ラッパー（`pulsen wrapper`）:** 本スライスはラッパーを変更しない。確認項目1・10・11 で `exit` / `pid` / `starttime` が Issue #2 と同じキー構成（`exit` は `code`、`pid` は `pid` / `kill_ident`、`starttime` は `ident` / `wall`）の整形 JSON として書かれることをもって影響なしとする。
 
 - **実運用ホームの非汚染:** 全項目の実行後に `ls -a "$HOME/.pulsen" 2>/dev/null` が実行前と変わらないこと。フィクスチャA は `/tmp/pulsen-test/`、B は `$HOME/pulsen-manual-test`、C は `$HOME/pulsen-intervention-test` に閉じている。
 
@@ -898,4 +911,4 @@ EOF
 
   worktree を作ったリポジトリごと削除するので `git worktree prune` は不要。残留プロセスの確認は、kill / try_kill_remnants が実行単位を取り逃していないことの確認を兼ねる。
 
-- **落とした手順の記帳:** 本スライスに無いコマンド（`ls` / `show` / `abort` / `retry` / `set-status`）と終端処理（#6）を要する手順は実行していない。カバーしたのは `spec/manual-tests/task-execution.md` TC-03(手順1〜9・11・12)・TC-05(手順1〜4・6 と手順5 の遷移まで)・TC-06・TC-07(手順1〜5)・TC-13・TC-14・TC-15・TC-17・TC-19(手順1〜5)・TC-21(手順1〜5)・TC-22・TC-23、`spec/manual-tests/setup.md` TC-09・TC-10(手順1〜4)・TC-11(手順1〜4)・TC-35(読み替え)・TC-37(手順1〜3)・TC-38(手順1〜2)・TC-39(手順1〜3・4の復元)・TC-47(手順1〜2)、`spec/manual-tests/intervention.md` TC-01(手順1〜3・5・7・8)・TC-24(読み替え)。**落とした手順は Issue のチェックリストにチェックを付けず、見送った旨と理由を Issue #3 のコメントに残す**（Issue 完了条件 / steps.md ステップ15）。
+- **落とした手順の記帳:** 本スライスに無いコマンド（`ls` / `show` / `abort` / `retry` / `set-status`）と終端処理（#6）を要する手順は実行していない。カバーしたのは `spec/manual-tests/task-execution.md` TC-03(手順1〜9・11・12)・TC-05(手順1〜4・6 と手順5 の遷移まで)・TC-06・TC-07(手順1〜5)・TC-13・TC-14・TC-15・TC-17・TC-19(手順1〜5)・TC-20(手順1〜4・6。手順1 の2件目を `pipeline` に置き換え)・TC-21(手順1〜5)・TC-22・TC-23、`spec/manual-tests/setup.md` TC-09・TC-10(手順1〜4)・TC-11(手順1〜4)・TC-35(読み替え)・TC-37(手順1〜3)・TC-38(手順1〜2)・TC-39(手順1〜3・4の復元)・TC-47(手順1〜2)、`spec/manual-tests/intervention.md` TC-01(手順1〜3・5・7・8)・TC-15(読み替え)・TC-24(読み替え)。`intervention.md` TC-15 と `setup.md` TC-35 は同じ「notify_cmd 未定義 → 後から定義して catch-up」を問うので、確認項目9 手順7〜10 の1系列で両方を消化した(TC-15 手順2 の `abort` は上限超過での凍結に読み替え)。**落とした手順は Issue のチェックリストにチェックを付けず、見送った旨と理由を Issue #3 のコメントに残す**（Issue 完了条件 / steps.md ステップ15）。
