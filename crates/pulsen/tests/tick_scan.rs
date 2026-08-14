@@ -9,18 +9,21 @@
 
 mod tick_fixture;
 
+use std::collections::BTreeMap;
+
 use pulsen::application::tick::{TickError, TickIssue, TickOutcome};
 use pulsen_conformance::doubles::{
-    LockOutcome, ScriptedExclusiveLock, ScriptedProcessController, ScriptedRunStore,
-    ScriptedTaskRepository,
+    LockOutcome, ScriptedCommandRunner, ScriptedExclusiveLock, ScriptedProcessController,
+    ScriptedRunStore, ScriptedTaskRepository,
 };
-use pulsen_domain::execution::RunFileError;
+use pulsen_domain::definition::{GlobalConfig, GlobalConfigInput, RawAgentDefinition, RawCommand};
+use pulsen_domain::execution::{CommandCompletion, ExitCode, RunFileError};
 use pulsen_domain::task::{ExecutionState, ExecutionStateKind, ReadError, StopReason};
 
 use tick_fixture::{
-    Harness, NOW, TASK, absolute, after, at, config_notifying, corrupt_entry, degraded_entry,
-    degraded_entry_with, observed_starttime, pid_content, repository, run_dir, starttime, task,
-    task_id,
+    Harness, NOW, TASK, absolute, after, agent_name, at, command, config_notifying, corrupt_entry,
+    degraded_entry, degraded_entry_with, observed_starttime, pid_content, repository, run_dir,
+    starttime, task, task_id,
 };
 
 #[test]
@@ -201,13 +204,36 @@ fn 終端処理のステータスは配線されるまで何も起こさない()
     );
 }
 
+/// エージェント定義と通知コマンドの両方を持つ設定。
+///
+/// 起動と通知は同じ設定を引くので、1回の走査に両方の分岐を同居させるにはどちらの
+/// キーも要る。
+fn config_launching_and_notifying() -> GlobalConfig {
+    GlobalConfig::parse(GlobalConfigInput {
+        agents: Some(BTreeMap::from([(
+            agent_name("claude"),
+            RawAgentDefinition::new(
+                RawCommand::parse_text("claude {input}").expect("受理される"),
+                None,
+            ),
+        )])),
+        notify_cmd: Some(command("notify")),
+        ..GlobalConfigInput::default()
+    })
+    .expect("受理される")
+}
+
 #[test]
 fn 実行状態の異なる複数のタスクがそれぞれの分岐で1ステップずつ処理される() {
     let corrupt = "20260812t090000-corrupt1";
     let degraded = "20260812t090000-degrade1";
     let waiting = "20260812t090000-waiting1";
     let launching = "20260812t090000-launchg1";
+    let running = "20260812t090000-running1";
+    let completed = "20260812t090000-complet1";
+    let stopped = "20260812t090000-stopped1";
     let harness = Harness {
+        config: config_launching_and_notifying(),
         tasks: repository(vec![
             corrupt_entry(corrupt, "JSON として読めない"),
             degraded_entry(degraded, "statuses が空"),
@@ -218,18 +244,42 @@ fn 実行状態の異なる複数のタスクがそれぞれの分岐で1ステ�
                 .launching(at(NOW))
                 .attempt(1)
                 .entry(),
+            task(running).running(1).entry(),
+            task(completed).completed(1).entry(),
+            task(stopped)
+                .stopped(StopReason::RetryLimitExceeded)
+                .entry(),
         ]),
         runs: ScriptedRunStore::new()
             .with_prepare_attempt([Ok(run_dir(TASK, 1))])
             .with_read_pid_file([Ok(Some(pid_content()))])
-            .with_read_starttime([Ok(Some(starttime()))]),
+            .with_read_starttime([Ok(Some(starttime()))])
+            .with_read_exit([Ok(Some(ExitCode::new(0)))]),
         processes: ScriptedProcessController::new().with_spawn_wrapper([Ok(())]),
+        commands: ScriptedCommandRunner::new()
+            .with_run([CommandCompletion::Exited(ExitCode::new(0))]),
         ..Harness::new()
     };
 
     let summary = harness.completed();
 
-    assert_eq!(summary.launched, vec![task_id(TASK)]);
+    assert_eq!(
+        (
+            summary.launched.as_slice(),
+            summary.confirmed_running.as_slice(),
+            summary.judged.as_slice(),
+            summary.transitioned.as_slice(),
+            summary.notified.as_slice(),
+        ),
+        (
+            [task_id(TASK)].as_slice(),
+            [task_id(launching)].as_slice(),
+            [task_id(running)].as_slice(),
+            [task_id(completed)].as_slice(),
+            [task_id(stopped)].as_slice(),
+        ),
+        "分岐ごとに1件だけが進み、1回の走査のサマリーに同時に集約される"
+    );
     assert_eq!(
         summary
             .errors
@@ -250,6 +300,26 @@ fn 実行状態の異なる複数のタスクがそれぞれの分岐で1ステ�
             recorded_at: at(NOW)
         },
         "起動待ちのエージェント実行は起動へ進む"
+    );
+    assert_eq!(
+        harness.saved(running).execution(),
+        &ExecutionState::Completed,
+        "exit 0 の running は判定確定まで(遷移は次の tick)"
+    );
+    let advanced = harness.saved(completed);
+    assert_eq!(advanced.task_status().as_str(), "done");
+    assert_eq!(
+        advanced.execution(),
+        &ExecutionState::Pending,
+        "判定確定は次のステータスの起動待ちまで(起動は次の tick)"
+    );
+    assert_eq!(
+        harness.saved(stopped).execution(),
+        &ExecutionState::Stopped {
+            reason: StopReason::RetryLimitExceeded,
+            notified_at: Some(at(NOW)),
+        },
+        "未通知の凍結は通知されて通知時刻が残る"
     );
 }
 

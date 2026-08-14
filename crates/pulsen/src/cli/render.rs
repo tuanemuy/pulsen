@@ -71,21 +71,24 @@ pub fn tick_summary(summary: &TickSummary) -> String {
     let mut recorded = Vec::new();
     let mut unsettled = Vec::new();
     let mut skipped = Vec::new();
+    let mut cleanup = Vec::new();
     for issue in &summary.errors {
         match issue_outcome(issue) {
             IssueOutcome::Recorded => recorded.push(issue),
             IssueOutcome::LaunchUnsettled => unsettled.push(issue),
             IssueOutcome::Skipped => skipped.push(issue),
+            IssueOutcome::CleanupLeft => cleanup.push(issue),
         }
     }
     push_issues(&mut out, "失敗を記録", &recorded);
     push_issues(&mut out, "起動の結果が未確定", &unsettled);
     push_issues(&mut out, "スキップ", &skipped);
+    push_issues(&mut out, "後始末が残っている", &cleanup);
 
     out.trim_end().to_owned()
 }
 
-/// 報告がタスクファイルに何を残したか。運用者が次に取る行動はこれで分かれる。
+/// 報告が何を残したか。運用者が次に取る行動はこれで分かれる。
 enum IssueOutcome {
     /// 失敗を記録した。カウンタを消費し、上限を超えれば同じ tick で凍結する。
     Recorded,
@@ -93,6 +96,9 @@ enum IssueOutcome {
     LaunchUnsettled,
     /// タスクファイルへの書き込みが無く、次の tick がそのまま再試行する。
     Skipped,
+    /// タスクファイルには何も残っていないが、OS 側に後始末が残っている。
+    /// tick は残存終了を再試行しないので、終了させるのは人間になる。
+    CleanupLeft,
 }
 
 /// 報告の結末の分類。
@@ -104,13 +110,14 @@ fn issue_outcome(issue: &TickIssue) -> IssueOutcome {
         | TickIssue::CommandExpansionFailed { .. }
         | TickIssue::SpawnNotObserved { .. }
         | TickIssue::JudgeFailed { .. }
-        | TickIssue::RunFailed { .. }
-        // 残存終了は実行の失敗を確定させる tick でだけ試みる。人間の後始末を促す報告と
-        // して、その失敗の記録と同じ見出しに並べる。
-        | TickIssue::RemnantsUnhandled { .. } => IssueOutcome::Recorded,
+        | TickIssue::RunFailed { .. } => IssueOutcome::Recorded,
         TickIssue::PrepareAttemptFailed { .. } | TickIssue::SpawnFailed { .. } => {
             IssueOutcome::LaunchUnsettled
         }
+        // 残存の報告は保存の成否と独立に積まれ、タスクファイルには何も残さない。
+        // 失敗の記録と並べるとカウンタを消費していない tick が消費したように読め、
+        // スキップと並べると tick が再試行しない後始末が再試行されるように読める。
+        TickIssue::RemnantsUnhandled { .. } => IssueOutcome::CleanupLeft,
         TickIssue::CorruptTaskFile { .. }
         | TickIssue::SnapshotUnreadable { .. }
         | TickIssue::MissingCurrentAttempt { .. }
@@ -1153,15 +1160,48 @@ mod tests {
             })
         };
 
-        assert!(
-            remnants(RemnantsLeft::NotIdentifiable)
-                .ends_with("残存プロセスを誤殺なく同定できませんでした(終了操作は行っていません)"),
+        assert_eq!(
+            remnants(RemnantsLeft::NotIdentifiable),
+            "tick を実行しました。\n  \
+             後始末が残っている(1件):\n    \
+             - 20260812t101112-abcd1234: 残存プロセスを誤殺なく同定できませんでした\
+             (終了操作は行っていません)"
         );
         assert!(
             remnants(RemnantsLeft::Failed {
                 message: "終了操作を起動できない".to_owned(),
             })
             .ends_with("残存プロセスを終了できませんでした: 終了操作を起動できない"),
+        );
+    }
+
+    #[test]
+    fn 保存できなかった残存の報告は記録した失敗の見出しに現れない() {
+        let summary = TickSummary {
+            errors: vec![
+                TickIssue::RemnantsUnhandled {
+                    task_id: task("20260812t101112-abcd1234"),
+                    remnants: RemnantsLeft::Failed {
+                        message: "終了操作を起動できない".to_owned(),
+                    },
+                },
+                TickIssue::SaveFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    error: SaveError::Io {
+                        message: "書き込めません".to_owned(),
+                    },
+                },
+            ],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             スキップ(1件):\n    \
+             - 20260812t101112-abcd1234: タスクファイルを保存できません(書き込めません)\n  \
+             後始末が残っている(1件):\n    \
+             - 20260812t101112-abcd1234: 残存プロセスを終了できませんでした: 終了操作を起動できない"
         );
     }
 

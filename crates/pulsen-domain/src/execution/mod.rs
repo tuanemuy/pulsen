@@ -11,7 +11,7 @@ mod port;
 mod running;
 mod value;
 
-pub use judgement::JudgementService;
+pub use judgement::{DefaultJudgement, JudgementService};
 pub use launching::{
     InconsistentRunFiles, LaunchingClassifier, LaunchingDecision, LaunchingRecheck,
 };

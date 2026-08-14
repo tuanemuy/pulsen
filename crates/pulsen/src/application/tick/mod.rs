@@ -531,8 +531,9 @@ enum Freeze {
 impl Freeze {
     /// 上限超過で凍結しうる遷移の結果から決める。
     ///
-    /// 前提: 遷移前は凍結ではない(3つの記録系遷移は起動待ち・失敗確定・起動記録済みしか
-    /// 受け付けない)。この前提のもとでのみ、遷移後の Stopped は「今回凍結した」と同値。
+    /// 前提: 遷移前は凍結ではない(記録系の遷移は起動待ち・失敗確定・起動記録済み・
+    /// 起動確認済みのいずれかしか受け付けない)。この前提のもとでのみ、遷移後の Stopped は
+    /// 「今回凍結した」と同値。
     fn of_recorded_failure(task: &Task) -> Self {
         match task.execution_kind() {
             ExecutionStateKind::Stopped => Self::Frozen,

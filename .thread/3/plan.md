@@ -39,14 +39,14 @@ running タスクの終了を観測して completed / failed / skipped に判定
 
 Issue #1 / #2 で確立した基準をそのまま使う。**チェックを付ける**のは、台帳行(`spec/inventory/*.md`)の PASS 要件を**すべて**満たす実装とテストが存在し、そのテストが実際に走って通っている行。**チェックを付けない**のは、環境が前提を作れずスキップで終わった行と、スライス境界により PASS 要件の一部しか消化していない行。
 
-### 既に実装済みで、本スライスは確認だけを行う行
+### 既に実装済みの部分を確認してから消化する行
 
-Issue #2 の実装が、#2 のチェックリストに無いまま結果として満たしている行が2つある。**新規実装は不要で、PASS 要件との一致を確認してチェックを付ける。**
+Issue #2 の実装が、#2 のチェックリストに無いまま結果として満たしている行が2つある。`DOM-execution-002` は**新規実装が不要で、PASS 要件との一致を確認してチェックを付ける**。`DOM-task-053` は PASS 要件(5種を区別する)を #2 の実装が満たしているが、本スライスで変種を1つ足す。
 
 | 行 | 現在の実装 | 確認すること |
 |---|---|---|
 | `DOM-execution-002` `ExitCode.is_success` | `crates/pulsen-domain/src/execution/value.rs`(単体テスト付き) | 0 のときだけ真であること |
-| `DOM-task-053` `TransitionError` | `crates/pulsen-domain/src/task/transition.rs`(5変種) | 5種を区別すること。`InvariantViolated { message }` は ADR-096 により `MissingCurrentAttempt` に置き換わっており、**台帳の字義とは変種名が異なる**(下記の spec 差分) |
+| `DOM-task-053` `TransitionError` | `crates/pulsen-domain/src/task/transition.rs`(6変種。うち `AlreadyNotified` は本スライスで追加。adr.md ADR-006) | 5種を区別すること(PASS 要件)を確認したうえで `AlreadyNotified` を足す。`InvariantViolated { message }` は ADR-096 により `MissingCurrentAttempt` に置き換わっており、**台帳の字義とは変種名が異なる**(下記の spec 差分) |
 
 `ADP-process-002`(`starttime_of` の実装)も、三値を返す共有関数 `adapter::process::identity::observe`(ADR-075 / ADR-076)が #2 で完成しているため、ポートメソッドを足して委譲するだけになる。行そのものは未消化なので、適合ケース(TC-port-process-controller-006〜010)を通してからチェックする。
 
@@ -65,11 +65,14 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
 | 行 | 前提を作れない環境 | 判定 |
 |---|---|---|
 | `TC-port-command-runner-004` | 実行権限のない実体を作れない(root 実行・権限を持たないファイルシステム) | `permission_restrictions_effective` |
-| `TC-port-command-runner-005` / `TC-port-process-controller-011` / `012` / `014` | 外部からの強制終了・プロセスグループ相当の一括終了を作れない(非 POSIX 等) | 実行単位の終了を作れるプラットフォームか |
-| `TC-port-process-controller-010` | 起動時刻の取得手段への読み取りを塞げない(同上) | `permission_restrictions_effective` |
-| `TC-port-process-controller-013` / `015` / `016` | 「終了操作自体が失敗する」「同定手段が失われている」状況を再現できない(台帳が「当該状況を再現できるアダプター環境・プラットフォームに限る」と明記) | 状況を注入できるか(注入用の2つ目のコントローラで確定的に走らせられるなら走らせる。ADR-076 と同じ手) |
+| `TC-port-process-controller-011` / `012` / `013` / `015` | 実行単位(プロセスグループ相当)そのものを起こせない | 実行単位を1度起こす probe が `Unavailable` を返すか(adr.md ADR-013) |
+| `TC-port-process-controller-014` / `016` | 実行単位は起こせるが、その一部だけを終了させられない | 同じ probe が `WholeOnly` または `Unavailable` を返すか(同上) |
 
-スキップ許容集合は環境の能力から実行時に決める(ADR-055 / ADR-073)。チェックが付く行数は実行環境で決まり、上限は128行から部分消化3行を除いた **125行**。確定した数と一覧はステップ15 で Issue のコメントに残す。
+`TC-port-command-runner-005`(外部からの強制終了)と `TC-port-process-controller-010`(起動時刻の取得機構の失敗)は表に載せない — 前者は期待が「非0の符号化値」までで `judge_probe abort` がどのプラットフォームでも非0を返し、後者は取得元の注入で確定的に走るため、前提を作れない環境が無い(adr.md ADR-007 / ADR-013)。`013` / `015` / `016` も注入で状況を作るが、その操作を向ける実行単位そのものは要るため上の表に残る。
+
+フィクスチャの実行ファイル(`examples/agent_probe` / `examples/spawn_probe` / `examples/judge_probe`)の不在は、どの行でも許容集合に入れない — 作り忘れを緑にしない(ADR-068 / ADR-073)。
+
+スキップ許容集合は環境の能力から実行時に決める(ADR-055 / ADR-073)。判定の正本は `crates/pulsen/tests/conformance_command_runner.rs` の `allowed_skips` と `crates/pulsen/tests/conformance_process_controller.rs` の `observation_allowed_skips`。チェックが付く行数は実行環境で決まり、上限は128行から部分消化3行を除いた **125行**。確定した数と一覧はステップ15 で Issue のコメントに残す。
 
 ## リスクと注意点
 
@@ -93,8 +96,8 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
 
 転記の過程で、spec の字義と現在の実装が食い違う点が見つかった。**本スライスは実装側に合わせ、spec 追従を Issue のコメントで提起する**(勝手に spec を書き換えない)。
 
-- `spec/domains/task.md` のエラー型は `TransitionError::InvariantViolated { message: String }` だが、実装は ADR-096 により `MissingCurrentAttempt`(分類のみ)。`DOM-task-053` の PASS 要件「5種を区別する」は満たすが、変種名が一致しない。
-- `spec/usecases/execution.md` の tick 出力 DTO は9フィールドだが、実装は `confirmed_running` を加えた10フィールド(ADR-094)。本スライスは `transitioned` / `skipped_back` / `notified` を初めて埋める側なので、この差分が表示に現れる。
+- `spec/domains/task.md` のエラー型は5種(`TransitionError::InvariantViolated { message: String }` を含む)だが、実装は6種 — `InvariantViolated` は ADR-096 により `MissingCurrentAttempt`(分類のみ)へ置き換わり、本スライスが `AlreadyNotified` を足す(adr.md ADR-006)。`DOM-task-053` の PASS 要件「5種を区別する」は満たすが、変種名と種類数が一致しない。
+- `spec/usecases/execution.md` の tick 出力 DTO は9フィールドだが、実装は `confirmed_running` と `judged` を加えた11フィールド(ADR-094 / adr.md ADR-005)。本スライスは `judged` / `transitioned` / `skipped_back` / `notified` を初めて埋める側なので、この差分が表示に現れる。
 - `spec/domains/execution.md` の `LaunchingClassifier` は `InconsistentRunFiles { message: String }` だが、実装は破れの種別だけを持つ(ADR-081)。本スライスでは変更しない(記載のみ)。
 
 ## テスト方針
@@ -110,7 +113,7 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
 - **ユースケース**(ダブルに対するテスト、実プロセス・実ファイルシステムなし): `crates/pulsen/tests/tick_observe.rs` / `tick_notify.rs`(新規)と `tick_scan.rs`(既存の未配線アームの主張を差し替え)。実アダプターでは外から作れない分岐をここで消化する — `read_exit` の `Corrupt` / `Io`、`starttime_of` の `Err(Io)`、`kill` の `KillError`、`try_kill_remnants` の `NotIdentifiable` / `Failed`、判定コマンドの `TimedOut` / `FailedToStart` / プロトコル外 exit、timeout の境界5種、上限の等号と +1、`save` の失敗、通知コマンドの非0 / `TimedOut` / `FailedToStart`、`mark_notified` 後の `save` 失敗、notify_cmd 未定義。
 - **順序の検証**: 「stopped の `save` → notify_cmd → `mark_notified` の `save`」は `ScriptedTaskRepository` と `ScriptedCommandRunner` の呼び出し記録の並びで主張する。「exit が Some なら `starttime_of` を呼ばない」も `ScriptedProcessController::calls()` が空であることで主張する。
 - **受け入れテスト**(`crates/pulsen/tests/`、実バイナリ): `cli_tick.rs` を延長し、`examples/agent_probe` を使って「起動 → running → 判定 → 遷移」の1周を実際に回す。判定コマンド・通知コマンドは制御ファイルを読んで exit code を返す小さなプローブ(`examples/`)を使い、実在のコマンドに依存しない。非同期に完了するラッパーは既存の `wait_until` で待ち合わせ、**待ち条件はこれから観測する成果物そのもの**(`exit` を読むなら `exit` の出現)に立てる。検証する筋は次のとおり — exit 0 → completed → 次 tick で next へ / 非0 → failed → 次 tick で新 attempt / judge の 0・10・20 の3分岐 / 上限超過での stopped と notify_cmd の実行 / notify_cmd を失敗させた次 tick での再通知 / notify_cmd 未定義での無通知 / スナップショットのみ破損した未通知 stopped への再通知 / timeout 超過での kill と failed。
-- **手動確認**: Issue の「検証 / 手順書」に揃える。本スライスに無いコマンド(`ls` / `show` / `abort` / `retry` / `set-status`)と終端処理(#6)を要する手順は実行しない。`show` / `ls` で読む値は `state/tasks/<task-id>.json` の直読で代替し、run ディレクトリのファイルは JSON なので `cat exit` の期待値は `{"code":0}` になる(ADR-080)。
+- **手動確認**: Issue の「検証 / 手順書」に揃える。本スライスに無いコマンド(`ls` / `show` / `abort` / `retry` / `set-status`)と終端処理(#6)を要する手順は実行しない。`show` / `ls` で読む値は `state/tasks/<task-id>.json` の直読で代替し、run ディレクトリのファイルは JSON なので `cat exit` の出力は `0` ではなく `.code` に終了コードを持つ整形 JSON になる(ADR-080)。期待値は綴りではなく `jq '.code'` で読める値で書く。
 
   | 手順書 | ID | 本スライスでの実行範囲 |
   |---|---|---|
@@ -123,6 +126,7 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
   | task-execution.md | TC-15 | 全手順。判定失敗の上限超過が**エージェントを再実行せずに**凍結すること(`attempt_count` は 0 のまま・run ディレクトリは `attempt-1` のみ) |
   | task-execution.md | TC-17 | 全手順。exit 127 が spawn 失敗ではなく通常の failed 経路に落ちること(`spawn_fail_count` は 0) |
   | task-execution.md | TC-19 | 手順1〜5。手順6(`abort` / `set-status` での片付け)は #5 |
+  | task-execution.md | TC-20 | 手順1〜4・6(手順1 の2件目は `draft.yaml` の代わりに `pipeline` で登録する)。手順5 の `ls` は #4、手順7 の `set-status` は #5、手順3 の期待のうちアーカイブは #6 のため確認しない。1タスクの失敗が走査を止めないことと連続 tick の冪等性 |
   | task-execution.md | TC-21 | 手順1〜5(手順2 の PID はタスクファイル直読で得る)。手順6(`abort`)は #5。exit 記録なしのプロセス死亡の検出 |
   | task-execution.md | TC-22 | 全手順。`retries: 0` での初回失敗の即時凍結 |
   | task-execution.md | TC-23 | 全手順。デフォルト判定での exit 20 が failed になること |
@@ -135,6 +139,7 @@ Issue #2 の実装が、#2 のチェックリストに無いまま結果とし�
   | setup.md | TC-39 | 手順1〜3 と手順4 の `judge_timeout` の復元。判定 timeout が判定失敗として扱われ、tick がその間ブロックすること |
   | setup.md | TC-47 | 手順1〜2。手順3(`abort`)は #5。シグナル死の符号化値が `EXIT_CODE` として判定コマンドへ渡ること |
   | intervention.md | TC-01 | 手順1〜3・5・7・8(手順3 の `ls` と手順4・6 の `ls --state` / `show` はタスクファイル直読で代替)。凍結までの間は通知されず、凍結の瞬間にちょうど1行だけ通知されること、通知済みの stopped が再通知されないこと |
+  | intervention.md | TC-15 | 全手順。**手順2 の `abort` を上限超過での凍結に読み替える**(`abort` は #5)。手順3 の `show` は直読。notify_cmd 未定義では通知も `notified_at` の記録も行われず、後から定義した次の tick が catch-up すること。setup TC-35 と同じ筋なので1系列で消化する |
   | intervention.md | TC-24 | **手順2 の `abort` を上限超過での凍結に読み替える**(同上)。必ず失敗する notify_cmd で凍結させ、`notified_at` が残らないこと・notify_cmd を戻した次の tick で再通知されること・さらに次の tick では増えないことを確認する |
 
   上表で落とす手順は、Issue の完了条件に従い「見送る行はチェックせず理由を Issue のコメントに残す」運用に合わせる。

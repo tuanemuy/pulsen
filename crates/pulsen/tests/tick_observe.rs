@@ -311,9 +311,9 @@ fn 実行の失敗の根拠は判断した主体ごとに区別される() {
 
 #[test]
 fn 判定失敗は上限と等しい回数では凍結せず超えると凍結する() {
-    for (judge_count, expected) in [
-        (2, ExecutionStateKind::Running),
-        (3, ExecutionStateKind::Stopped),
+    for (judge_count, expected, frozen) in [
+        (2, ExecutionStateKind::Running, Vec::new()),
+        (3, ExecutionStateKind::Stopped, vec![task_id(TASK)]),
     ] {
         let harness = Harness {
             config: config_judging(3),
@@ -330,13 +330,17 @@ fn 判定失敗は上限と等しい回数では凍結せず超えると凍結�
             ..Harness::new()
         };
 
-        harness.completed();
+        let summary = harness.completed();
 
         let saved = harness.saved(TASK);
         assert_eq!(
             saved.execution_kind(),
             expected,
             "judge_attempt_count={judge_count}"
+        );
+        assert_eq!(
+            summary.frozen, frozen,
+            "凍結の計上は保存された実行状態と一致する(judge_attempt_count={judge_count})"
         );
         assert_eq!(
             saved.counters().attempt_count(),

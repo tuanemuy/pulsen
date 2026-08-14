@@ -714,7 +714,7 @@ EOF
 
 すべてのケースで、**tick 自体の exit code が 0 であること**（tick は1タスクの失敗で全体を落とさない。ロック機構の異常と走査の Io だけが非0）と、**該当タスク以外の状態が変わっていないこと**を共通の確認手段とする。
 
-タスク単位の報告は、結末別に「失敗を記録(<n>件):」「起動の結果が未確定(<n>件):」「スキップ(<n>件):」の3見出しで表示される（`crates/pulsen/src/cli/render.rs`）。
+タスク単位の報告は、結末別に「失敗を記録(<n>件):」「起動の結果が未確定(<n>件):」「スキップ(<n>件):」「後始末が残っている(<n>件):」の4見出しで表示される（`crates/pulsen/src/cli/render.rs`）。見出しはタスクファイルに何を残したかで分かれる — 最後の1つは残存プロセスの終了を確認できなかった報告（`RemnantsUnhandled`）だけが並ぶ場所で、タスクファイルには何も書かれていない。
 
 ### 1. スナップショットのみ破損した未通知 stopped への再通知
 
@@ -749,7 +749,7 @@ EOF
       wc -l < "$PMT/notify.log"
       ```
 
-- **期待結果:** 手順4 は exit code 0。手順5 で `notify.log` に `TASK_ID=<TD> WORKFLOW=wf-fail TASK_STATUS=work` の行が1行追加され、タスクファイルの `.execution.notified_at` に時刻が入り、**`.snapshot.statuses` は `"broken"` のまま**温存されている。手順6 で行が増えない。手順7 は exit code 0 で、TD が「スキップ」の見出しに「埋め込まれたワークフロー定義を読めません」として報告され、チェックサムも `notify.log` の行数も変わらない（pending の縮退タスクには再通知の経路が無い）。
+- **期待結果:** 手順4 は exit code 0 で、そのサマリーの「通知」に TD が現れ、**同時に「スキップ」にも TD が「埋め込まれたワークフロー定義を読めません」として現れる**（報告は通知に置き換わらない。ADR-012）。手順5 で `notify.log` に `TASK_ID=<TD> WORKFLOW=wf-fail TASK_STATUS=work` の行が1行追加され、タスクファイルの `.execution.notified_at` に時刻が入り、**`.snapshot.statuses` は `"broken"` のまま**温存されている。手順6 で行が増えない。手順7 は exit code 0 で、TD が「スキップ」の見出しに「埋め込まれたワークフロー定義を読めません」として報告され、チェックサムも `notify.log` の行数も変わらない（pending の縮退タスクには再通知の経路が無い）。
 - **期待結果の補足:** 通知に必要な3値（`TASK_ID` / `WORKFLOW` / `TASK_STATUS`）はいずれもスナップショット非依存の属性から取れる。取れずに報告へ落ちるなら、`DegradedTask` への通知経路が実装されていない。
 - **確認ポイント:** 保存が `save_degraded` 経由で行われ、破損したスナップショットが正規化・上書きされていないこと（上書きされると利用者が直すべき情報が失われる）。tick が縮退タスクを `stopped` にし直さないこと。
 
@@ -798,7 +798,7 @@ EOF
       statuses:
         checking:
           prompt: "echo hi"
-          judge: ["sh", "-c", "sleep 120"]
+          judge: ["sleep", "180"]
           next: waiting
         waiting:
           run: wait
@@ -807,9 +807,10 @@ EOF
 
   3. `pulsen add --workflow "$SETUP_WORK/judge-hang.yaml" --repo "$SETUP_REPO"; echo $?` → `export T39=<task-id>`
   4. `pulsen tick`（起動）→ 数秒待って `pulsen tick`（spawn確認）→ 2〜3秒待って `time pulsen tick; echo $?`（判定）
-  5. `cat "$SETUP_HOME/state/tasks/$T39.json"`; `pgrep -f 'sleep 120'; echo $?`
+  5. `cat "$SETUP_HOME/state/tasks/$T39.json"`; `pgrep -f 'sleep 180'; echo $?`
   6. 復元（必ず実行する）: `cp "$SETUP_WORK/config.bak" "$SETUP_HOME/config.yaml"; grep -n judge_timeout "$SETUP_HOME/config.yaml"`
-- **期待結果:** 手順4 の3回目の tick が **5秒強ブロック**してから exit code 0 で返る。手順5 で `.counters.judge_attempt_count` が 1、`.execution.state` は `running` のまま。`sleep 120` の判定プロセスが残っていない（timeout 超過時に起動したプロセスを終了させる契約）。
+- **期待結果:** 手順4 の3回目の tick が **5秒強ブロック**してから exit code 0 で返る。手順5 で `.counters.judge_attempt_count` が 1、`.execution.state` は `running` のまま。`pgrep` が該当なし（非0）で、`tick` が返った時点で判定コマンドのプロセスが残っていない（timeout 超過時に**起動した直接の子**を終了させる契約。TC-port-command-runner-012）。
+- **期待結果の補足:** 判定コマンドを `sh -c` で包まないのは、契約が保証するのが直接の子までで、その子が起こした孫の残存は許容されているため（ADR-001）。`sh` を挟むと、`-c` の単一コマンドを exec に畳まない実体で孫が残り、契約どおりの実装が不合格に見える。`180` は他のフィクスチャが使う `sleep 120` / `sleep 600` と重ならない値として選んでいる（`pgrep` が他タスク由来のプロセスを拾わない）。
 - **確認ポイント:** ブロック時間が `judge_timeout`（5s）に対して過大でないこと — ポーリング間隔の粒度ぶんの誤差は許容するが、桁が違えば `try_wait` のポーリング実装（ADR-001）が疑わしい。判定コマンドの残存が無いこと。復元を忘れると後続の判定がすべて5秒で切られる。
 
 ### 4. 手動修復で不変条件が破れたタスクの報告とスキップ
@@ -887,9 +888,9 @@ EOF
 
 ## 既存機能への影響確認
 
-- **起動・spawn確認（Issue #2 の主経路）:** `Tick` にジェネリック引数 `C: CommandRunner` が増え、`cli::wire` がランナーを構築するようになる（steps.md ステップ8）。`.thread/2/testing.md` の確認項目2（worktree・ブランチ・launching 記録・runディレクトリ）と確認項目3（spawn確認と猶予内の冪等性）をスポットチェックとして再実行し、Issue #2 時点と同じ結果になることを確認する。特に `SystemCommandRunner` の構築失敗で `tick` 全体が落ちないこと、`add` がランナーを必要としないままであること。
+- **起動・spawn確認（Issue #2 の主経路）:** `Tick` にジェネリック引数 `C: CommandRunner` が増え、`cli::wire` がランナーを構築するようになる（steps.md ステップ8）。`.thread/2/testing.md` の確認項目2（worktree・ブランチ・launching 記録・runディレクトリ）と確認項目3（spawn確認と猶予内の冪等性）をスポットチェックとして再実行し、Issue #2 時点と同じ結果になることを確認する。特に `SystemCommandRunner` の構築が外部リソースの読み取りを伴わないこと（`cli::wire::command_runner` は `SystemCommandRunner::new() -> Self` を返すだけで失敗しない）と、`add` の経路がランナーを必要としないままであること（`grep -rn 'command_runner()' crates/pulsen/src/cli/` のヒットが `cli/tick.rs` の1件だけ）。
 
-- **サマリー表示の追随:** `cli::render::tick_summary` の項目行は「起動 / 起動確認 / 判定確定 / 遷移 / 実行待ちへ復帰 / 凍結 / 通知 / 終端処理 / gcで削除 / gcで削除できず」の順に並び、そのあとに報告の3見出しが続く（`crates/pulsen/src/cli/render.rs`）。本スライスで初めて値が入るのは**「判定確定」「遷移」「実行待ちへ復帰」「通知」の4つ**（「判定確定」は completed を確定したタスクだけが並ぶ。failed は「失敗を記録」、skipped は「実行待ちへ復帰」に出る）。値の無い項目が行ごと出ないこと、書き込みを行った tick が必ずサマリーに現れること（ADR-092）を、確認項目1（判定確定・遷移）・4（実行待ちへ復帰）・7〜9（通知）で併せて確認する。`archived` / `gc_deleted` / `gc_errors` は引き続き値の入る経路を持たない（#6）。
+- **サマリー表示の追随:** `cli::render::tick_summary` の項目行は「起動 / 起動確認 / 判定確定 / 遷移 / 実行待ちへ復帰 / 凍結 / 通知 / 終端処理 / gcで削除 / gcで削除できず」の順に並び、そのあとに報告の4見出し（「失敗を記録」「起動の結果が未確定」「スキップ」「後始末が残っている」）が続く（`crates/pulsen/src/cli/render.rs`）。本スライスで初めて値が入るのは**「判定確定」「遷移」「実行待ちへ復帰」「通知」の4つ**（「判定確定」は completed を確定したタスクだけが並ぶ。failed は「失敗を記録」、skipped は「実行待ちへ復帰」に出る）。値の無い項目が行ごと出ないこと、書き込みを行った tick が必ずサマリーに現れること（ADR-092）を、確認項目1（判定確定・遷移）・4（実行待ちへ復帰）・7〜9（通知）で併せて確認する。`archived` / `gc_deleted` / `gc_errors` は引き続き値の入る経路を持たない（#6）。
 
 - **`pulsen --help` の表示:** サブコマンドは `add` / `tick` / `help` のみで、`wrapper` は現れない（ADR-077）。`ls` / `show` / `abort` / `retry` / `set-status` が増えていないこと（#4 / #5）。`pulsen tick --help` に引数が無く、`--home` が global フラグとして現れること。
 
@@ -902,8 +903,8 @@ EOF
 - **後片付け:**
 
     ```sh
-    ps -ef | grep -E 'pulsen wrapper|sleep (120|600)' | grep -v grep   # 残留プロセスが無いこと
-    pkill -f 'sleep 600'; pkill -f 'sleep 120'                        # 残っていれば
+    ps -ef | grep -E 'pulsen wrapper|sleep (120|180|600)' | grep -v grep   # 残留プロセスが無いこと
+    pkill -f 'sleep 600'; pkill -f 'sleep 120'; pkill -f 'sleep 180'       # 残っていれば
     git -C /tmp/pulsen-test/repo worktree list
     rm -rf /tmp/pulsen-test "$HOME/pulsen-manual-test" "$HOME/pulsen-manual-work" \
            "$HOME/pulsen-test-repo" "$HOME/pulsen-intervention-test"

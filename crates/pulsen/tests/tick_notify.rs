@@ -9,6 +9,7 @@ use pulsen::application::tick::TickIssue;
 use pulsen_conformance::doubles::{
     RecordSeq, ScriptedCommandRunner, ScriptedRunStore, ScriptedTaskRepository,
 };
+use pulsen_domain::definition::{GlobalConfig, GlobalConfigInput};
 use pulsen_domain::execution::{CommandCompletion, ExitCode};
 use pulsen_domain::task::{
     ExecutionState, ExecutionStateKind, SaveError, StopReason, TransitionError,
@@ -29,6 +30,16 @@ fn frozen_entries() -> Vec<pulsen_domain::task::TaskEntry> {
     vec![task(TASK).stopped(StopReason::RetryLimitExceeded).entry()]
 }
 
+/// 通知コマンドと判定の上限を定義したグローバル設定。
+fn config_notifying_judging(notify_cmd: &str, judge_attempt_limit: u32) -> GlobalConfig {
+    GlobalConfig::parse(GlobalConfigInput {
+        notify_cmd: Some(command(notify_cmd)),
+        judge_attempt_limit: Some(judge_attempt_limit),
+        ..GlobalConfigInput::default()
+    })
+    .expect("受理される")
+}
+
 /// 通知の共通手続きで観測できる出来事。
 #[derive(Debug, PartialEq, Eq)]
 enum NotifyStep {
@@ -40,42 +51,93 @@ enum NotifyStep {
     SavedNotifiedAt,
     /// 凍結以外の内容を保存した。
     SavedOther,
+    /// スナップショットを温存したまま未通知の凍結を保存した。
+    SavedDegradedFrozen,
+    /// スナップショットを温存したまま通知時刻を追記して保存した。
+    SavedDegradedNotifiedAt,
+    /// スナップショットを温存したまま凍結以外の内容を保存した。
+    SavedDegradedOther,
+    /// 通知以外のコマンド(判定)を起動した。
+    RanOtherCmd,
 }
 
-/// 保存と通知コマンドの起動を、起きた順に1本の列へ並べる。
+/// 保存された内容のうち、通知の順序に関わる区別。
+enum Written {
+    /// 未通知の凍結。
+    Frozen,
+    /// 通知時刻の追記。
+    NotifiedAt,
+    /// 通知の手続きが書かない内容。
+    Other,
+}
+
+fn written(execution: &ExecutionState) -> Written {
+    match execution {
+        ExecutionState::Stopped {
+            notified_at: None, ..
+        } => Written::Frozen,
+        ExecutionState::Stopped {
+            notified_at: Some(_),
+            ..
+        } => Written::NotifiedAt,
+        ExecutionState::Pending
+        | ExecutionState::Launching { .. }
+        | ExecutionState::Running
+        | ExecutionState::Completed
+        | ExecutionState::Failed => Written::Other,
+    }
+}
+
+/// 保存とコマンドの起動を、起きた順に1本の列へ並べる。
 ///
 /// 順序の契約(凍結を書く → 通知を実行する → 通知時刻を追記する)はポートをまたぐため、
 /// ダブルごとの列を別々に見ても「どちらが先か」は主張できない。共有の採番で並べ直して
 /// はじめて、通知を先に起動する実装を落とせる。
+///
+/// 書き戻し先(`save` / `save_degraded`)と起動したコマンド(通知 / 判定)を区別したまま
+/// 並べる — 契約は経路ごとに同じ順序を求めるので、取り違えを列の形として見せる。
 fn notify_steps(harness: &Harness) -> Vec<NotifyStep> {
     let saves = harness
         .tasks
         .saved_in_order()
         .into_iter()
         .map(|(seq, task)| {
-            let step = match task.execution() {
-                ExecutionState::Stopped {
-                    notified_at: None, ..
-                } => NotifyStep::SavedFrozen,
-                ExecutionState::Stopped {
-                    notified_at: Some(_),
-                    ..
-                } => NotifyStep::SavedNotifiedAt,
-                ExecutionState::Pending
-                | ExecutionState::Launching { .. }
-                | ExecutionState::Running
-                | ExecutionState::Completed
-                | ExecutionState::Failed => NotifyStep::SavedOther,
+            let step = match written(task.execution()) {
+                Written::Frozen => NotifyStep::SavedFrozen,
+                Written::NotifiedAt => NotifyStep::SavedNotifiedAt,
+                Written::Other => NotifyStep::SavedOther,
             };
             (seq, step)
         });
-    let notifications = harness
+    let degraded_saves = harness
+        .tasks
+        .saved_degraded_in_order()
+        .into_iter()
+        .map(|(seq, task)| {
+            let step = match written(task.execution()) {
+                Written::Frozen => NotifyStep::SavedDegradedFrozen,
+                Written::NotifiedAt => NotifyStep::SavedDegradedNotifiedAt,
+                Written::Other => NotifyStep::SavedDegradedOther,
+            };
+            (seq, step)
+        });
+    let commands = harness
         .commands
         .calls_in_order()
         .into_iter()
-        .map(|(seq, _)| (seq, NotifyStep::RanNotifyCmd));
+        .map(|(seq, call)| {
+            let step = if Some(&call.cmd) == harness.config.notify_cmd() {
+                NotifyStep::RanNotifyCmd
+            } else {
+                NotifyStep::RanOtherCmd
+            };
+            (seq, step)
+        });
 
-    let mut steps = saves.chain(notifications).collect::<Vec<(RecordSeq, _)>>();
+    let mut steps = saves
+        .chain(degraded_saves)
+        .chain(commands)
+        .collect::<Vec<(RecordSeq, _)>>();
     steps.sort_by_key(|(seq, _)| *seq);
     steps.into_iter().map(|(_, step)| step).collect()
 }
@@ -160,6 +222,60 @@ fn 通知は凍結の保存が済んでから実行され成功してはじめ�
         harness.saved(TASK).execution(),
         &ExecutionState::Stopped {
             reason: StopReason::RetryLimitExceeded,
+            notified_at: Some(at(NOW)),
+        }
+    );
+}
+
+#[test]
+fn 判定上限の超過で凍結したタスクも同じtickで通知される() {
+    let harness = Harness {
+        config: config_notifying_judging("notify", 1),
+        tasks: repository(vec![
+            task(TASK)
+                .snapshot(snapshot_with(
+                    Some("claude"),
+                    None,
+                    agent_run(AgentRunSpec {
+                        judge: Some(command("judge")),
+                        ..AgentRunSpec::default()
+                    }),
+                ))
+                .running(1)
+                .counters(0, 1, 0)
+                .entry(),
+        ]),
+        runs: ScriptedRunStore::new().with_read_exit([Ok(Some(ExitCode::new(0)))]),
+        // 判定はプロトコル外の終了コードで壊れ、続く通知は成功する。
+        commands: ScriptedCommandRunner::new().with_run([
+            CommandCompletion::Exited(ExitCode::new(1)),
+            CommandCompletion::Exited(ExitCode::new(0)),
+        ]),
+        ..Harness::new()
+    };
+
+    let summary = harness.completed();
+
+    assert_eq!(summary.frozen, vec![task_id(TASK)]);
+    assert_eq!(
+        summary.notified,
+        vec![task_id(TASK)],
+        "同じ tick で通知する"
+    );
+    assert_eq!(
+        notify_steps(&harness),
+        vec![
+            NotifyStep::RanOtherCmd,
+            NotifyStep::SavedFrozen,
+            NotifyStep::RanNotifyCmd,
+            NotifyStep::SavedNotifiedAt,
+        ],
+        "判定が壊れた後に凍結を書き、通知してから通知時刻を追記する"
+    );
+    assert_eq!(
+        harness.saved(TASK).execution(),
+        &ExecutionState::Stopped {
+            reason: StopReason::JudgeLimitExceeded,
             notified_at: Some(at(NOW)),
         }
     );
@@ -293,6 +409,14 @@ fn スナップショットが読めない未通知の凍結にも再通知が�
     assert!(
         harness.tasks.saved().is_empty(),
         "縮退したタスクは通常の保存を通らない"
+    );
+    assert_eq!(
+        notify_steps(&harness),
+        vec![
+            NotifyStep::RanNotifyCmd,
+            NotifyStep::SavedDegradedNotifiedAt,
+        ],
+        "通知に成功してはじめて通知時刻を追記する(凍結は前の tick が書いている)"
     );
     let saved = harness.tasks.saved_degraded();
     assert_eq!(saved.len(), 1, "save_degraded で書き戻される");

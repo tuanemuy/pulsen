@@ -46,7 +46,7 @@
 | TC-port-process-controller-011 / 012 / 013 / 015 | B（011 / 012）・C（013 / 015） | 実行単位（プロセスグループ相当）を作れない | ハーネスが `live_execution_unit` / `detached_execution_unit` を提供するか（この適用先では、実行単位を1回起こせるかで決まる） | 未測定 | 未測定 | 未測定 |
 | TC-port-process-controller-014 / 016 | B（014）・C（016） | 上記に加えて、実行単位の一部だけを終了させられない | ハーネスが `orphaned_execution_unit` を提供するか（この適用先では、起こした実行単位の一部だけを終了させられるかで決まる） | 未測定 | 未測定 | 未測定 |
 | TC-port-command-runner-004 | C | 実行権限のない実体を作れない（root 実行・非 POSIX・権限を持たないファイルシステム） | `permission_restrictions_effective` | 未測定 | 未測定 | 未測定 |
-| TC-port-command-runner-001〜016 | B | テスト用コマンド（`examples/judge_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため | 未測定 | 未測定 | 未測定 |
+| TC-port-command-runner-001 / 002 / 005〜016 | B | テスト用コマンド（`examples/judge_probe`）がビルドされていない（単一のテストターゲットを指定した実行） | ハーネスが `command` を提供するか。**スキップ許容集合には入れない** — 作り忘れを緑にしないため | 未測定 | 未測定 | 未測定 |
 | TC-port-clock-003 | C | 実時刻を観測できない（時刻を注入するアダプター） | ハーネスが `observe_wall_clock` を提供するか | 実行 | 実行 | 実行 |
 | TC-port-clock-005 | C | 時刻を過去へ巻き戻せない（実時計のアダプター） | ハーネスが `rewind` を提供するか | スキップ | スキップ | スキップ |
 | TC-port-exclusive-lock-007 | C | ロック機構自体を利用不能にできない | ハーネスが `unusable_lock` を提供するか | 実行 | 実行 | 実行 |
@@ -75,9 +75,9 @@
 
 ログには実在の適合ケースと形の区別が付かない `SKIP tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` / `tc_port_clock_005_時刻の巻き戻し` の3行が全 OS で出る。これは `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身を検証するために `record` を直接呼ぶもので、架空のケース名を持つ。上の集計にも CI のジョブサマリーにも含めない — 走らなかった適合ケースとして数えられると、実測が示す内容が変わってしまうため。
 
-適合スイートの外に、`SKIP` としては現れない OS ごとのカバレッジ差がある。`pulsen` の lib ユニットテストは ubuntu 102件 / macOS 100件 / Windows 92件で、内訳は次のとおり。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この差はその外側にある。
+適合スイートの外に、`SKIP` としては現れない OS ごとのカバレッジ差がある。上の「適合ケースの数に OS 差は無い」は適合ケースについての主張で、この差はその外側にある。**件数は表と同じ規律で読む** — 実測は run に紐づき、内訳の構造は本コミット時点のものである。`pulsen` の lib ユニットテストの総数（run 31698858400 で ubuntu 102件 / macOS 100件 / Windows 92件）は、その後に `adapter::process` へ足した OS 依存のケースを含まないため `未測定` とする。
 
-- Windows に無い10件 — `adapter::process::identity` の `ps` 系6件、シグナル終了の符号化1件、`adapter::task_repository` の `#[cfg(all(test, unix))]` 3件（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことの確認）
+- Windows に無い件 — `adapter::process::identity` の `ps` 系（`未測定`）、`adapter::process` の POSIX の終了操作系（同定子の形式・昇格の効き。`未測定`）、シグナル終了の符号化1件、`adapter::task_repository` の `#[cfg(all(test, unix))]` 3件（宙ぶらりんの symlink で作った「読めないエントリ」を「消えたエントリ」と取り違えないことの確認）
 - Windows だけの2件 — `adapter::process::inheritance` の、起動の区間で標準ハンドルの継承が止まり区間を抜けると戻ることの確認（ADR-100）
 - ubuntu だけの3件 — procfs から同定情報を組み立てる経路。macOS だけの1件は `ps` の取得環境（ロケール・タイムゾーン）の固定
 

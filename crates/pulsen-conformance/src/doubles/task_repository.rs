@@ -24,7 +24,7 @@ pub struct ScriptedTaskRepository {
     save_degraded: RefCell<VecDeque<Result<(), SaveError>>>,
     created: RefCell<Vec<Task>>,
     saved: RefCell<Vec<(RecordSeq, Task)>>,
-    saved_degraded: RefCell<Vec<DegradedTask>>,
+    saved_degraded: RefCell<Vec<(RecordSeq, DegradedTask)>>,
 }
 
 impl ScriptedTaskRepository {
@@ -65,7 +65,11 @@ impl ScriptedTaskRepository {
 
     /// これまでに `save_degraded` へ渡されたタスク。
     pub fn saved_degraded(&self) -> Vec<DegradedTask> {
-        self.saved_degraded.borrow().clone()
+        self.saved_degraded
+            .borrow()
+            .iter()
+            .map(|(_, task)| task.clone())
+            .collect()
     }
 
     /// これまでに `create` へ渡されたタスク。
@@ -91,6 +95,15 @@ impl ScriptedTaskRepository {
     pub fn saved_in_order(&self) -> Vec<(RecordSeq, Task)> {
         self.saved.borrow().clone()
     }
+
+    /// これまでに `save_degraded` へ渡されたタスクを、ほかのダブルの記録と並べられる
+    /// 採番つきで返す。
+    ///
+    /// 通知の順序の契約は書き戻し先の型で変わらないため、縮退したタスクの再通知も
+    /// `save` / `run` と同じ1本の列に並べられる必要がある。
+    pub fn saved_degraded_in_order(&self) -> Vec<(RecordSeq, DegradedTask)> {
+        self.saved_degraded.borrow().clone()
+    }
 }
 
 impl TaskRepository for ScriptedTaskRepository {
@@ -113,7 +126,9 @@ impl TaskRepository for ScriptedTaskRepository {
     }
 
     fn save_degraded(&self, task: &DegradedTask) -> Result<(), SaveError> {
-        self.saved_degraded.borrow_mut().push(task.clone());
+        self.saved_degraded
+            .borrow_mut()
+            .push((RecordSeq::next(), task.clone()));
         let Some(result) = self.save_degraded.borrow_mut().pop_front() else {
             panic!("save_degraded の結果を使い切った")
         };

@@ -9,9 +9,9 @@
 
 use pulsen_domain::definition::{PlainCommand, StatusDefinition, TimeoutSpec};
 use pulsen_domain::execution::{
-    AliveDecision, CommandCompletion, CommandRunner, ExclusiveLock, ExitCode, IdentityCheck, Io,
-    JudgeConclusion, JudgeOutcome, JudgementService, KillError, ProcessController, RunStore,
-    RunningClassifier, RunningDecision, WorktreeManager,
+    AliveDecision, CommandCompletion, CommandRunner, DefaultJudgement, ExclusiveLock, ExitCode,
+    IdentityCheck, Io, JudgeConclusion, JudgeOutcome, JudgementService, KillError,
+    ProcessController, RunStore, RunningClassifier, RunningDecision, WorktreeManager,
 };
 use pulsen_domain::task::{Clock, ProcessIdent, RunDirPath, Task, TaskRepository, Timestamp};
 
@@ -264,13 +264,12 @@ enum Settled {
 impl Settled {
     /// 判定コマンドを持たないステータスのデフォルト判定。
     ///
-    /// デフォルト判定は2値であり `Skipped` を導く経路が無い(ADR-008)。exit 20 も他の
-    /// 非0と同じ失敗になる。
+    /// 見送りは判定コマンドの exit 20 だけが生む(ADR-008)。`DefaultJudgement` が2値である
+    /// ことで、この経路から `Skipped` が導かれないことは型が述べる。
     fn by_default(exit: ExitCode) -> Self {
         match JudgementService::default_judgement(&exit) {
-            JudgeOutcome::Completed => Self::Completed,
-            JudgeOutcome::Failed => Self::Failed(RunFailureCause::DefaultJudgement { exit }),
-            JudgeOutcome::Skipped => Self::Skipped,
+            DefaultJudgement::Completed => Self::Completed,
+            DefaultJudgement::Failed => Self::Failed(RunFailureCause::DefaultJudgement { exit }),
         }
     }
 

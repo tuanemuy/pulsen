@@ -11,6 +11,28 @@ const JUDGE_FAILED: i32 = 10;
 /// 判定コマンドが見送りを表す exit code。
 const JUDGE_SKIPPED: i32 = 20;
 
+/// 判定コマンドを持たないステータスでの判定の結末。
+///
+/// `Skipped` を持たない 2 値 — 見送りは判定コマンドの exit 20 だけが生む(ADR-008)。
+/// `JudgeOutcome` の一部だが、デフォルト判定が見送りを導けないことを型で述べるために
+/// 別の型にしてある。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultJudgement {
+    /// 成功。次のステータスへ進める。
+    Completed,
+    /// 失敗。リトライ上限を消費する。
+    Failed,
+}
+
+impl From<DefaultJudgement> for JudgeOutcome {
+    fn from(judgement: DefaultJudgement) -> Self {
+        match judgement {
+            DefaultJudgement::Completed => Self::Completed,
+            DefaultJudgement::Failed => Self::Failed,
+        }
+    }
+}
+
 /// 終了した実行の判定(純粋)。
 ///
 /// 判定は冪等 — 同じ exit・同じ定義に対して常に同じ結論を導く。判定コマンド自体の
@@ -20,13 +42,14 @@ pub struct JudgementService;
 impl JudgementService {
     /// 判定コマンドが未定義のステータスでの判定。
     ///
-    /// 2 値しか返さない — 判定コマンドを持たないステータスで `Skipped` を導く経路は無く、
-    /// exit 20 も他の非 0 と同じ失敗になる(ADR-008)。
-    pub fn default_judgement(exit: &ExitCode) -> JudgeOutcome {
+    /// 返り値を 2 値の `DefaultJudgement` に絞ることで、判定コマンドを持たないステータスで
+    /// `Skipped` を導く経路が無いことを型で担保する。exit 20 も他の非 0 と同じ失敗になる
+    /// (ADR-008)。
+    pub fn default_judgement(exit: &ExitCode) -> DefaultJudgement {
         if exit.is_success() {
-            JudgeOutcome::Completed
+            DefaultJudgement::Completed
         } else {
-            JudgeOutcome::Failed
+            DefaultJudgement::Failed
         }
     }
 
@@ -132,7 +155,7 @@ mod tests {
     fn デフォルト判定は0を成功とする() {
         assert_eq!(
             JudgementService::default_judgement(&ExitCode::new(0)),
-            JudgeOutcome::Completed
+            DefaultJudgement::Completed
         );
     }
 
@@ -141,10 +164,22 @@ mod tests {
         for code in [1, 10, 20, 126, 127, 143] {
             assert_eq!(
                 JudgementService::default_judgement(&ExitCode::new(code)),
-                JudgeOutcome::Failed,
+                DefaultJudgement::Failed,
                 "{code}"
             );
         }
+    }
+
+    #[test]
+    fn デフォルト判定の2値はそのまま判定の結末に対応する() {
+        assert_eq!(
+            JudgeOutcome::from(DefaultJudgement::Completed),
+            JudgeOutcome::Completed
+        );
+        assert_eq!(
+            JudgeOutcome::from(DefaultJudgement::Failed),
+            JudgeOutcome::Failed
+        );
     }
 
     #[test]
