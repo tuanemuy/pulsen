@@ -1,6 +1,6 @@
 # Inventory — test
 
-生成元: spec/testcases/（最終同期: 2026-08-15）
+生成元: spec/testcases/（最終同期: 2026-08-16）
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
@@ -597,7 +597,7 @@
 | TC-port-workflow-store-014 | WorkflowStore 正常系パース: `load`(遷移経路のない到達不能ステータスを含む定義を置く) | spec/testcases/ports/workflow-store.md#正常系パース | `Ok`(到達不能ステータスは許容) |
 | TC-port-workflow-store-015 | WorkflowStore 正常系パース: `load`(`judge` のトークンに波括弧(`{...}`)を含む定義を置く) | spec/testcases/ports/workflow-store.md#正常系パース | `Ok`。`PlainCommand` はプレースホルダ展開・検査をせず文字どおり保持される |
 | TC-port-workflow-store-016 | WorkflowStore 正常系パース: `load`(グローバル設定に存在しないエージェント名を参照する定義を置く) | spec/testcases/ports/workflow-store.md#正常系パース | `Ok`(グローバル設定との突き合わせは本ポートの責務外。`RegistrationValidator` が担う) |
-| TC-port-workflow-store-017 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(YAML として不正な内容(構文エラー・重複キー)のファイルを置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`) |
+| TC-port-workflow-store-017 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(YAML として不正な内容(構文エラー・重複キー)のファイルを置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`)。message に解決先を前置しない — パスを持たないのは `WorkflowParseError` 12種すべての契約であり、この行が固定するのは `YamlSyntax` の1経路 |
 | TC-port-workflow-store-018 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(トップレベルに許容外のキー(`workflow` / `agent` / `model`…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: UnknownKey, .. })` |
 | TC-port-workflow-store-019 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(ステータス内にスキーマ外のキー(`prmopt` 等の typo)を含む定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: UnknownKey, .. })` |
 | TC-port-workflow-store-020 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`run: wait` / `run: cleanup` のステータスにエージェント実行系…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: ForbiddenKey, .. })`(`Wait` / `Cleanup` に許されるキーは `run` のみ) |
@@ -635,3 +635,4 @@
 | TC-port-worktree-manager-021 | WorktreeManager: `remove(repo, ws.path)`(`create` 成功済みの worktree が存在し、その削除操作自体が失敗する状況…) | spec/testcases/ports/worktree-manager.md | `Err(WorktreeError::Failed { message })` を値として返す(パニックしない。呼び出し側が `record_tool_failure(WorktreeRemove)` の入力にする報告用エラー)。worktree(実体・登録)とブランチの既存状態には触れない(次回の `remove` が同じ前提から再試行できる) |
 | TC-port-run-store-035 | RunStore: `write_starttime` / `write_pid_file` / `write_exit` のいずれか(`prepare_attempt` を経ずに attempt ディレクトリが不在) | spec/testcases/ports/run-store.md | `Ok`。書き込み先のディレクトリが作られ、対応する read 系が書いた値を返す(`prepare_attempt` の失敗後も spawn は行われるため、ラッパーが自力で置き場を作って書けることが自己修復の前提) |
 | TC-exec-tick-160 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(exit ファイルあり・judge 定義あり・`task.workspace` が None(手動修復による不変条件4の破れ)) | spec/testcases/execution/tick.md#異常系-4 | 判定コマンドを起動せず書き込みも行わず、`MissingWorkspace` として報告してスキップする。tick は 0 |
+| TC-exec-run-wrapper-028 | RunWrapper 異常系: ラッパー自身の終了コードを観測する(エージェントが非0で終了する / 同定情報一式を残せずに終える) | spec/testcases/execution/run-wrapper.md#異常系 | 前者は 0(エージェントは実行できており、その終了コードは伝播しない — 非0の値は `exit` ファイルだけが持つ)、後者は非0(起動引数が不正な場合も同じく非0)。ラッパー自身の終了コードが表すのはラッパーが責務を果たせたかであって、エージェントの成否ではない |

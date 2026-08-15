@@ -34,7 +34,7 @@ WorkflowStore のすべてのアダプター実装が共通で通す適合テス
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| YAML として不正な内容(構文エラー・重複キー)のファイルを置く | `load` | `Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`) | |
+| YAML として不正な内容(構文エラー・重複キー)のファイルを置く | `load` | `Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`)。message に解決先を前置しない — パスを持たないのは `WorkflowParseError` 12種すべての契約であり、この行が固定するのは `YamlSyntax` の1経路 | |
 | トップレベルに許容外のキー(`workflow` / `agent` / `model` / `initial` / `statuses` 以外)を含む定義を置く | `load` | `Err(Parse { error: UnknownKey, .. })` | |
 | ステータス内にスキーマ外のキー(`prmopt` 等の typo)を含む定義を置く | `load` | `Err(Parse { error: UnknownKey, .. })` | |
 | `run: wait` / `run: cleanup` のステータスにエージェント実行系のキー(`judge`・`next` 等)を併記した定義を置く | `load` | `Err(Parse { error: ForbiddenKey, .. })`(`Wait` / `Cleanup` に許されるキーは `run` のみ) | |

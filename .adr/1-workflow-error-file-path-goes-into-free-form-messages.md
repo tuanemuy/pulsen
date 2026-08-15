@@ -1,4 +1,4 @@
-# ADR: ワークフロー定義エラーの「どのファイルか」は自由形式のメッセージに載せる
+# ADR: ワークフロー定義エラーの「どのファイルか」は自由形式のメッセージに載せる (置き換え済み)
 
 ## ステータス
 
@@ -12,20 +12,22 @@
 
 ## 決定
 
-解決先の絶対パスは、**構造化フィールドで示せる経路では構造化フィールドが持つ**。示せない経路にかぎり、意味が固定されていない自由形式のメッセージへ前置する。両方で示すと同じパスが1つの案内に2回現れるためである。
+解決先の絶対パスは、意味が固定されていない**自由形式のメッセージ**にだけ前置する。
 
-- `WorkflowLoadError::Parse { error: WorkflowParseError, resolved_from: PathBuf }` — 解決先は `resolved_from` が持つ。`WorkflowParseError` の12種はどれもパスを持たないので、`YamlSyntax { message }` にも前置しない
-- `WorkflowLoadError::NotFound { attempted }` — 解決を試みたパスを構造として持つ
-- `WorkflowLoadError::Io { message }` — 前置が残るのはこの1つだけ(`<絶対パス>: <原因>`)
+- `WorkflowLoadError::Io { message }` — `<絶対パス>: <原因>`
+- `WorkflowParseError::YamlSyntax { message }` — 同上
+- `NotFound { attempted }` は既にパスを持つ
 
-`location` には載せない。`location` はポートの契約として論理位置そのもの(`statuses.queued.prompt`)を指し、適合テストが値の一致で固定しているためである(`.adr/1-schema-error-location-is-logical.md`)。構造の破れ(`NoAction` / `MissingNext` 等)はステータス名で位置を示し、対象ファイルは `Parse` の `resolved_from` が受ける。
+`location` には載せない。構造の破れ(`NoAction` / `MissingNext` 等)はステータス名で位置を示し、パスは持たせない。
 
 ## 検討した代替案
 
+- `WorkflowLoadError` にパスのフィールドを足す — spec のポート表と食い違う
 - `location` にパスを前置する — `location` の意味(論理位置)が呼び出し側ごとに揺れる
 
 ## 影響
 
 - 利用者が最も困る「存在するが読めない」「YAML として壊れている」の2つで、どのファイルの話かが必ず出る
-- Issue #9 の改訂により、パースの失敗はすべて(構造の破れを含めて)解決先を伴うようになった。当初のトレードオフ「構造の破れではパスが出ない」は解消した
-- ワークフロー定義のエラー種を増やす後続の変更では、解決先を構造化フィールドで示せるかどうかを基準に判断する。示せるなら自由形式へ前置しない
+- トレードオフ: 構造の破れではパスが出ない。これらは定義の中の位置(ステータス名)で特定でき、対象ファイルは利用者が `--workflow` で指定した1つに限られる
+- Issue #9 で、退けた代替案「`WorkflowLoadError` にパスのフィールドを足す」を採った。ポート表の側を `Parse { error: WorkflowParseError, resolved_from: PathBuf }` に改められたため、退けた理由(ポート表との1:1一致が壊れる)が成立しなくなったからである。パースの失敗は構造の破れを含めてすべて解決先を伴うようになり、上のトレードオフは解消した。`YamlSyntax { message }` への前置は構造化フィールドとの二重表示になるため外し、前置に残るのは `Io { message }` だけになった
+- 置き換え後の規則(解決先は構造化フィールドで示し、示せない経路だけ自由形式へ前置する)は `spec/domains/definition.md#workflowstore` のポート契約が持つ。ワークフロー定義のエラー種を増やす後続の変更は、そちらを基準に判断する

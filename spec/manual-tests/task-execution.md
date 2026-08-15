@@ -581,7 +581,7 @@ exit 20
 |---|---|---|
 | 1 | `pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo` を実行し、IDを T20 として控える。続けて `pulsen add --workflow /tmp/pulsen-test/draft.yaml --repo /tmp/pulsen-test/repo` を実行し、IDを T20h として控える | 2タスクが登録される |
 | 2 | `cp /tmp/pulsen-test/home/state/tasks/<T20>.json /tmp/pulsen-test/t20.bak` の後、`echo broken > /tmp/pulsen-test/home/state/tasks/<T20>.json` を実行する | T20 のタスクファイルが破損状態になる |
-| 3 | `pulsen tick` を実行する | サマリーにスキップした破損ファイルとして T20 のファイルパスが報告される。T20h は通常どおり処理されてアーカイブされる(他タスクへの影響なし)。tick の exit code は 0 |
+| 3 | `pulsen tick` を実行する | サマリーの「スキップ」の見出しに T20 のファイルパスが報告される。T20h は通常どおり処理されてアーカイブされる(他タスクへの影響なし)。tick の exit code は 0 |
 | 4 | `cat /tmp/pulsen-test/home/state/tasks/<T20>.json` を実行する | 内容は `broken` のまま(破損ファイルへの書き込みは行われない) |
 | 5 | `pulsen ls` を実行する | パース不能なタスクファイルの存在(パスと読めない旨)が報告される(修復の入口) |
 | 6 | `cat /tmp/pulsen-test/notify.log` を実行する | T20 に関する通知は発生していない(stopped化されない) |

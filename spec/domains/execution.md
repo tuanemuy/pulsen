@@ -40,7 +40,8 @@ DefaultJudgement = Completed | Failed
 ```
 
 - `Skipped` は判定コマンドでのみ生じる(ADR-008)
-- `DefaultJudgement` は判定コマンド未定義のときの2値。`Skipped` は判定コマンドの exit 20 だけが生むため、デフォルト判定は2値しか返さない。`JudgeOutcome` は3値のまま残り、`From<DefaultJudgement> for JudgeOutcome` で埋め込む
+- `DefaultJudgement` は判定コマンド未定義のときの2値。デフォルト判定が `Skipped` を導けないことを返り値型で述べる。この経路の結末は2値のまま写す
+- `JudgeOutcome` が3値のまま残るのは、判定コマンドの exit 20(`interpret_judge_completion`)が `Skipped` を生むためである。`From<DefaultJudgement> for JudgeOutcome` は2値が3値に含まれることを型で示す変換として提供する
 - `JudgeFailure` は「判定自体が壊れた」(プロトコル外の exit code・判定timeout・判定コマンド起動不能)
 
 ### 分類の決定(直和型)

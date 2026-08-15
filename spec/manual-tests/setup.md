@@ -381,7 +381,7 @@ tick は1タスクにつき1回で1ステップだけ進める。1回のエー�
 
 | # | 操作 | 期待結果 |
 |---|---|---|
-| 1 | `$WORK/broken.yaml` を以下の内容(インデント崩れ)で作成し、`pulsen add --workflow "$WORK/broken.yaml" --repo "$REPO"` を実行する。<br><br><pre>agent: shell<br>initial: start<br>statuses:<br>start:<br>    prompt: "hi"</pre> | 構文エラーの位置・原因が表示されて exit code 非0。タスクは作られない |
+| 1 | `$WORK/broken.yaml` を以下の内容(インデント崩れ。`next` の行だけ3スペースで1段浅い)で作成し、`pulsen add --workflow "$WORK/broken.yaml" --repo "$REPO"` を実行する。<br><br><pre>agent: shell<br>initial: start<br>statuses:<br>  start:<br>    prompt: "hi"<br>   next: waiting</pre> | 構文エラーの位置・原因が表示されて exit code 非0。タスクは作られない |
 | 2 | `$WORK/dup-key.yaml` を以下の内容(`start` キーの重複)で作成し、同様に add する。<br><br><pre>agent: shell<br>initial: start<br>statuses:<br>  start:<br>    prompt: "hi"<br>    next: waiting<br>  start:<br>    run: wait<br>  waiting:<br>    run: wait</pre> | 重複キーがパースエラーとして扱われ exit code 非0。タスクは作られない |
 | 3 | `cp "$WORK/broken.yaml" "$PULSEN_HOME/workflows/broken.yaml"` を実行し、`pulsen add --workflow broken --repo "$REPO"` を名前指定で実行する | 構文エラーの位置・原因に加えて、解決先の絶対パス(`$PULSEN_HOME/workflows/broken.yaml`)が1回だけ表示されて exit code 非0。タスクは作られない(片付ける: `rm "$PULSEN_HOME/workflows/broken.yaml"`) |
 

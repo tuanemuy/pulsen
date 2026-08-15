@@ -102,6 +102,9 @@ pub enum WorkflowLoadError {
 /// `WorkflowRef` からワークフロー定義を解決・読み込み・パースする。
 ///
 /// 契約:
+/// - 解決先の案内は構造化フィールドに一本化する。`NotFound { attempted }` と
+///   `Parse { resolved_from }` が対象ファイルを持ち、自由形式のメッセージにパスを
+///   前置するのは、解決先を構造として持たない `Io { message }` だけ
 /// - 名前解決の規則: `Name(n)` → `<home>/workflows/<n>.yaml`(固定。`.yml` への
 ///   フォールバックはしない)。`Path(p)` → そのパス(相対はカレントディレクトリから解決)
 /// - アダプターが YAML テキストを `RawWorkflowDoc` に変換し(構文エラー・スキーマ外キーは

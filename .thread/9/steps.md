@@ -49,14 +49,16 @@
 2. **新規行の追記**（各グループの最大番号 + 1、表の末尾）。
 3. **`最終同期` の日付更新**（5ファイルすべて）。
 
-新規 ID: `DOM-definition-057` / `DOM-task-080` / `DOM-task-081` / `DOM-execution-072`〜`076` / `PAGE-wrapper-006` / `PAGE-tick-010` / `TC-port-run-store-035`。
+新規 ID: `DOM-definition-057` / `DOM-task-080` / `DOM-task-081` / `DOM-execution-072`〜`076` / `PAGE-wrapper-006` / `PAGE-tick-010` / `TC-port-run-store-035` / `TC-exec-tick-160` / `TC-exec-run-wrapper-028`。
 
-### 実装（`crates/`）— A2 / C5 のみ。合計9ファイル
+### 実装（`crates/`）— A2 / C5 と、その2件が偽にした記述の訂正。合計14ファイル
 
 - **A2**（5ファイル） — `WorkflowLoadError::Parse` に解決先パスを持たせる。参照は `crates/pulsen-domain/src/definition/port.rs`（enum 定義）/ `crates/pulsen/src/adapter/workflow_store.rs`（構築3箇所）/ `crates/pulsen/src/cli/render.rs`（1アーム）/ `crates/pulsen-conformance/src/workflow_store.rs`（4アーム + ヘルパー `expect_parse_error`）/ **`crates/pulsen-conformance/HOOKS.md`**（`TC-port-workflow-store-017`(140行) の「組み立て手段」に `expected_path_for_name` を足す。HOOKS.md 冒頭が「行を足す・フックを足すときはこの表も更新する」を規約として宣言しており、`expected_path_for_name` を使う 001 / 002 / 003 は既に併記している）。`crates/pulsen/src/application/register_task.rs` は `WorkflowLoadError` を包むだけ、`crates/pulsen/tests/register_task.rs` と `crates/pulsen-conformance/src/doubles/` は `NotFound` しか使わないため変更を要さない（`grep -rn 'WorkflowLoadError::Parse' crates/` で確認）。新しい型は増えないため `definition/mod.rs` の再エクスポートは変わらない。
 - **C5**（5ファイル） — `NotifyOutcome::Failed { detail }` を分類にする。参照は `crates/pulsen-domain/src/execution/notification.rs`（enum + `interpret_notify_completion` + ユニットテスト）/ **`crates/pulsen-domain/src/execution/mod.rs`（18行の再エクスポート）** / `crates/pulsen/src/application/tick/mod.rs`（`TickIssue::NotifyFailed` の定義）/ `crates/pulsen/src/application/tick/notify.rs`（2アームと `report_failure`）/ `crates/pulsen/src/cli/render.rs`（文言）。結合テストは `NotifyFailed { .. }` で受けているため変更を要さない。
 
-`render.rs` は A2 / C5 の両方が触るため、9ファイルの内訳は「A2 の5 + C5 の5 − 重複1」。
+- **A2 / C5 が偽にした記述の訂正**（4ファイル） — `crates/pulsen-conformance/src/lib.rs`（`expected_path_for_name` の doc が挙げるテストケースに 017 を足す。`HOOKS.md` だけを直すとフック定義側の doc が片側だけ古くなる）/ `crates/pulsen/src/adapter/task_file.rs`（doc が復号の根拠を、B8 で消えた変種名 `TransitionError::InvariantViolated` で説明している）/ `crates/pulsen/src/application/run_wrapper.rs` / `crates/pulsen/src/cli/wrapper.rs`（doc が「同定情報を残せなかった場合は何も書き残さずに終わる」と述べているが、実装は starttime を pid より先に書くため starttime だけが残りうる。B3 で spec 側をこの形に直した帰結）。いずれも**振る舞いを変えない**。
+
+`render.rs` は A2 / C5 の両方が触るため、型の変更が及ぶのは「A2 の5 + C5 の5 − 重複1」の9ファイル。これに doc の訂正4ファイルと、A2 の成果を守る主張を足す `crates/pulsen/tests/cli_add_error.rs` を加えて14ファイルになる。基準（AC-Z3）が守るのはファイル数ではなく「A2 / C5 の外へ**振る舞い**を波及させない」ことなので、既知の偽を件数のために残さない。
 
 **`HOOKS.md` の件数（冒頭の196行・`## RunStore` 節）は据え置く。** ステップ9 が `spec/testcases/ports/run-store.md` に1行足すが、`HOOKS.md` が数えるのは「これまでのスライスで扱った行」であり、適合スイート実装を伴わない新規行はまだ数えない（`TC-port-run-store-035` の実装は後続スライス）。数え直すと AC-Z3 が落ちる。
 
@@ -167,7 +169,7 @@
   - **C5** — 共通手続き notify の手順4（15行）を「`NotificationService::interpret_notify_completion(completion)` → `Delivered` なら `mark_notified(now)` → `save`(DegradedTask は `save_degraded`)。`Failed { cause }` なら何もしない(次のtickが再通知する。at-least-once)。**失敗の報告の形は呼び出し側が決める**（この手続きが固定するのは成否の判定経路まで）。いずれの経路でも文言は表示層が `cause` から組み立てる」に直す。
   - **C5** — **経路ごとの報告先は呼び出し側の記述に置く。** 共通手続き notify は冒頭（9行）が宣言するとおり Tick と AbortTask が共有しており、報告先は同じではない。共通手順に tick 専用の `errors` を書くと、AbortTask の経路に存在しないフィールドを共通手順が要求する形になり、新しい食い違いを spec に作る（AbortTask は未実装なので `cargo test` では検出されない）。
     - Tick 側: 処理フロー7 の直後の段落（56行。B8 で書き換える段落）に「共通手続き notify が `Failed { cause }` を返した場合は `errors` に `NotifyFailed { task_id, cause }` を積む」を足す。
-    - AbortTask 側: 出力DTO の `notify_warning | Option<String>`（152行）と処理フロー 5（163行「共通手続き notify を実行(…`notify_warning` を表示)」）は現行のまま成立する。`notify_warning` の説明に「文言は表示層が `cause` から組み立てる」を添えるにとどめ、`errors` を持ち込まない。
+    - AbortTask 側: 出力DTO の `notify_warning` を `Option<NotifyFailureCause>` にし、「原因の分類だけを持ち、文言(次のtickが再通知する旨を含む)は表示層が組み立てる」を添える。処理フロー 5（「共通手続き notify を実行(…`notify_warning` を表示)」）は現行のまま成立する。`errors` は持ち込まない。**`Option<String>` のまま残さない** — 完成文言を DTO に持たせると、C5 が Tick 側で退けた「表示専用の分類に完成文言を持たせる」形が未実装スライスの契約に残り、実装時に二択が生まれる。
   - **B3** — RunWrapper のエラーケース表と処理フローに終了コードの規約を反映する（詳細な規約本体は pages に置き、ここからは参照する）。
 - **理由:** サマリー DTO と `errors` の分類はユースケース層の契約であり、pages の表示規約（ステップ6）とテストケース（ステップ11）の前提になる。
 
@@ -187,7 +189,7 @@
     - 報告(`errors`)の見出しは4つで、**文言まで規約として固定する**: **失敗を記録**(カウンタを消費して帳簿に失敗を残した) / **起動の結果が未確定**(起動したかどうかが確定しておらず猶予経路が分類する) / **スキップ**(何も記録せず次のtickが同じ判断を再導出して再試行する) / **後始末が残っている**(OS 側に残ったものがあり、後始末の主体は tick ではなく人間)。Issue が求めているのは「3分類から4分類へ増えた」という**分類の規約**なので、この4つは軸・振り分け規則とともに固定する。
     - 見出しの軸は「タスクファイルに何を残したか」ではなく「**報告が何を残したか＝運用者が次に取る行動**」。
     - 記録すべきことが1つも起きなかった tick は「処理対象のタスクはありませんでした」と表示する。
-  - **B3** — `wrapper` の「状態」に終了コードの規約を加える: 「終了コードは**ラッパー自身が責務を果たせたか**を表す。エージェントを実行した場合とマーカーにより起動しなかった場合は 0(pages の『エージェントを起動せず正常終了する』に従う)、同定情報を何も残せずに終えた場合と起動引数が不正な場合は非0。**エージェントの終了コードは伝播しない** — エージェントの結末は run ディレクトリの `exit` ファイルだけが持つ記録であり、2箇所に分けると『exit なし = プロセス死亡として分類する』という tick 側の規則と食い違う。」
+  - **B3** — `wrapper` の「状態」に終了コードの規約を加える: 「終了コードは**ラッパー自身が責務を果たせたか**を表す。エージェントを実行した場合と、エージェントを起動せずに終えた場合(無効化マーカーがあった場合と、マーカーの確認自体に失敗して安全側に倒した場合の**両方**)は 0、同定情報一式を残せずに終えた場合と起動引数が不正な場合は非0。**エージェントの終了コードは伝播しない** — エージェントの結末は run ディレクトリの `exit` ファイルだけが持つ記録であり、2箇所に分けると『exit なし = プロセス死亡として分類する』という tick 側の規則と食い違う。」
 - **理由:** 表示規約は CLI（pages）の責務。`errors` の分類（ステップ4）を運用者が読む見出しへ振り分ける規則をここに置く。
 
 ### 7. `spec/testcases/task/register-task.md` を追従させる
@@ -223,14 +225,18 @@
   - **先頭行（37行）の期待結果にだけ `resolved_from` の主張を足す**: 「`Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`)」。**全13行に同じ主張は足さない** — 1行で契約は固定でき、13行に重複させると skip 予算の趣旨（`.adr/1-conformance-skip-budget.md`）にも反する。
 - **理由:** ポート契約にフィールドを増やすのに適合ケースだけ旧いタプル記法で残ると、同じ型が spec 内に2つの形で存在することになる。これは本 Issue が閉じようとしている食い違いそのもので、しかも `Parse(` は横断確認（ステップ20）でしか捕まらない。加えて、B6 では「契約を足したら適合ケースで主張する」形を採っているので、A2 だけ契約に増えたフィールドを適合スイートが1件も検証しない状態にすると非対称になる（実装側の対応はステップ17）。
 
-### 11. `spec/testcases/execution/tick.md` を追従させる
+### 11. `spec/testcases/execution/` を追従させる
 
-- **対象ファイル:** `spec/testcases/execution/tick.md`
-- **変更内容:**
+- **対象ファイル:** `spec/testcases/execution/tick.md`、`spec/testcases/execution/run-wrapper.md`
+- **変更内容（`tick.md`。5箇所）:**
   - **B8** — 「走査と分岐」異常系（39行）の「手動修復で不変条件が破れている」の期待結果の「または遷移関数の `InvariantViolated`」を「または遷移関数の `TransitionError`(`MissingCurrentAttempt` 等)」に直す。対応する台帳行は `TC-exec-tick-022`（ステップ14）。
-  - **C3** — 手続きD 異常系（203行）の「exit ファイルあり・`starttime_of` が失敗する環境」の期待結果「(exit が Some なら判定 — RunningClassifier の2段規則。…)」を「(exit が Some なら判定 — 2段規則の1段目はユースケース側にあり、`classify_alive` は生存の分類だけを返す。…)」に直す。対応する台帳行は `TC-exec-tick-103`（365行。ステップ14）。この2行がステップ11 で書き換える全てで、他の `TC-exec-tick-*` は対象外。
-  - 正常系「exit なし・プロセス生存(照合一致)・timeout 未超過」の注記「(exit があれば生存観測は行わない、の対偶として生存観測を経由する)」はそのまま成立するので触らない。
-- **理由:** テストケースが古い分類器の責務分割を述べていると、実装がどちらを担保すべきか読めなくなる。
+  - **B5** — 手続きC 正常系「runディレクトリに pid・starttime の両方がある」の期待結果に「サマリーの `confirmed_running` に記録される」を足す。対応する台帳行は `TC-exec-tick-068`（ステップ14）。
+  - **C2** — 手続きD 正常系「exit ファイルに 0・judge 未定義」の期待結果に「サマリーの `judged` に記録される」を足す。対応する台帳行は `TC-exec-tick-087`（ステップ14）。ステップ4 で足す2つの新設フィールドは、それを埋める経路がテストケースから読めないと裏取りの無い契約になる。
+  - **C3** — 手続きD 異常系（203行）の「exit ファイルあり・`starttime_of` が失敗する環境」の期待結果「(exit が Some なら判定 — RunningClassifier の2段規則。…)」を「(exit が Some なら判定 — 2段規則の1段目はユースケース側にあり、`classify_alive` は生存の分類だけを返す。…)」に直す。対応する台帳行は `TC-exec-tick-103`（ステップ14）。
+  - **C6b** — 手続きD 異常系の**末尾**に1行追加する。前提条件「exit ファイルあり・judge 定義あり・`task.workspace` が None(手動修復による不変条件4の破れ)」／操作「tick を実行する」／期待結果「判定コマンドを起動せず書き込みも行わず、`MissingWorkspace` として報告してスキップする。tick は 0」。ステップ4 が手続きD 手順2 に足す分岐は**新しい振る舞い**なので裏取りの行が要る。表の途中に挿入すると以降の TC ID がずれるため末尾に置く。台帳の新規行は `TC-exec-tick-160`（ステップ14）。
+  - 正常系「exit なし・プロセス生存(照合一致)・timeout 未超過」の注記「(exit があれば生存観測は行わない、の対偶として生存観測を経由する)」はそのまま成立するので触らない。`tick.md` で触れるのはこの5箇所だけで、他の行は対象外。
+- **変更内容（`run-wrapper.md`。B3）:** 異常系の**末尾**に1行追加する。前提条件「エージェントが非0で終了する / 同定情報一式を残せずに終える」／操作「ラッパー自身の終了コードを観測する」／期待結果「前者は 0(エージェントの終了コードは伝播せず、非0の値は `exit` ファイルだけが持つ)、後者は非0(起動引数が不正な場合も同じ)」。既存の異常系はどの行も終了コードを述べておらず、エージェントの exit をそのまま伝播するラッパーが全行を通ってしまう。台帳の新規行は `TC-exec-run-wrapper-028`（ステップ14）。
+- **理由:** テストケースが古い分類器の責務分割を述べていると、実装がどちらを担保すべきか読めなくなる。新設したフィールド・分岐・規約は、テスト層に降りて初めて「満たしていない実装が落ちる」形になる。
 
 ### 12. `spec/manual-tests/` を追従させる
 
@@ -256,7 +262,7 @@
 - **対象ファイル:** `spec/inventory/usecase.md`、`spec/inventory/test.md`
 - **変更内容:**
   - `usecase.md`: `UC-execution-001`（C5・notify の解釈と `NotifyFailureCause`。**報告先は経路ごとに異なることも要点に残す** — Tick は `errors`、AbortTask は `notify_warning`）、`UC-execution-002`（B4/B5/B8/B10/C2/C5/C6・サマリー11フィールドと `errors` の分類）、`UC-execution-003` / `UC-execution-004`（B7・`record_tool_failure` の引数型）、`UC-execution-005`（B8/B10）、`UC-execution-006`（B8/C3/C4 + **C6・`judge` 定義ありの枝の `MissingWorkspace` 検査**）、`UC-execution-008`（B8・AbortTask のエラーケース表の言い換えに対応。`notify_warning` の記述は変えない）、`UC-execution-009`（B3・終了コード）、`UC-task-001`（A5 + **A2・パースエラーの案内に解決先パスが出ること**）。`UC-execution-007`（手続きE の gc）は報告先が `gc_errors` であり `errors` の分類とは無関係なので**更新しない**。`最終同期` を更新する。
-  - `test.md`: `TC-task-register-task-015`（A1）、`TC-task-register-task-034`（A3）、`TC-port-task-repository-009` / `TC-port-task-repository-022` / **`TC-port-task-repository-028`（A6。ステップ8 で書き換えるアーカイブ側(58行)に対応する行。567行）**、**`TC-port-task-repository-026`（B8。ステップ8 で書き換える `spec/testcases/ports/task-repository.md:56` に対応する行で、A6 の 009 / 022 / 028 とは別件）**、`TC-exec-tick-022`（B8。ステップ11 で書き換える `spec/testcases/execution/tick.md:39` に対応）、**`TC-exec-tick-103`（C3。ステップ11 で書き換える `spec/testcases/execution/tick.md:203` に対応する行。365行。要点欄にも「RunningClassifier の2段規則」が写っている）**、**`TC-port-workflow-store-017`〜`029`（A2。ステップ10 で書き換える適合ケース13行に対応する 600〜612行。`Err(Parse(<変種>))` の記法を本体と同じ形にそろえ、017 には `resolved_from` の主張を加える）** の要点を書き換える。末尾に `TC-port-run-store-035`（B6）を追記する。`最終同期` を更新する。
+  - `test.md`: `TC-task-register-task-015`（A1）、`TC-task-register-task-034`（A3）、`TC-port-task-repository-009` / `TC-port-task-repository-022` / **`TC-port-task-repository-028`（A6。ステップ8 で書き換えるアーカイブ側(58行)に対応する行。567行）**、**`TC-port-task-repository-026`（B8。ステップ8 で書き換える `spec/testcases/ports/task-repository.md:56` に対応する行で、A6 の 009 / 022 / 028 とは別件）**、`TC-exec-tick-022`（B8。ステップ11 で書き換える `spec/testcases/execution/tick.md:39` に対応）、**`TC-exec-tick-103`（C3。ステップ11 で書き換える `spec/testcases/execution/tick.md:203` に対応する行。365行。要点欄にも「RunningClassifier の2段規則」が写っている）**、**`TC-exec-tick-068`（B5。ステップ11 で足す `confirmed_running` への記録）**、**`TC-exec-tick-087`（C2。ステップ11 で足す `judged` への記録）**、**`TC-port-workflow-store-017`〜`029`（A2。ステップ10 で書き換える適合ケース13行に対応する 600〜612行。`Err(Parse(<変種>))` の記法を本体と同じ形にそろえ、017 には `resolved_from` の主張を加える）** の要点を書き換える。末尾に `TC-port-run-store-035`（B6）、**`TC-exec-tick-160`（C6b。ステップ11 で足す手続きD 異常系の新規ケース）**、**`TC-exec-run-wrapper-028`（B3。ステップ11 で足す run-wrapper 異常系の新規ケース）** を追記する。`最終同期` を更新する。
 - **理由:** テストケースの台帳は spec/testcases の写しであり、本体だけ直すと2つの記述が残る。
 
 ### 15. `spec/inventory/adapter.md` を追従させる
@@ -278,9 +284,9 @@
   - `port.rs`: `Parse(WorkflowParseError)`（82行付近）を `Parse { error: WorkflowParseError, resolved_from: PathBuf }` に改める。doc に「解決先を構造として持つ — `--workflow` を名前で指定した場合、利用者が直接書いていないパスを案内できるのはポート側だけ」を書く。`PathBuf` は3行目で import 済み。
   - `adapter/workflow_store.rs`: 構築3箇所（72〜79行の `yaml::parse_document` の失敗、`decode`、`WorkflowAssembler::assemble`）を新しい形にする。`map_err(WorkflowLoadError::Parse)` の関数参照（78 / 79行）は `resolved` を添えるクロージャになる。
   - `adapter/workflow_store.rs`: **`parse_document` 失敗アーム（74行）の `at(&resolved, &error.message)` をやめ、`message` を原因のみにする。** `Parse` が `resolved_from` を持ち `render.rs` が必ずそれを出すようになるため、前置を残すと同じパスが1つの案内に2回現れる（ステップ1 の設計判断・adr.md ADR-005）。あわせて `at()` の doc（105〜106行）から `WorkflowParseError::YamlSyntax` の記述を外し、利用者を `read_error` の `WorkflowLoadError::Io` だけにする。
-    - 前置を外しても既存テストは通る: 受け入れテスト `crates/pulsen/tests/cli_add_error.rs`（197 / 207行）は `["YAML 構文エラー", "位置:", "行"]` の3語しか見ず、適合スイート（`crates/pulsen-conformance/src/workflow_store.rs:435-437`）も `message` の非空と `location` の存在しか主張していない。
-  - `cli/render.rs`: `workflow_load_error`（525行）の `Parse` アームで `resolved_from` を案内に出す（`NotFound { attempted }`（529行）と同じ「解決を試みたパス」の見せ方に揃える）。
-  - `pulsen-conformance/src/workflow_store.rs`: ヘルパー `expect_parse_error`（846行）を `(WorkflowParseError, PathBuf)` を返す形に改め、4つの match アーム（756〜856行付近）を新しい変種の形に追従させる。**`tc_port_workflow_store_017`（434行付近）で `resolved_from == harness.expected_path_for_name("wf")` を1回だけ主張する**（`require!` で skip 予算に載せる。既定実装は `None`）。適合ケースの本数は増やさない。
+    - 前置を外しても既存テストは通る: 変更前の受け入れテスト `crates/pulsen/tests/cli_add_error.rs`（197 / 207行）は `["YAML 構文エラー", "位置:", "行"]` の3語しか見ず、適合スイート（`crates/pulsen-conformance/src/workflow_store.rs:435-437`）も `message` の非空と `location` の存在しか主張していない。裏を返すと**外した後の形を守る主張も無い**ので、受け入れテストには解決先パスを4語目として足し、適合スイートには「`message` に前置しない」を足す。
+  - `cli/render.rs`: `workflow_load_error`（525行）の `Parse` アームで `resolved_from` を案内に出す（`NotFound { attempted }`（529行）と同じ「解決を試みたパス」の見せ方に揃える）。あわせてユニットテスト `解釈できない定義は読んだパスを一度だけ添えて案内される` を足し、案内にパスが出ることと**1つの案内に2回現れない**ことを固定する（案内を消しても二重にしても既存テストは緑のままで、A2 の成果を守る主張がどこにも無い）。
+  - `pulsen-conformance/src/workflow_store.rs`: ヘルパー `expect_parse_error`（846行）を `(WorkflowParseError, PathBuf)` を返す形に改め、4つの match アーム（756〜856行付近）を新しい変種の形に追従させる。**`tc_port_workflow_store_017`（434行付近）で `resolved_from` が `harness.expected_path_for_name("wf")` と一致すること・絶対パスであること・`message` に前置されていないことを主張する**。解決先に依存する主張だけを `if let Some(..)` で条件化し、`YamlSyntax` の分類と位置の主張は無条件に走らせる（ケース全体を `require!` で落とすと、フックを持たないハーネスが「017 をスキップ宣言する＝`YamlSyntax` の適合確認を丸ごと手放す」二択になる）。適合ケースの本数は増やさない。
   - `HOOKS.md`: `TC-port-workflow-store-017` の行（140行）の「組み立て手段」を `put_named` から `put_named + expected_path_for_name（resolved_from の期待値）` に改める。冒頭が「フックを足すときはこの表も更新する」を規約として宣言しており（`.adr/1-port-conformance-suite-and-harness-hooks.md`）、放置すると表が嘘になる。区分は B のままで件数（`## WorkflowStore（31行 / A 0・B 30・C 1）`・冒頭196行）は変わらない。
 - **理由:** Issue 本文が「ポート表は spec が確定させており、実装側では変えていない」と述べているとおり、実装が現在の形なのは Issue #1 の受け入れ基準（ポート表との1:1一致）を守った結果にすぎない。ポート表を直したステップ1 のあと、この追従を欠くと spec と実装の乖離が1件残る。適合スイートに1主張を足すのは、契約にフィールドが増えたのに適合ケースが1件もそれを検証しない状態を避けるため（B6 で採った扱いと対称）。
 
@@ -288,11 +294,11 @@
 
 - **対象ファイル:** `crates/pulsen-domain/src/execution/notification.rs`、`crates/pulsen-domain/src/execution/mod.rs`、`crates/pulsen/src/application/tick/mod.rs`、`crates/pulsen/src/application/tick/notify.rs`、`crates/pulsen/src/cli/render.rs`
 - **変更内容:**
-  - `notification.rs`: `NotifyOutcome::Failed { detail: String }` を `Failed { cause: NotifyFailureCause }` にし、`NotifyFailureCause = ExitedNonZero { exit: ExitCode } | TimedOut | FailedToStart { message: String }` を加える。`interpret_notify_completion` の3つの `format!`（43 / 46 / 52行）を分類の構築に置き換える（完成文言はドメインから消える）。ユニットテスト `通知の失敗の3つの原因は説明から判別できる`（122行）を、文言の差ではなく変種の判別で主張する形に書き換え、テストヘルパー `detail_of`（76行）を落とす。`NOTIFY_TIMEOUT` の doc コメント（32行）は残す（timeout を置く理由であり C5 の対象ではない）。
+  - `notification.rs`: `NotifyOutcome::Failed { detail: String }` を `Failed { cause: NotifyFailureCause }` にし、`NotifyFailureCause = ExitedNonZero { exit: ExitCode } | TimedOut | FailedToStart { message: String }` を加える。`interpret_notify_completion` の3つの `format!`（43 / 46 / 52行）を分類の構築に置き換える（完成文言はドメインから消える）。ユニットテスト `通知の失敗の3つの原因は説明から判別できる`（122行）を、文言の差ではなく変種の判別で主張する形に書き換える（名前も主張に合わせて `通知の失敗の3つの原因は分類として判別できる` にする）。テストヘルパー `detail_of`（76行）を落とす。`NOTIFY_TIMEOUT` の doc コメント（32行）は残す（timeout を置く理由であり C5 の対象ではない）。
   - `execution/mod.rs`: 18行の再エクスポートを `pub use notification::{NotificationService, NotifyFailureCause, NotifyOutcome};` に改める。`mod notification;`（9行）は非公開のままなので、これを広げないと `application` / `cli` から `NotifyFailureCause` を名指しできずコンパイルが通らない。
   - `tick/mod.rs`: `TickIssue::NotifyFailed { task_id, message: String }`（203行）を `NotifyFailed { task_id, cause: NotifyFailureCause }` にする。
   - `tick/notify.rs`: `Delivery::Attempted(NotifyOutcome::Failed { detail })` の2アームと `report_failure` を `cause` を運ぶ形にする。
-  - `cli/render.rs`: `TickIssue::NotifyFailed` の文言（246行付近）を `cause` の網羅 `match` から組み立てる。`TimedOut` の秒数は `NotificationService::NOTIFY_TIMEOUT` を読む。見出しの振り分け（`issue_outcome`、132行付近）は `NotifyFailed { .. }` で受けているため変更しない。
+  - `cli/render.rs`: `TickIssue::NotifyFailed` の文言（246行付近）を `cause` の網羅 `match` から組み立てる。`TimedOut` の秒数は `NotificationService::NOTIFY_TIMEOUT` を読む。見出しの振り分け（`issue_outcome`、132行付近）は `NotifyFailed { .. }` で受けているため変更しない。あわせてユニットテスト `通知できなかった原因は3つが区別できる形で示される` を足す — 文言をドメインから外すと3分類が利用者から区別できることを守る主張が消え、兄弟の `RunFailureCause` / `RemnantsLeft` にある同型のテストと非対称になる。
   - 結合テスト（`crates/pulsen/tests/tick_notify.rs:356`、`tick_scan.rs:546`）は `NotifyFailed { .. }` で受けているため変更を要さない。変更が要る場合は「文言に依存したテスト」なので、その依存自体を外す。
 - **理由:** `.adr/2-transition-error-holds-classification-only.md` が「表示専用のエラーは分類だけを持つ」を一般規則として宣言しており、`NotifyOutcome::Failed.detail` は帳簿に残らず `cli::render` にしか流れないので、この規則が効く側である（対称に見える `JudgeConclusion::JudgeFailure { detail }` は `last_failure` として永続化されるため `.adr/2-persisted-explanations-come-from-domain-describe.md` が効く側で、性質が違う）。`.adr/3-notification-procedure-layering.md` の代替案節が「分類化は spec 追従の提起に回す」と本 Issue を反映先に名指ししているため、ここで反映しないと同じ判断が3回目の Issue へ持ち越される。
 
@@ -330,7 +336,7 @@
     | 12 | `grep -rn 'Parse(' spec/` | 28 | A2（本体1 + 台帳1 + 適合ケース13 + 台帳13） |
 
   - `spec/inventory/*.md` の新規行 ID がグループ内で一意かつ最大番号 + 1 であること、既存 ID が1つも変わっていないこと、5ファイルすべての `最終同期` が更新されていることを確認する。
-  - `git diff --name-only crates/` に現れるのが AC-Z3 の9ファイルだけであること（A2 / C5 以外の実装変更が混ざっていないこと）を確認する。`crates/pulsen-conformance/HOOKS.md` の件数（冒頭196行・各節の見出し）は据え置きで、変わるのは `TC-port-workflow-store-017` の「組み立て手段」の1セルだけであることも確認する。
+  - `git diff --name-only crates/` に現れるのが AC-Z3 の14ファイルだけであること（A2 / C5 の外へ**振る舞い**が波及していないこと。追加の5件はいずれも doc とテストの主張の訂正）を確認する。`crates/pulsen-conformance/HOOKS.md` の件数（冒頭196行・各節の見出し）は据え置きで、変わるのは `TC-port-workflow-store-017` の「組み立て手段」の1セルだけであることも確認する。
   - **C5 の完成文言がドメインから消えたことを確認する。** `grep -rnE '通知コマンドが終了コード|秒のうちに終了しませんでした|通知コマンドを起動できませんでした' crates/pulsen-domain/`（現在3件）と `grep -rn 'detail' crates/pulsen-domain/src/execution/notification.rs`（現在9件）がいずれも0件になること。`grep -rn '通知コマンドが' crates/pulsen-domain/` は使わない — `notification.rs:32` の `NOTIFY_TIMEOUT` の存在理由を述べる doc コメントを拾い、正しく実装しても1件残る（この doc は `.adr/2026-08-11-notify-cmd-timeout.md` 由来の why であり C5 が消す対象ではない）。
   - **A2 の前置が二重表示になっていないことを確認する。** `grep -n 'at(' crates/pulsen/src/adapter/workflow_store.rs` の呼び出し元が `read_error`（`Io`）の1箇所だけになること（AC-A2b）。
   - `cargo fmt --check` / `cargo clippy` / `cargo test` を実行して通ることを確認する。

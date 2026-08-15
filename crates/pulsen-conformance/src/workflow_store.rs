@@ -419,9 +419,9 @@ statuses:
 pub fn tc_port_workflow_store_017_構文エラーと重複キーは位置つきで拒否される(
     harness: &impl WorkflowStoreHarness,
 ) -> CaseOutcome {
-    // 解決先はパースの失敗でも構造化フィールドで示される。名前解決の期待値を持つ
-    // アダプターだけが主張できるため、他のフックと同じく冒頭で skip 予算に載せる。
-    let expected = require!(harness.expected_path_for_name("wf"));
+    // 解決先の一致は名前解決の期待値を持つアダプターだけが主張できる。この行の主題は
+    // 構文エラーの分類なので、ケース全体ではなく解決先に関する主張だけを条件にする。
+    let expected = harness.expected_path_for_name("wf");
 
     for text in [
         "initial: [\n",
@@ -440,14 +440,18 @@ statuses:
             WorkflowParseError::YamlSyntax { message, location } => {
                 assert!(!message.is_empty());
                 assert!(location.is_some(), "テキスト上の位置を伴う");
-                assert!(
-                    !message.contains(&expected.display().to_string()),
-                    "解決先は構造化フィールドで示し、メッセージには前置しない"
-                );
+                if let Some(expected) = &expected {
+                    assert!(
+                        !message.contains(&expected.display().to_string()),
+                        "解決先は構造化フィールドで示し、メッセージには前置しない"
+                    );
+                }
             }
             other => panic!("YamlSyntax として拒否される: {other:?}"),
         }
-        assert_eq!(resolved_from, expected);
+        if let Some(expected) = &expected {
+            assert_eq!(&resolved_from, expected);
+        }
         assert!(resolved_from.is_absolute(), "案内に使える絶対パスを返す");
     }
     CaseOutcome::Ran

@@ -17,7 +17,8 @@ use super::wire::{self, WireError};
 
 /// `wrapper` の失敗。
 ///
-/// いずれの場合も run ディレクトリには何も書かれない。
+/// いずれの場合もエージェントは起動されず、実行の結末(`exit`)は残らない。引数と結線の
+/// 失敗では run ディレクトリに何も書かれず、`NothingRecorded` は starttime だけが残りうる。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WrapperError {
     /// `--run-dir` が絶対パスではない。
@@ -28,7 +29,7 @@ pub enum WrapperError {
     InvalidAgentCommand(CommandError),
     /// アダプターの結線で失敗した。
     Wire(WireError),
-    /// 同定情報を残せず、何も書かずに終えた。
+    /// 同定情報一式を残せずに終えた(starttime だけが残ることはある)。
     NothingRecorded {
         /// 対象の run ディレクトリ。
         run_dir: PathBuf,

@@ -1,6 +1,6 @@
 # Inventory — domain
 
-生成元: spec/domains/(最終同期: 2026-08-15)
+生成元: spec/domains/(最終同期: 2026-08-16)
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
@@ -136,7 +136,7 @@
 | DOM-execution-001 | ExitCode 値オブジェクト | spec/domains/execution.md#exitcode | i32の終了結果符号化値(正常終了はexit code、シグナル等は128+シグナル番号、起動不能は127/126)を保持する |
 | DOM-execution-002 | ExitCode.is_success ドメイン関数 | spec/domains/execution.md#exitcode | 値が0かどうかを判定する |
 | DOM-execution-003 | PidFileContent 値オブジェクト | spec/domains/execution.md#pidfilecontent | `pid`/`kill_ident`を保持し、starttime→pidの書き込み順序によりtickが同定情報一式の完了とみなす出現シグナルになる |
-| DOM-execution-004 | JudgeOutcome 値オブジェクト | spec/domains/execution.md#judgeoutcome-judgeconclusion | `Completed`/`Failed`/`Skipped`の3値直和型(Skippedは判定コマンドでのみ生じる)。デフォルト判定の2値`DefaultJudgement`は`From`で埋め込まれる |
+| DOM-execution-004 | JudgeOutcome 値オブジェクト | spec/domains/execution.md#judgeoutcome-judgeconclusion | `Completed`/`Failed`/`Skipped`の3値直和型。3値のまま残るのは判定コマンドの exit 20(`interpret_judge_completion`)が`Skipped`を生むため。`From<DefaultJudgement> for JudgeOutcome`は2値が3値に含まれることを型で示す変換 |
 | DOM-execution-005 | JudgeConclusion 値オブジェクト | spec/domains/execution.md#judgeoutcome-judgeconclusion | `Outcome(JudgeOutcome)`/`JudgeFailure{detail}`の2種で判定自体の壊れを区別する |
 | DOM-execution-006 | LaunchingDecision 値オブジェクト | spec/domains/execution.md#分類の決定直和型 | `ConfirmRunning(ProcessIdent)`/`KeepWaiting`/`SuspectSpawnFailure`の3値でlaunching分類結果を表現する |
 | DOM-execution-007 | LaunchingRecheck 値オブジェクト | spec/domains/execution.md#分類の決定直和型 | `ConfirmRunning(ProcessIdent)`/`SpawnFailed`の2値でマーカー書き込み後の再確認結果を表現する |
@@ -214,7 +214,7 @@
 | DOM-task-080 | ToolFailureKind 値オブジェクト | spec/domains/task.md#failurenote | `WorktreeCreate`/`WorktreeRemove`/`ArchiveMove` の3値直和型。`record_tool_failure` の引数を絞り、記録時に `FailureKind` へ写す |
 | DOM-task-081 | RunDirPath.state_root ドメイン関数 | spec/domains/task.md#rundirpath | パスから `attempt-<n>` と task-id を読み、`derive` で組み直した結果が自身と一致する場合にのみ `Some(StateRoot)` を返す(config もホームも読まないラッパーが `RunStore` を組むために使う) |
 | DOM-execution-072 | AliveDecision 値オブジェクト | spec/domains/execution.md#分類の決定直和型 | `KeepRunning`/`KillOnTimeout`/`DiedWithoutExit` の3値。`RunningDecision` から `Judge` を除いた型で、`From<AliveDecision> for RunningDecision` により合流する |
-| DOM-execution-073 | DefaultJudgement 値オブジェクト | spec/domains/execution.md#judgeoutcome-judgeconclusion | `Completed`/`Failed` の2値。`Skipped` は判定コマンドの exit 20 だけが生むため、デフォルト判定の返り値型から除かれる。`From<DefaultJudgement> for JudgeOutcome` で埋め込む |
+| DOM-execution-073 | DefaultJudgement 値オブジェクト | spec/domains/execution.md#judgeoutcome-judgeconclusion | `Completed`/`Failed` の2値。`Skipped` は判定コマンドの exit 20 だけが生むため、デフォルト判定の返り値型から除かれる。この経路の結末は2値のまま写す |
 | DOM-execution-074 | NotifyOutcome 値オブジェクト | spec/domains/execution.md#notificationservice | `Delivered`/`Failed{cause:NotifyFailureCause}` の2分岐。`Delivered` だけが `notified_at` を書く根拠になる(at-least-once)ため、`Failed` を平坦化しない |
 | DOM-execution-075 | NotificationService.interpret_notify_completion ドメイン関数 | spec/domains/execution.md#notificationservice | `Exited(0)` を `Delivered`、非0終了 / `TimedOut` / `FailedToStart` を `Failed{cause}` に解釈する。原因は分類として持ち完成文言は持たない(文言は CLI 層が組み立てる) |
 | DOM-execution-076 | NotifyFailureCause 値オブジェクト | spec/domains/execution.md#notificationservice | `ExitedNonZero{exit}`/`TimedOut`/`FailedToStart{message}` の3値。`TimedOut` は組み込み定数 `NOTIFY_TIMEOUT` の1つに定まるためフィールドを持たない |

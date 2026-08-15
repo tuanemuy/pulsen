@@ -150,7 +150,7 @@ EOF
      grep -rn 'Parse(' spec/                                             # 実装前 28
      ```
   2. `.thread/9/research.md`「波及の洗い出し」の表の全行について、`git diff --name-only spec/` に「spec 本体」列と「台帳」列の両方のファイルが現れることを確認する。
-  3. 「対応なし」で確定させた2行（`DOM-definition-050` / `UC-execution-007`）が research.md の注3・`RegistrationValidator` 行にその旨とともに書かれていることを確認する。
+  3. 「対応なし」で確定させた4行（`DOM-definition-050` / `UC-execution-007` / `DOM-execution-028`〜`033` / `PAGE-wrapper-005`）が research.md の `RegistrationValidator` 行・注3・注6・注7 にその旨とともに書かれていることを確認する。
 - **期待結果:**
   - 手順1: 12コマンドすべて**ヒット0件**（`grep` の終了コードは1）。
   - 手順2: 波及表の全行が本体・台帳の両方で消化されている。片側だけのファイルしか現れない行が無い。
@@ -180,13 +180,13 @@ EOF
        diff <(git show "origin/main:$f" | ids) <(ids < "$f")
      done
      ```
-  3. 新規 ID が各グループの最大番号 + 1 であることを確認する（`.thread/9/research.md`「台帳の新規 ID」の11行）。
+  3. 新規 ID が各グループの最大番号 + 1 であることを確認する（13件。実装前の各グループの最大は `DOM-definition-056` / `DOM-task-079` / `DOM-execution-071` / `PAGE-wrapper-005` / `PAGE-tick-009` / `TC-port-run-store-034` / `TC-exec-tick-159` / `TC-exec-run-wrapper-027`）。
 
      ```sh
      grep -n 'DOM-definition-057\|DOM-task-080\|DOM-task-081' spec/inventory/domain.md
      grep -n 'DOM-execution-07[23456]' spec/inventory/domain.md
      grep -n 'PAGE-wrapper-006\|PAGE-tick-010' spec/inventory/frontend.md
-     grep -n 'TC-port-run-store-035' spec/inventory/test.md
+     grep -n 'TC-port-run-store-035\|TC-exec-tick-160\|TC-exec-run-wrapper-028' spec/inventory/test.md
      ```
   4. `最終同期` の日付が5ファイルすべてで更新されていることを確認する。
 
@@ -195,28 +195,30 @@ EOF
      ```
 - **期待結果:**
   - 手順1: 5ファイルとも**出力なし**（重複ゼロ）。実装前の行数は adapter 37 / domain 206 / frontend 83 / test 629 / usecase 23 で、いずれも重複は無い。
-  - 手順2: `diff` の出力が**末尾への追加（`>` 行）だけ**。既存 ID の削除（`<` 行）や順序の入れ替わりが1件も無い。追加されるのは domain 8行・frontend 2行・test 1行の計11行で、`usecase.md` / `adapter.md` には新規行が無い。
-  - 手順3: 11個の新規 ID がすべて1件ずつヒットし、各ファイルの**表の末尾**にある。
+  - 手順2: `diff` の出力が**末尾への追加（`>` 行）だけ**。既存 ID の削除（`<` 行）や順序の入れ替わりが1件も無い。追加されるのは domain 8行・frontend 2行・test 3行（`TC-port-run-store-035` / `TC-exec-tick-160` / `TC-exec-run-wrapper-028`）の計13行で、`usecase.md` / `adapter.md` には新規行が無い。
+  - 手順3: 13個の新規 ID がすべて1件ずつヒットし、各ファイルの**表の末尾**にある。
   - 手順4: 5ファイルすべてが実装前の `2026-08-11` から更新されている。
-- **確認ポイント:** 手順2 が「末尾への追加だけ」であることが、`spec/testcases/` の表に行を挿入していないことの裏付けになる（ステップ9 の `TC-port-run-store-035` とステップ10 の適合ケース13行が、それぞれ末尾追加・行数不変であること）。要点欄だけを書き換えた行は ID が変わらないので、この `diff` には現れない。
+- **確認ポイント:** 手順2 が「末尾への追加だけ」であることが、`spec/testcases/` の表に行を挿入していないことの裏付けになる（ステップ9 の `TC-port-run-store-035` とステップ11 の新規ケース2行（`tick.md` 手続きD 異常系・`run-wrapper.md` 異常系）がいずれも表の末尾への追加であり、ステップ10 の適合ケース13行は行数不変であること）。要点欄だけを書き換えた行は ID が変わらないので、この `diff` には現れない。
 
 ### 3. `.adr/` の3ファイルが更新され、古い形が残っていない
 
 - **対応する受け入れ基準:** AC-Z4
 - **目的:** Issue の完了条件が「実装を直す判断になったものは、対応する `.adr/` エントリも更新する」と明示している。更新しないと、`.adr/` を根拠に読む後続の実装者が「現行の形（回避策・`detail`）が正しい」と読み続ける。追記だけで済ませると、同じ節に新旧2つの形が並ぶ。
 - **手順:**
-  1. `git diff --name-only .adr/`
+  1. `( git diff --name-only origin/main...HEAD -- .adr/; git diff --name-only -- .adr/ ) | sort -u`
   2. `grep -n 'Failed { detail }' .adr/3-notification-procedure-layering.md`
   3. `grep -n 'Failed { cause' .adr/3-notification-procedure-layering.md`
   4. `grep -n 'resolved_from\|Issue #9' .adr/1-workflow-error-file-path-goes-into-free-form-messages.md .adr/1-schema-error-location-is-logical.md`
   5. `git diff origin/main -- .adr/` を読み、`.adr/1-schema-error-location-is-logical.md` の「`location` を論理位置に限る」決定本体が消えていないことを見る。
+  6. `head -6 .adr/1-workflow-error-file-path-goes-into-free-form-messages.md` でタイトルとステータスを読み、決定節が決定時点の文面のままであることを `git diff origin/main -- .adr/1-workflow-error-file-path-goes-into-free-form-messages.md` で見る。
 - **期待結果:**
-  - 手順1: **3ファイルだけ**が現れる（`1-workflow-error-file-path-goes-into-free-form-messages.md` / `1-schema-error-location-is-logical.md` / `3-notification-procedure-layering.md`）。
+  - 手順1: **5ファイル**が現れる。うち3ファイルが AC-Z4 の対象（`1-workflow-error-file-path-goes-into-free-form-messages.md` / `1-schema-error-location-is-logical.md` / `3-notification-procedure-layering.md`）、残り2ファイル（`1-task-file-json-and-corrupt-classification.md` / `2-transition-error-holds-classification-only.md`）は**旧文面を現行として引用していた箇所を引用と読める形に直したもの**で、決定そのものは変えていない（plan.md「含まれないもの」）。新規ファイルは1つも現れない。
   - 手順2: **ヒット0件**。実装前は決定節29行と影響節47行の2件ある。
   - 手順3: 決定節に `Failed { cause: NotifyFailureCause }` がある。
   - 手順4: 2ファイルとも、`Parse { resolved_from }` の新設で前提が変わったことが読める（前置に残るのは `Io { message }` だけであること、スキーマ違反の案内にパスが出ない旨のトレードオフが解消済みであること）。
   - 手順5: `location` を論理位置に限る決定そのものは有効なまま残っている（ADR を無効化するのではなく前提の変化を書き足す形）。
-- **確認ポイント:** 手順2 が0件であることが、`.adr/` の同じ節に `Failed { detail }` と `Failed { cause }` が並ばないことの機械的な保証。`.thread/3/adr.md` の未昇格 ADR（`judged` / `AlreadyNotified`）が `.adr/` へ昇格していないこと — これはスコープ外で、手順1 が3ファイルに収まることで見る。
+  - 手順6: タイトルに `(置き換え済み)`、ステータスに `置き換え済み(Issue #9)` と置き換え後の形があり、**決定節と代替案節は決定時点の文面のまま**で、どの代替案を採ったか・退けた理由がなぜ成立しなくなったかは影響節が述べている。
+- **確認ポイント:** 手順2 が0件であることが、`.adr/` の同じ節に `Failed { detail }` と `Failed { cause }` が並ばないことの機械的な保証。手順5・手順6 が見ているのは `.thread/9/adr.md` ADR-006 の規則で、**置き換え**（決定節は当時のまま・Status と影響節が置き換えを述べる）と**改訂**（決定本体が生きているので該当箇所を現行へ書き換える）が Status から区別できること。`.thread/3/adr.md` の未昇格 ADR（`judged` / `AlreadyNotified`）が `.adr/` へ昇格していないこと — これはスコープ外で、手順1 に新規ファイルが現れないことで見る。
 
 ### 4. A2 — 名前指定のワークフロー定義が YAML 構文エラーのとき、解決先の絶対パスが**1回だけ**出る
 
@@ -283,7 +285,7 @@ EOF
   - 手順2: `at()` の doc から `WorkflowParseError::YamlSyntax` の記述が外れ、利用者が `Io` だけであることが読める。
   - 手順3: 構築側が `Parse { error, resolved_from }` の形になっており、タプル記法 `Parse(...)` が残っていない。
   - 手順4: `render.rs` の `Parse` アームが `resolved_from` を案内に出している。
-  - 手順5: `HOOKS.md` の `TC-port-workflow-store-017` の「組み立て手段」が `put_named + expected_path_for_name（…）` になっており、`tc_port_workflow_store_017` が `harness.expected_path_for_name("wf")` との一致を1回だけ主張している。
+  - 手順5: `HOOKS.md` の `TC-port-workflow-store-017` の「組み立て手段」欄に `expected_path_for_name` が現れ、「そのフックがあれば `resolved_from` の一致と `message` に前置しないことも観測し、無ければその2主張だけを飛ばす。行の主張である `YamlSyntax` の分類と位置は常に観測する」と読める。`tc_port_workflow_store_017` は `harness.expected_path_for_name("wf")` をケース先頭で取り、**解決先に関する主張だけを `if let Some(..)` で条件化**している（ケース全体を `require!` で落とすと、フックを持たないハーネスでは `YamlSyntax` の適合確認まで一緒に消える）。
 - **確認ポイント:** 手順1 が1箇所であることが、確認項目4・5 の「1回だけ」を構造として保証する条件。`Io { message }` の前置を**外さない**こと — `Io` は解決先を構造として持たず、CLI 側も解決先を知らないため、前置以外に案内する場所が無い（変種ごとの個別判断ではなく「構造化フィールドで示せるなら前置しない」という規則の帰結）。`HOOKS.md` の件数（冒頭の196行・`## WorkflowStore（31行 …）`）が動いていないこと — 変わるのは組み立て手段のセル1つだけ。
 
 ### 7. C5 — 通知コマンドの3つの失敗原因が、区別できるメッセージとして出る
@@ -362,21 +364,28 @@ EOF
   - 手順5: `cli/render.rs` が `cause` の網羅 `match` から文言を組み立てており、`TimedOut` の秒数を `NotificationService::NOTIFY_TIMEOUT` から読んでいる。見出しの振り分け（`issue_outcome`）は `NotifyFailed { .. }` で受けたまま。
 - **確認ポイント:** 手順1 に `grep -rn '通知コマンドが' crates/pulsen-domain/` を**使わない**こと — `notification.rs` の `NOTIFY_TIMEOUT` の doc コメントを拾い、正しく実装しても1件残る（この doc は `.adr/2026-08-11-notify-cmd-timeout.md` 由来の why）。`FailedToStart` の文言は「通知コマンド**を**起動できませんでした」なので、助詞違いで取りこぼさないこと。`NotifyOutcome` を4変種に平坦化していないこと（`Delivered` / `Failed` の2分岐が at-least-once の規則そのもの）。
 
-### 9. `crates/` の変更が A2 / C5 の9ファイルに閉じている
+### 9. `crates/` の変更が A2 / C5 と、その2件が偽にした記述の訂正の14ファイルに閉じている
 
 - **対応する受け入れ基準:** AC-Z3
-- **目的:** 23件は「実装が正しい」と決着させた件なので、`crates/` に1行も差分が出てはならない。範囲を機械的に確認できる形にしておく。
+- **目的:** 23件は「実装が正しい」と決着させた件なので、`crates/` に**振る舞い**の差分が出てはならない。範囲を機械的に確認できる形にしておく。基準はファイル数の維持ではなく「A2 / C5 の外へ振る舞いを波及させない」ことなので、doc コメントとテストの主張の訂正は数に含める。
 - **手順:**
-  1. `git diff --name-only crates/`（コミット済みなら `git diff --name-only origin/main...HEAD -- crates/`）
-  2. `git diff --stat crates/pulsen-conformance/HOOKS.md`
-  3. `git diff --name-only spec/ .adr/ .thread/`
+  1. コミット済みと未コミットの和集合を見る。
+
+     ```sh
+     ( git diff --name-only origin/main...HEAD -- crates/; git diff --name-only -- crates/ ) | sort -u
+     ```
+  2. `git diff --stat origin/main -- crates/pulsen-conformance/HOOKS.md`
+  3. `git diff --name-only origin/main -- crates/pulsen/tests/`
+  4. `git diff --name-only origin/main -- spec/ .adr/ .thread/`
 - **期待結果:**
-  - 手順1: **次の9ファイルだけ**が現れる。
+  - 手順1: **次の14ファイルだけ**が現れる。
     - A2（5）: `crates/pulsen-domain/src/definition/port.rs` / `crates/pulsen/src/adapter/workflow_store.rs` / `crates/pulsen-conformance/src/workflow_store.rs` / `crates/pulsen-conformance/HOOKS.md` / （`crates/pulsen/src/cli/render.rs` は C5 と共有）
     - C5（5）: `crates/pulsen-domain/src/execution/notification.rs` / `crates/pulsen-domain/src/execution/mod.rs` / `crates/pulsen/src/application/tick/mod.rs` / `crates/pulsen/src/application/tick/notify.rs` / `crates/pulsen/src/cli/render.rs`
+    - A2 / C5 が偽にした記述の訂正（5）: `crates/pulsen-conformance/src/lib.rs`（`expected_path_for_name` の doc に 017 を足す）/ `crates/pulsen/src/adapter/task_file.rs`（doc の `TransitionError::InvariantViolated` は B8 で消えた変種名）/ `crates/pulsen/tests/cli_add_error.rs`（TC-022 の期待語に解決先パスを足す）/ `crates/pulsen/src/application/run_wrapper.rs` / `crates/pulsen/src/cli/wrapper.rs`（B3。doc の「何も書き残さず終わる」は starttime が先に書かれるため偽）
   - 手順2: `HOOKS.md` の差分は**1行の変更のみ**（`TC-port-workflow-store-017` の「組み立て手段」のセル）。冒頭の合計196行と `## RunStore` 節の件数は動いていない。
-  - 手順3: `spec/` 側の差分が25件の追従に限られ、ついでのリファクタリング・Markdown の整形が混ざっていない。
-- **確認ポイント:** `crates/pulsen/tests/` に差分が無いこと — 結合テスト（`tick_notify.rs` / `tick_scan.rs`）は `TickIssue::NotifyFailed { .. }` で受けており、受け入れテスト `cli_add_error.rs` は `["YAML 構文エラー", "位置:", "行"]` の3語しか見ていないため、いずれも変更を要さない。もし変更が要るなら、それは「文言に依存したテスト」であり、その依存自体を外すのが正しい。`crates/pulsen-conformance/src/run_store.rs` に差分が無いこと — `TC-port-run-store-035` の適合スイート実装は後続スライスに残す（plan.md スコープ）。
+  - 手順3: `crates/pulsen/tests/` の差分は **`cli_add_error.rs` の1ファイルだけ**。
+  - 手順4: `spec/` 側の差分が25件の追従に限られ、ついでのリファクタリング・Markdown の整形が混ざっていない。
+- **確認ポイント:** 手順3 の `cli_add_error.rs` の差分が **TC-022 の期待語に解決先パスを足した1件に限る**こと（`reject` / `reject_resolved` のヘルパー整理を含む。他のテストの期待語は1つも変わらない）。結合テスト `tick_notify.rs` / `tick_scan.rs` は `TickIssue::NotifyFailed { .. }` で受けているため差分が出ない。A2 は前置を外して案内の形を変えるので、**受け入れテストが変わること自体は退行ではない** — 変えてよいのは「A2 が新たに守るべきにした形」を主張に足す方向だけで、既存の主張を弱める向きの変更（期待語を減らす・条件を緩める）が混ざっていないことを差分で見る。`crates/pulsen-conformance/src/run_store.rs` に差分が無いこと — `TC-port-run-store-035` の適合スイート実装は後続スライスに残す（plan.md スコープ）。
 
 ### 10. ツールチェーンが通る
 
@@ -390,8 +399,8 @@ EOF
   5. 手順3 の出力から `SKIP ` を含む行を拾い、変更前と同じ集合であることを見る。
 - **期待結果:**
   - 手順1〜4: 4つとも緑（手順1 は差分なしで exit 0、手順4 は警告0）。
-  - 手順3: `crates/pulsen-domain/src/execution/notification.rs` のユニットテスト `通知の失敗の3つの原因は説明から判別できる` が、完成文言の差ではなく `NotifyFailureCause` の変種の判別で通る。
-  - 手順5: `SKIP` 行の集合が変わっていない。`tc_port_workflow_store_017` が新たにスキップされない（唯一のハーネス実装 `crates/pulsen/tests/conformance_workflow_store.rs` が `expected_path_for_name` を `Some` で返すため、`require!` を足してもスキップは発生せず `allowed_skips` の変更も要らない）。
+  - 手順3: 全テストが緑。`crates/pulsen-domain/src/execution/notification.rs` のユニットテスト `通知の失敗の3つの原因は分類として判別できる` が、完成文言の差ではなく `NotifyFailureCause` の変種の判別で通る。A2 / C5 が新たに守るべきにした形を主張する `cli::render::tests::解釈できない定義は読んだパスを一度だけ添えて案内される` と `cli::render::tests::通知できなかった原因は3つが区別できる形で示される` の2件も走っている。
+  - 手順5: `SKIP` 行の集合が変わっていない。`tc_port_workflow_store_017` が新たにスキップされない（解決先に関する主張だけを `expected_path_for_name` の有無で条件化しており、ケース自体は常に `Ran` を返すため。`allowed_skips` の変更も要らない）。
 - **確認ポイント:** 手順4 の `--all-targets` を省かないこと（テストターゲットもここで初めて lint に掛かる）。ローカルの rustfmt は nixpkgs 同梱で CI の現行 stable と版が違うため、手順1 が緑でも CI の fmt ジョブが赤になりうる。その場合の解消は CI の stable で `cargo fmt --all` を掛け直した差分をコミットすることであり、`rustfmt.toml` での抑止ではない。
 
 ---
@@ -478,7 +487,7 @@ EOF
   2. `rm -rf /tmp/pulsen-issue9`
   3. `git status --short` と `git diff --stat`
   4. `cargo test --workspace --locked --no-fail-fast -- --nocapture`
-- **期待結果:** 手順3 に `/tmp` 側の痕跡が現れず（そもそもリポジトリ外）、差分が確認項目9 の範囲（`spec/` / `crates/` の9ファイル / `.adr/` の3ファイル / `.thread/9/`）に収まっている。手順4 が緑。
+- **期待結果:** 手順3 に `/tmp` 側の痕跡が現れず（そもそもリポジトリ外）、差分が確認項目9 の範囲（`spec/` / `crates/` の14ファイル / `.adr/` の3ファイル / `.thread/9/`）に収まっている。手順4 が緑。
 
 ---
 
@@ -486,15 +495,15 @@ EOF
 
 - **`pulsen add` の正常系（`register_task.rs` / `cli_add_normal.rs` の受け入れテスト）:** A2 は `WorkflowLoadError::Parse` の形だけを変え、`NotFound` / `Io` と成功経路には触らない。`crates/pulsen/src/application/register_task.rs` は `WorkflowLoadError` を包むだけ、`crates/pulsen/tests/register_task.rs` と `crates/pulsen-conformance/src/doubles/` は `NotFound` しか使わないため変更を要さない。確認項目5 手順4（正常系の `pulsen add`）と確認項目10 手順3 で見る。
 
-- **`pulsen add` のエラー表示に依存した受け入れテスト:** `crates/pulsen/tests/cli_add_error.rs`（197 / 207行）は `["YAML 構文エラー", "位置:", "行"]` の3語しか見ていないため、前置を外しても通る。`tc_task_register_task_021`（読み取り不可）は `definition.display()` を期待に含むが、これは `Io` の経路で前置が残る側なので影響しない。確認項目10 手順3 で見る。
+- **`pulsen add` のエラー表示に依存した受け入れテスト:** `crates/pulsen/tests/cli_add_error.rs` の TC-022 は変更前 `["YAML 構文エラー", "位置:", "行"]` の3語しか見ておらず、前置を外しても壊れない。A2 ではそこへ解決先パスを4語目として足す（`assert_reports` は `stderr.contains` の部分一致なので、出現**回数**はここでは見ない — 回数は `cli/render.rs` のユニットテストが固定する）。`tc_task_register_task_021`（読み取り不可）は `definition.display()` を期待に含むが、これは `Io` の経路で前置が残る側なので影響しない。確認項目10 手順3 で見る。
 
-- **`WorkflowStore` の適合スイートとスキップ予算:** `crates/pulsen-conformance/src/workflow_store.rs`（434〜437行）は `message` の非空と `location` の存在しか主張しておらず、前置された絶対パスを見ている主張は1つも無い。`tc_port_workflow_store_017` に `resolved_from` の主張を1つ足すが、唯一のハーネス実装（`crates/pulsen/tests/conformance_workflow_store.rs:60`）が `expected_path_for_name` を `Some` で返すのでスキップは発生せず、`allowed_skips` の変更も要らない。確認項目10 手順5 で `SKIP` 集合が変わっていないことを見る。
+- **`WorkflowStore` の適合スイートとスキップ予算:** 変更前の `crates/pulsen-conformance/src/workflow_store.rs` は `message` の非空と `location` の存在しか主張しておらず、前置された絶対パスを見ている主張は1つも無い。`tc_port_workflow_store_017` に `resolved_from` の一致・絶対性と「`message` に前置しない」の主張を足すが、これらは `expected_path_for_name` の有無で条件化してケース内に閉じるため、ケースの結末は常に `Ran` のままでスキップは発生せず、`allowed_skips` の変更も要らない。確認項目10 手順5 で `SKIP` 集合が変わっていないことを見る。
 
 - **`UnknownKey` / `InvalidValue` の `location`:** 適合スイートが値の一致で固定している論理位置（`agents.claude.cmd` 等）は変えない。A2 が変えるのは「対象ファイルをどこが持つか」だけで、`.adr/1-schema-error-location-is-logical.md` の決定本体（`location` は論理位置に限る）は有効なまま。確認項目3 手順5 と確認項目5 の確認ポイントで見る。
 
 - **tick の通知経路（`tick_notify.rs` / `tick_scan.rs`）:** 結合テストは `TickIssue::NotifyFailed { .. }` で受けているため変更を要さない。通知の順序契約（「stopped を書く → notify_cmd → 成功時だけ `mark_notified`」）と at-least-once は C5 で変えない — 確認項目7 手順6 で、失敗が続いた後に成功した tick で初めて `notified_at` が入ることを見る。
 
-- **AbortTask の通知の報告先:** 共通手続き notify は Tick と AbortTask が共有しており、AbortTask 側の報告先は `notify_warning: Option<String>`。AbortTask は未実装（`ls` / `show` / `abort` は #5）なので `cargo test` では検出されないため、**spec の記述として**確認する — 共通手順が固定するのは「`interpret_notify_completion` を経由し、`Delivered` のときだけ `mark_notified` → `save`」までで、`errors` を要求していないこと（AC-C5b）。`grep -n 'notify_warning' spec/usecases/execution.md` で `Option<String>` のまま残っていることを見る。
+- **AbortTask の通知の報告先:** 共通手続き notify は Tick と AbortTask が共有しており、AbortTask 側の報告先は `notify_warning: Option<NotifyFailureCause>`（分類だけを持ち、完成文言は表示層が組み立てる。Tick 側の `errors` に積む `NotifyFailed { task_id, cause }` とは別の受け皿）。AbortTask は未実装（`ls` / `show` / `abort` は #5）なので `cargo test` では検出されないため、**spec の記述として**確認する — 共通手順が固定するのは「`interpret_notify_completion` を経由し、`Delivered` のときだけ `mark_notified` → `save`」までで、AbortTask に存在しない `errors` を要求していないこと（AC-C5b）。`grep -n 'notify_warning' spec/usecases/execution.md` が `Option<NotifyFailureCause>` を返すことを見る。
 
 - **tick サマリーの見出し（B11/C7）:** 報告の4見出し（失敗を記録 / 起動の結果が未確定 / スキップ / 後始末が残っている）と `issue_outcome` の振り分けは**実装済みで正しい**側なので `crates/` に差分は出ない。B11 は spec の追従のみ。確認項目7 で、通知失敗が「スキップ」見出しに出る現行の振る舞いが変わっていないことを併せて見る。
 

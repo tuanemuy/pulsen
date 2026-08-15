@@ -4,8 +4,9 @@
 //! 永続化し、エージェントを worktree で実行する。config は読まず、ロックも取らない —
 //! 必要な情報はすべて起動引数で受け取り、書き先は自 attempt の run ディレクトリに閉じる。
 //!
-//! ラッパーは自前のエラー報告経路を持たない。書き込みに失敗したときは何も書き残さずに
-//! 終わり、tick が「観測されない」ことから分類する。
+//! ラッパーは自前のエラー報告経路を持たない。同定情報一式(starttime → pid)を書き切れ
+//! なかったときは、その先の書き込みを行わずに終わる(starttime だけが残ることはある)。
+//! tick は pid が現れないことから分類する。
 
 use pulsen_domain::execution::{
     ExitCode, Io, PidFileContent, ProcessController, RunStore, WrapperLaunchSpec,
@@ -16,9 +17,9 @@ use pulsen_domain::execution::{
 pub enum WrapperOutcome {
     /// エージェントを実行した(終了結果は run ディレクトリにも書かれる)。
     Ran(ExitCode),
-    /// 無効化されているため、エージェントを起動せずに終えた。
+    /// エージェントを起動せずに終えた(無効化マーカーがあった、または確認自体に失敗した)。
     Suppressed,
-    /// 同定情報を残せず、何も書かずに終えた。
+    /// 同定情報一式を残せずに終えた(starttime だけが残ることはある)。
     Silent,
 }
 
