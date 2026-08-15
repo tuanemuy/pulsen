@@ -11,6 +11,7 @@ use pulsen_domain::definition::{ConfigLoadError, ConfigStore, GlobalConfig};
 use pulsen_domain::task::{AbsolutePathError, RunDirPath, StateRoot, WorktreeRoot};
 
 use crate::adapter::clock::SystemClock;
+use crate::adapter::command_runner::SystemCommandRunner;
 use crate::adapter::config_store::FsConfigStore;
 use crate::adapter::lock::FileExclusiveLock;
 use crate::adapter::process::{IdentitySource, SystemProcessController};
@@ -241,6 +242,14 @@ pub fn process_controller() -> Result<SystemProcessController, WireError> {
         IdentitySource::platform_default(),
         SystemClock::new(),
     ))
+}
+
+/// 判定・通知コマンドの実行を組む。
+///
+/// 構築に外部リソースを要さないので失敗しない。`compose` に載せないのは、コマンドを
+/// 起動するのが tick の経路だけであり、要る分だけを組む規律に揃えるため。
+pub fn command_runner() -> SystemCommandRunner {
+    SystemCommandRunner::new()
 }
 
 /// 乱数を初期化してタスクIDの発行を組む。

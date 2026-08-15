@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use pulsen_domain::definition::{
-    AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, WorkflowLoadError,
-    WorkflowParseError, WorkflowStructureError,
+    AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, TimeoutSpec,
+    WorkflowLoadError, WorkflowParseError, WorkflowStructureError,
 };
 use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
 use pulsen_domain::task::{
@@ -16,7 +16,7 @@ use pulsen_domain::task::{
 };
 
 use crate::application::register_task::{RegisterTaskError, RegisteredTask};
-use crate::application::tick::{TickError, TickIssue, TickSummary};
+use crate::application::tick::{RemnantsLeft, RunFailureCause, TickError, TickIssue, TickSummary};
 
 use super::add::AddError;
 use super::tick::TickCommandError;
@@ -59,6 +59,7 @@ pub fn tick_summary(summary: &TickSummary) -> String {
     let mut out = String::from("tick を実行しました。\n");
     push_ids(&mut out, "起動", &summary.launched);
     push_ids(&mut out, "起動確認", &summary.confirmed_running);
+    push_ids(&mut out, "判定確定", &summary.judged);
     push_ids(&mut out, "遷移", &summary.transitioned);
     push_ids(&mut out, "実行待ちへ復帰", &summary.skipped_back);
     push_ids(&mut out, "凍結", &summary.frozen);
@@ -70,21 +71,24 @@ pub fn tick_summary(summary: &TickSummary) -> String {
     let mut recorded = Vec::new();
     let mut unsettled = Vec::new();
     let mut skipped = Vec::new();
+    let mut cleanup = Vec::new();
     for issue in &summary.errors {
         match issue_outcome(issue) {
             IssueOutcome::Recorded => recorded.push(issue),
             IssueOutcome::LaunchUnsettled => unsettled.push(issue),
             IssueOutcome::Skipped => skipped.push(issue),
+            IssueOutcome::CleanupLeft => cleanup.push(issue),
         }
     }
     push_issues(&mut out, "失敗を記録", &recorded);
     push_issues(&mut out, "起動の結果が未確定", &unsettled);
     push_issues(&mut out, "スキップ", &skipped);
+    push_issues(&mut out, "後始末が残っている", &cleanup);
 
     out.trim_end().to_owned()
 }
 
-/// 報告がタスクファイルに何を残したか。運用者が次に取る行動はこれで分かれる。
+/// 報告が何を残したか。運用者が次に取る行動はこれで分かれる。
 enum IssueOutcome {
     /// 失敗を記録した。カウンタを消費し、上限を超えれば同じ tick で凍結する。
     Recorded,
@@ -92,6 +96,9 @@ enum IssueOutcome {
     LaunchUnsettled,
     /// タスクファイルへの書き込みが無く、次の tick がそのまま再試行する。
     Skipped,
+    /// タスクファイルには何も残っていないが、OS 側に後始末が残っている。
+    /// tick は残存終了を再試行しないので、終了させるのは人間になる。
+    CleanupLeft,
 }
 
 /// 報告の結末の分類。
@@ -101,17 +108,28 @@ fn issue_outcome(issue: &TickIssue) -> IssueOutcome {
     match issue {
         TickIssue::WorktreeCreateFailed { .. }
         | TickIssue::CommandExpansionFailed { .. }
-        | TickIssue::SpawnNotObserved { .. } => IssueOutcome::Recorded,
+        | TickIssue::SpawnNotObserved { .. }
+        | TickIssue::JudgeFailed { .. }
+        | TickIssue::RunFailed { .. } => IssueOutcome::Recorded,
         TickIssue::PrepareAttemptFailed { .. } | TickIssue::SpawnFailed { .. } => {
             IssueOutcome::LaunchUnsettled
         }
+        // 残存の報告は保存の成否と独立に積まれ、タスクファイルには何も残さない。
+        // 失敗の記録と並べるとカウンタを消費していない tick が消費したように読め、
+        // スキップと並べると tick が再試行しない後始末が再試行されるように読める。
+        TickIssue::RemnantsUnhandled { .. } => IssueOutcome::CleanupLeft,
         TickIssue::CorruptTaskFile { .. }
         | TickIssue::SnapshotUnreadable { .. }
         | TickIssue::MissingCurrentAttempt { .. }
+        | TickIssue::MissingProcessIdent { .. }
         | TickIssue::Transition { .. }
+        | TickIssue::MissingWorkspace { .. }
         | TickIssue::RunFileUnreadable { .. }
         | TickIssue::InconsistentRunFiles { .. }
         | TickIssue::MarkerWriteFailed { .. }
+        | TickIssue::ObservationFailed { .. }
+        | TickIssue::KillFailed { .. }
+        | TickIssue::NotifyFailed { .. }
         | TickIssue::SaveFailed { .. } => IssueOutcome::Skipped,
     }
 }
@@ -156,8 +174,10 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: 埋め込まれたワークフロー定義を読めません({message})",
             task_id.as_str()
         ),
+        // 実行状態を名指ししない — この破れは起動記録済み・起動確認済みのどちらの手続きでも
+        // 積まれ、片方を名乗ると帳簿の実行状態と食い違う。
         TickIssue::MissingCurrentAttempt { task_id } => format!(
-            "{}: 起動記録済みですが現在 attempt がありません(タスクファイルの修復が必要です)",
+            "{}: 観測の前提となる現在 attempt がありません(タスクファイルの修復が必要です)",
             task_id.as_str()
         ),
         TickIssue::Transition { task_id, error } => format!(
@@ -195,11 +215,79 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: 起動を確認できず spawn 失敗として記録しました({message})",
             task_id.as_str()
         ),
+        TickIssue::MissingProcessIdent { task_id } => format!(
+            "{}: 起動確認済みですが同定情報がありません(pid ファイルからの修復が必要です)",
+            task_id.as_str()
+        ),
+        TickIssue::ObservationFailed { task_id, message } => format!(
+            "{}: プロセスの生存を観測できません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::KillFailed { task_id, message } => format!(
+            "{}: timeout を超えた実行を終了させられません({message})",
+            task_id.as_str()
+        ),
+        TickIssue::RemnantsUnhandled { task_id, remnants } => {
+            format!("{}: {}", task_id.as_str(), remnants_left(remnants))
+        }
+        TickIssue::JudgeFailed { task_id, detail } => format!(
+            "{}: 判定できず判定失敗として記録しました({detail})",
+            task_id.as_str()
+        ),
+        TickIssue::RunFailed { task_id, cause } => format!(
+            "{}: 実行の失敗を記録しました({})",
+            task_id.as_str(),
+            run_failure_cause(cause)
+        ),
+        TickIssue::MissingWorkspace { task_id } => format!(
+            "{}: 判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)",
+            task_id.as_str()
+        ),
+        TickIssue::NotifyFailed { task_id, message } => format!(
+            "{}: 凍結を通知できません({message})。次の tick が再通知します",
+            task_id.as_str()
+        ),
         TickIssue::SaveFailed { task_id, error } => format!(
             "{}: タスクファイルを保存できません({})",
             task_id.as_str(),
             save_error(error)
         ),
+    }
+}
+
+/// 実行を失敗として確定させた根拠。判断した主体が読めるように書く。
+fn run_failure_cause(cause: &RunFailureCause) -> String {
+    match cause {
+        RunFailureCause::DefaultJudgement { exit } => {
+            format!("実行が終了コード {} で終了しました", exit.get())
+        }
+        RunFailureCause::JudgeCommand { exit } => format!(
+            "判定コマンドが失敗と判定しました(実行の終了コードは {})",
+            exit.get()
+        ),
+        RunFailureCause::TimedOut {
+            timeout: TimeoutSpec::Limited(limit),
+        } => format!(
+            "実行が timeout({}秒)を超えたため終了させました",
+            limit.seconds()
+        ),
+        // 無制限の timeout では超過が成立しないため、終了させた事実だけを述べる。
+        RunFailureCause::TimedOut {
+            timeout: TimeoutSpec::Unlimited,
+        } => "実行を終了させました".to_owned(),
+        RunFailureCause::DiedWithoutExit => "実行が終了コードを残さずに終わりました".to_owned(),
+    }
+}
+
+/// ベストエフォートの残存終了のあとに残った後始末。OS ツールでの後始末を促す。
+fn remnants_left(remnants: &RemnantsLeft) -> String {
+    match remnants {
+        RemnantsLeft::NotIdentifiable => {
+            "残存プロセスを誤殺なく同定できませんでした(終了操作は行っていません)".to_owned()
+        }
+        RemnantsLeft::Failed { message } => {
+            format!("残存プロセスを終了できませんでした: {message}")
+        }
     }
 }
 
@@ -221,9 +309,12 @@ fn transition_error(error: &TransitionError) -> String {
             "ステータス `{}` はエージェント実行ではない",
             status.as_str()
         ),
+        // 実行状態を名指ししない — この破れは起動記録済み・実行中・判定確定のいずれからも
+        // 返り、実行状態を述べると修復の入口を誤らせる。
         TransitionError::MissingCurrentAttempt => {
-            "起動記録済みなのに現在 attempt が無い".to_owned()
+            "遷移の前提となる現在 attempt(または同定情報)が無い".to_owned()
         }
+        TransitionError::AlreadyNotified => "凍結の通知が記録済み".to_owned(),
     }
 }
 
@@ -612,7 +703,8 @@ fn push_field(out: &mut String, label: &str, value: &str) {
 mod tests {
     use std::path::PathBuf;
 
-    use pulsen_domain::definition::{NameError, StatusName, WorkflowName};
+    use pulsen_domain::definition::{DurationSpec, NameError, StatusName, WorkflowName};
+    use pulsen_domain::execution::ExitCode;
     use pulsen_domain::task::{BranchName, BranchNameError, TaskId};
 
     use super::*;
@@ -931,6 +1023,7 @@ mod tests {
         let summary = TickSummary {
             launched: vec![task("20260812t101112-aaaa0001")],
             confirmed_running: vec![task("20260812t101112-aaaa0002")],
+            judged: vec![task("20260812t101112-aaaa0011")],
             transitioned: vec![task("20260812t101112-aaaa0003")],
             skipped_back: vec![task("20260812t101112-aaaa0004")],
             frozen: vec![task("20260812t101112-aaaa0005")],
@@ -954,6 +1047,7 @@ mod tests {
             "tick を実行しました。\n  \
              起動: 20260812t101112-aaaa0001\n  \
              起動確認: 20260812t101112-aaaa0002\n  \
+             判定確定: 20260812t101112-aaaa0011\n  \
              遷移: 20260812t101112-aaaa0003\n  \
              実行待ちへ復帰: 20260812t101112-aaaa0004\n  \
              凍結: 20260812t101112-aaaa0005\n  \
@@ -962,7 +1056,7 @@ mod tests {
              gcで削除: 20260812t101112-aaaa0009/attempt-1\n  \
              gcで削除できず: 20260812t101112-aaaa0010/attempt-2\n  \
              スキップ(1件):\n    \
-             - 20260812t101112-aaaa0008: 起動記録済みですが現在 attempt がありません\
+             - 20260812t101112-aaaa0008: 観測の前提となる現在 attempt がありません\
              (タスクファイルの修復が必要です)"
         );
     }
@@ -1020,6 +1114,136 @@ mod tests {
     }
 
     #[test]
+    fn 実行の失敗の根拠は判断した主体が読める形で示される() {
+        let failed = |cause: RunFailureCause| {
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::RunFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    cause,
+                }],
+                ..TickSummary::default()
+            })
+        };
+
+        assert!(
+            failed(RunFailureCause::DefaultJudgement {
+                exit: ExitCode::new(1),
+            })
+            .ends_with("実行の失敗を記録しました(実行が終了コード 1 で終了しました)"),
+        );
+        assert!(
+            failed(RunFailureCause::JudgeCommand {
+                exit: ExitCode::new(0),
+            })
+            .ends_with(
+                "実行の失敗を記録しました(判定コマンドが失敗と判定しました(実行の終了コードは 0))"
+            ),
+            "エージェントの終了コードが 0 でも判定コマンドの判断として読める"
+        );
+        assert!(
+            failed(RunFailureCause::TimedOut {
+                timeout: TimeoutSpec::Limited(DurationSpec::parse("60s").expect("受理される")),
+            })
+            .ends_with("実行の失敗を記録しました(実行が timeout(60秒)を超えたため終了させました)"),
+        );
+        assert!(
+            failed(RunFailureCause::DiedWithoutExit)
+                .ends_with("実行の失敗を記録しました(実行が終了コードを残さずに終わりました)"),
+        );
+    }
+
+    #[test]
+    fn 残存プロセスの後始末は同定できたかで書き分けられる() {
+        let remnants = |remnants: RemnantsLeft| {
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::RemnantsUnhandled {
+                    task_id: task("20260812t101112-abcd1234"),
+                    remnants,
+                }],
+                ..TickSummary::default()
+            })
+        };
+
+        assert_eq!(
+            remnants(RemnantsLeft::NotIdentifiable),
+            "tick を実行しました。\n  \
+             後始末が残っている(1件):\n    \
+             - 20260812t101112-abcd1234: 残存プロセスを誤殺なく同定できませんでした\
+             (終了操作は行っていません)"
+        );
+        assert!(
+            remnants(RemnantsLeft::Failed {
+                message: "終了操作を起動できない".to_owned(),
+            })
+            .ends_with("残存プロセスを終了できませんでした: 終了操作を起動できない"),
+        );
+    }
+
+    #[test]
+    fn 保存できなかった残存の報告は記録した失敗の見出しに現れない() {
+        let summary = TickSummary {
+            errors: vec![
+                TickIssue::RemnantsUnhandled {
+                    task_id: task("20260812t101112-abcd1234"),
+                    remnants: RemnantsLeft::Failed {
+                        message: "終了操作を起動できない".to_owned(),
+                    },
+                },
+                TickIssue::SaveFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    error: SaveError::Io {
+                        message: "書き込めません".to_owned(),
+                    },
+                },
+            ],
+            ..TickSummary::default()
+        };
+
+        assert_eq!(
+            tick_summary(&summary),
+            "tick を実行しました。\n  \
+             スキップ(1件):\n    \
+             - 20260812t101112-abcd1234: タスクファイルを保存できません(書き込めません)\n  \
+             後始末が残っている(1件):\n    \
+             - 20260812t101112-abcd1234: 残存プロセスを終了できませんでした: 終了操作を起動できない"
+        );
+    }
+
+    #[test]
+    fn ワークスペースの未確定は修復すべき場所を示す() {
+        assert!(
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::MissingWorkspace {
+                    task_id: task("20260812t101112-abcd1234"),
+                }],
+                ..TickSummary::default()
+            })
+            .ends_with(
+                "判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)"
+            ),
+        );
+    }
+
+    #[test]
+    fn 現在attemptの欠落は実行状態を名指ししない() {
+        let report = tick_summary(&TickSummary {
+            errors: vec![TickIssue::MissingCurrentAttempt {
+                task_id: task("20260812t101112-abcd1234"),
+            }],
+            ..TickSummary::default()
+        });
+
+        assert!(
+            report.ends_with(
+                "観測の前提となる現在 attempt がありません(タスクファイルの修復が必要です)"
+            ),
+            "{report}"
+        );
+        assert!(!report.contains("起動記録"), "{report}");
+        assert!(!report.contains("起動確認"), "{report}");
+    }
+
+    #[test]
     fn 遷移の前提の破れは破れた前提そのものを示す() {
         let transition = |error: TransitionError| {
             tick_summary(&TickSummary {
@@ -1039,8 +1263,9 @@ mod tests {
             .ends_with("遷移の前提が成立しません(実行状態が pending | failed ではなく running)"),
         );
         assert!(
-            transition(TransitionError::MissingCurrentAttempt)
-                .ends_with("遷移の前提が成立しません(起動記録済みなのに現在 attempt が無い)"),
+            transition(TransitionError::MissingCurrentAttempt).ends_with(
+                "遷移の前提が成立しません(遷移の前提となる現在 attempt(または同定情報)が無い)"
+            ),
         );
     }
 

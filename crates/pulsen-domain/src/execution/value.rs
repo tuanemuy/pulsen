@@ -54,9 +54,89 @@ impl PidFileContent {
     }
 }
 
+/// 判定の結末。
+///
+/// `Skipped` は判定コマンドでのみ生じる(ADR-008)。デフォルト判定は 2 値しか返さない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JudgeOutcome {
+    /// 成功。次のステータスへ進める。
+    Completed,
+    /// 失敗。リトライ上限を消費する。
+    Failed,
+    /// 見送り。タスクステータス不変のまま起動待ちへ戻す。
+    Skipped,
+}
+
+/// 判定コマンドの結果の解釈。
+///
+/// 「判定できた」と「判定自体が壊れた」を分ける — 前者は実行の帳簿を進め、後者は
+/// 判定のカウンタだけを消費して running に留まる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JudgeConclusion {
+    /// 判定できた。
+    Outcome(JudgeOutcome),
+    /// 判定自体が壊れた(プロトコル外の exit code・判定 timeout・起動不能)。
+    JudgeFailure {
+        /// 原因の説明。タスクファイルに残り、凍結の要因の手がかりになる。
+        detail: String,
+    },
+}
+
+/// コマンド実行の結末。
+///
+/// 失敗を含むすべての結末を値で表す — 判定・通知の分類がこの値を入力に取るため、
+/// 実行機構のエラーを `Err` に落とすと分類がエラー処理の側へ漏れる。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandCompletion {
+    /// 終了した(シグナル死等の符号化値を含む)。
+    Exited(ExitCode),
+    /// timeout を超過したため終了させた。
+    TimedOut,
+    /// 起動できなかった。
+    FailedToStart {
+        /// 原因の説明。
+        message: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 判定の結末は3値を区別する() {
+        assert_eq!(JudgeOutcome::Completed, JudgeOutcome::Completed);
+        assert_ne!(JudgeOutcome::Completed, JudgeOutcome::Failed);
+        assert_ne!(JudgeOutcome::Failed, JudgeOutcome::Skipped);
+    }
+
+    #[test]
+    fn 判定の解釈は結末と判定自体の破れを区別する() {
+        let outcome = JudgeConclusion::Outcome(JudgeOutcome::Completed);
+        let failure = JudgeConclusion::JudgeFailure {
+            detail: "プロトコル外".to_owned(),
+        };
+
+        assert_ne!(outcome, failure);
+        match failure {
+            JudgeConclusion::JudgeFailure { detail } => assert_eq!(detail, "プロトコル外"),
+            JudgeConclusion::Outcome(_) => unreachable!("判定自体の破れである"),
+        }
+    }
+
+    #[test]
+    fn コマンドの結末は3値を区別する() {
+        let exited = CommandCompletion::Exited(ExitCode::new(0));
+        let timed_out = CommandCompletion::TimedOut;
+        let failed = CommandCompletion::FailedToStart {
+            message: "実体がない".to_owned(),
+        };
+
+        assert_ne!(exited, timed_out);
+        assert_ne!(timed_out, failed);
+        assert_eq!(exited, CommandCompletion::Exited(ExitCode::new(0)));
+        assert_ne!(exited, CommandCompletion::Exited(ExitCode::new(1)));
+    }
 
     #[test]
     fn 終了結果はゼロのときだけ成功になる() {

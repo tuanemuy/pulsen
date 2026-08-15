@@ -1,11 +1,8 @@
-//! ProcessController の適合ケース(`spec/testcases/ports/process-controller.md` のうち、
-//! 本スライスで使う3メソッド分の16行)。
+//! ProcessController の適合ケース(`spec/testcases/ports/process-controller.md` の27行)。
 //!
-//! `starttime_of` / `kill` / `try_kill_remnants` の8行は、それらをポートに足すスライスで
-//! 扱う。
-//!
-//! スイートを2つに分けるのは、`spawn_wrapper` の3件だけがラッパーモードの実装(実バイナリ)
-//! を要するため(ADR-083)。`own_identity` / `run_agent` の13件はアダプター単体で閉じる。
+//! スイートを3つに分けるのは、要る前提が違うため(ADR-083)。`own_identity` / `run_agent`
+//! の13件はアダプター単体で閉じ、`spawn_wrapper` の3件と `starttime_of` / `kill` /
+//! `try_kill_remnants` の11件はラッパーモードの実装(実バイナリ)を要する。
 //!
 //! 期待結果は契約の語彙(「非0の符号化値」「実行単位」)で書き、プラットフォーム固有の
 //! 具体値(`128+シグナル番号`)には踏み込まない(ADR-082)。
@@ -337,6 +334,239 @@ pub mod spawn {
     const AGENT_RUNTIME: std::time::Duration = std::time::Duration::from_millis(300);
 }
 
+/// `starttime_of` / `kill` / `try_kill_remnants` のスイート(11行)。
+///
+/// 期待結果は契約の語彙で書く — 終了の主張は「実行単位に属する全プロセスが終了する」で
+/// あり、その観測は `starttime_of` が各PIDで `None` を返すことに還元する(ADR-082)。
+pub mod observation {
+    use std::time::{Duration, Instant};
+
+    use pulsen_domain::execution::{Io, KillError, ProcessController, RemnantOutcome};
+    use pulsen_domain::task::Pid;
+
+    use crate::{CaseOutcome, ExecutionUnit, ProcessControllerHarness, require};
+
+    pub fn tc_port_process_controller_006_生存中のプロセスの起動時刻は取得できる(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let observed = harness
+            .controller()
+            .starttime_of(own_pid())
+            .expect("取得機構は成功する");
+
+        assert!(observed.is_some(), "生存中のプロセスは不在にならない");
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_007_終了したプロセスは不在として返る(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let pid = require!(harness.terminated_pid());
+
+        let observed = harness
+            .controller()
+            .starttime_of(pid)
+            .expect("取得機構は成功する");
+
+        assert_eq!(observed, None, "不在 = 死亡");
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_008_同一プロセスの2回の取得は等価な値を返す(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let controller = harness.controller();
+
+        let first = controller.starttime_of(own_pid()).expect("取得できる");
+        let second = controller.starttime_of(own_pid()).expect("取得できる");
+
+        assert!(first.is_some(), "生存中である");
+        assert_eq!(first, second, "等価比較に使える安定値である");
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_009_記録と照合は同一の取得手段で行われる(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let controller = harness.controller();
+        let identity = controller.own_identity().expect("自プロセスを観測できる");
+
+        let observed = controller
+            .starttime_of(identity.pid())
+            .expect("取得できる")
+            .expect("生存中である");
+
+        assert_eq!(
+            &observed,
+            identity.starttime().ident(),
+            "記録側と照合側が同じ表現を得る"
+        );
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_010_取得機構の失敗は死亡に写像されない(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let failing = require!(harness.failing_identity_controller());
+
+        match failing.starttime_of(own_pid()) {
+            Err(Io::Failed { message }) => assert!(!message.is_empty(), "原因が説明される"),
+            Ok(observed) => panic!(
+                "取得機構の失敗を不在(= 死亡)に畳まない: {observed:?}。畳むと生存プロセスの \
+                 Dead 誤判定から同一 worktree での並走に至る"
+            ),
+        }
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_011_killは実行単位の全プロセスを終了させる(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let unit = require!(harness.live_execution_unit());
+        let controller = harness.controller();
+        assert!(
+            all_alive(controller, &unit),
+            "終了させる前は全メンバーが生存している"
+        );
+
+        assert_eq!(controller.kill(&unit.kill_ident), Ok(()));
+
+        assert!(
+            wait_until_all_gone(controller, &unit),
+            "実行単位に属する全プロセスが終了する"
+        );
+        assert!(
+            controller
+                .starttime_of(own_pid())
+                .expect("取得できる")
+                .is_some(),
+            "呼び出し側は実行単位が分離されているため影響を受けない"
+        );
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_012_killは同定子だけを入力に実行できる(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let (unit, restarted) = require!(harness.detached_execution_unit());
+
+        assert_eq!(restarted.kill(&unit.kill_ident), Ok(()));
+
+        assert!(
+            wait_until_all_gone(restarted, &unit),
+            "起動した側とも起動時のインスタンスとも縁が切れていても終了させられる"
+        );
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_013_終了操作の失敗は値として返る(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let failing = require!(harness.failing_terminator_controller());
+        let unit = require!(harness.live_execution_unit());
+
+        match failing.kill(&unit.kill_ident) {
+            Err(KillError::Failed { message }) => assert!(!message.is_empty(), "原因が説明される"),
+            Ok(()) => panic!("終了操作が失敗する状況では失敗として返る"),
+        }
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_014_残存プロセスはベストエフォートで終了する(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let unit = require!(harness.orphaned_execution_unit());
+        let controller = harness.controller();
+        assert!(
+            all_alive(controller, &unit),
+            "ラッパーの死後も残存メンバーが生存している"
+        );
+
+        assert_eq!(
+            controller.try_kill_remnants(&unit.kill_ident),
+            RemnantOutcome::Killed
+        );
+
+        assert!(
+            wait_until_all_gone(controller, &unit),
+            "残存プロセスが終了する"
+        );
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_015_同定できなければ何も終了させない(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let unidentifiable = require!(harness.failing_identity_controller());
+        let unit = require!(harness.live_execution_unit());
+        let observer = harness.controller();
+
+        assert_eq!(
+            unidentifiable.try_kill_remnants(&unit.kill_ident),
+            RemnantOutcome::NotIdentifiable
+        );
+
+        assert!(
+            all_alive(observer, &unit),
+            "いかなるプロセスも終了させない(無関係なプロセスの誤殺がない)"
+        );
+        CaseOutcome::Ran
+    }
+
+    pub fn tc_port_process_controller_016_残存終了の失敗は値として返る(
+        harness: &impl ProcessControllerHarness,
+    ) -> CaseOutcome {
+        let failing = require!(harness.failing_terminator_controller());
+        let unit = require!(harness.orphaned_execution_unit());
+
+        match failing.try_kill_remnants(&unit.kill_ident) {
+            RemnantOutcome::Failed { message } => assert!(!message.is_empty(), "原因が説明される"),
+            other => panic!("終了操作が失敗する状況では失敗として返る: {other:?}"),
+        }
+        CaseOutcome::Ran
+    }
+
+    fn own_pid() -> Pid {
+        Pid::new(std::process::id())
+    }
+
+    /// 全メンバーが観測できるか。
+    fn all_alive(controller: &impl ProcessController, unit: &ExecutionUnit) -> bool {
+        unit.members.iter().all(|pid| {
+            controller
+                .starttime_of(*pid)
+                .expect("取得機構は成功する")
+                .is_some()
+        })
+    }
+
+    /// 全メンバーが観測できなくなるまで期限つきで待つ。
+    ///
+    /// 終了操作の送出と各プロセスの消滅の間には時間差がある。期限は「終了しない実装を
+    /// 検出する」ための歯止めであって、契約の一部ではない。
+    fn wait_until_all_gone(controller: &impl ProcessController, unit: &ExecutionUnit) -> bool {
+        let deadline = Instant::now() + TERMINATION_DEADLINE;
+        loop {
+            if unit
+                .members
+                .iter()
+                .all(|pid| controller.starttime_of(*pid) == Ok(None))
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    /// 実行単位の消滅を待つ期限。
+    const TERMINATION_DEADLINE: Duration = Duration::from_secs(10);
+    /// 消滅を確かめる間隔。
+    const POLL_INTERVAL: Duration = Duration::from_millis(50);
+}
+
 /// `own_identity` / `run_agent` の適合スイートをアダプターに適用する。
 ///
 /// `$setup` はケースごとに評価され、ハーネスは共有されない。`$allowed_skips` は
@@ -372,7 +602,7 @@ macro_rules! process_controller_identity_conformance {
 /// `spawn_wrapper` の適合スイートをアダプターに適用する。
 ///
 /// ラッパーモード(実バイナリ)の実装を前提にするため、`identity` のスイートとは別に
-/// 適用する(ADR-083)。1つのテストファイルに両方を適用できる。
+/// 適用する(ADR-083)。1つのテストファイルに3つとも適用できる。
 #[macro_export]
 macro_rules! process_controller_spawn_conformance {
     ($setup:expr, $allowed_skips:expr) => {
@@ -386,6 +616,33 @@ macro_rules! process_controller_spawn_conformance {
                 tc_port_process_controller_001_起動は成否を戻り値に持たない,
                 tc_port_process_controller_002_ラッパーは呼び出し側の終了後も完走する,
                 tc_port_process_controller_003_起動不能は副作用を残さず失敗として返る,
+            ]
+        );
+    };
+}
+
+/// `starttime_of` / `kill` / `try_kill_remnants` の適合スイートをアダプターに適用する。
+#[macro_export]
+macro_rules! process_controller_observation_conformance {
+    ($setup:expr, $allowed_skips:expr) => {
+        use $crate::process_controller::observation as __pulsen_conformance_observation;
+
+        $crate::conformance_cases!(
+            __pulsen_conformance_observation,
+            $setup,
+            __PULSEN_CONFORMANCE_PROCESS_OBSERVATION_SKIPS = $allowed_skips,
+            [
+                tc_port_process_controller_006_生存中のプロセスの起動時刻は取得できる,
+                tc_port_process_controller_007_終了したプロセスは不在として返る,
+                tc_port_process_controller_008_同一プロセスの2回の取得は等価な値を返す,
+                tc_port_process_controller_009_記録と照合は同一の取得手段で行われる,
+                tc_port_process_controller_010_取得機構の失敗は死亡に写像されない,
+                tc_port_process_controller_011_killは実行単位の全プロセスを終了させる,
+                tc_port_process_controller_012_killは同定子だけを入力に実行できる,
+                tc_port_process_controller_013_終了操作の失敗は値として返る,
+                tc_port_process_controller_014_残存プロセスはベストエフォートで終了する,
+                tc_port_process_controller_015_同定できなければ何も終了させない,
+                tc_port_process_controller_016_残存終了の失敗は値として返る,
             ]
         );
     };

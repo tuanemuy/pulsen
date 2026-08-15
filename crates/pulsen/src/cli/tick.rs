@@ -26,6 +26,7 @@ pub fn execute(home: Option<PathBuf>) -> Result<TickOutcome, TickCommandError> {
     // 自身の実行ファイルのパスを要するのはプロセスを起動する経路だけなので、
     // `compose` ではなくここで解決する(ADR-076)。
     let processes = wire::process_controller().map_err(TickCommandError::Wire)?;
+    let commands = wire::command_runner();
 
     Tick::new(
         runtime.config(),
@@ -37,6 +38,7 @@ pub fn execute(home: Option<PathBuf>) -> Result<TickOutcome, TickCommandError> {
         runtime.worktrees(),
         runtime.runs(),
         &processes,
+        &commands,
     )
     .execute()
     .map_err(TickCommandError::Tick)

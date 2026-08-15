@@ -1,8 +1,7 @@
 //! 1回の tick パスのユースケース(UC-execution-002)。
 //!
 //! 全タスクを走査し、実行状態(と、起動待ち・失敗確定では現ステータスの動作種別)ごとの
-//! 手続きへ分岐する。判断はドメイン(`Task` の遷移関数・`LaunchingClassifier`)が行い、
-//! ここは「ポートで観測 → ドメインで判断 → ポートで実行」の配線に徹する。
+//! 手続きへ分岐する。
 //!
 //! 1タスクの処理失敗は `errors` に記録して残りを続行する。tick 全体を
 //! 失敗させるのは、走査そのものができない場合とロック機構の異常だけ。
@@ -12,13 +11,15 @@
 
 mod confirm_spawn;
 mod launch;
+mod notify;
+mod observe;
 
 use std::path::PathBuf;
 
-use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition};
+use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition, TimeoutSpec};
 use pulsen_domain::execution::{
-    ExclusiveLock, InconsistentRunFiles, LockError, ProcessController, RunFileError, RunStore,
-    WorktreeManager,
+    CommandRunner, ExclusiveLock, ExitCode, InconsistentRunFiles, LockError, ProcessController,
+    RemnantOutcome, RunFileError, RunStore, WorktreeManager,
 };
 use pulsen_domain::task::{
     AttemptNumber, Clock, ExecutionState, ExecutionStateKind, ReadError, SaveError, StateRoot,
@@ -74,7 +75,7 @@ pub enum TickIssue {
         /// 読めない理由。
         message: String,
     },
-    /// 起動記録済みなのに現在 attempt がない(不変条件2の破れ)。
+    /// 現在 attempt がない(不変条件2の破れ)。手続きC・D のどちらの冒頭検査からも積まれる。
     MissingCurrentAttempt {
         /// 対象のタスク。
         task_id: TaskId,
@@ -145,6 +146,66 @@ pub enum TickIssue {
         /// 原因の説明。
         message: String,
     },
+    /// 起動確認済みなのに現在 attempt が同定情報を持たない(不変条件3の破れ)。
+    ///
+    /// 不変条件2の破れと分けるのは、破れの事実も人間に求める修復も違うため — あちらは
+    /// attempt 参照そのものが失われており、こちらは attempt はあるが pid ファイルから
+    /// 復元できる可能性がある。同じ文言に畳むと、表示が修復の入口を示せなくなる。
+    MissingProcessIdent {
+        /// 対象のタスク。
+        task_id: TaskId,
+    },
+    /// 生存観測の機構自体が失敗した。生死のどちらにも写像せず、状態を変更していない。
+    ObservationFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 原因の説明。
+        message: String,
+    },
+    /// timeout を超えた実行を終了させられなかった。状態を変更していない。
+    KillFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 原因の説明。
+        message: String,
+    },
+    /// 残存プロセスの終了を確認できなかった(ベストエフォートの報告)。
+    RemnantsUnhandled {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 残った後始末。
+        remnants: RemnantsLeft,
+    },
+    /// 判定自体が壊れており、判定失敗として記録した。
+    JudgeFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 判定できなかった原因。
+        detail: String,
+    },
+    /// 実行の失敗を記録した。
+    RunFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 失敗と判断した根拠。
+        cause: RunFailureCause,
+    },
+    /// 判定コマンドを持つステータスなのに workspace が未確定(不変条件4の破れ)。
+    ///
+    /// 遷移の前提の破れと分けるのは、遷移関数を一度も呼んでいないため — 起きたのは
+    /// 「判定コマンドへ渡す `WORKSPACE` を組めなかった」であり、修復も帳簿の
+    /// `workspace` を埋めることになる。
+    MissingWorkspace {
+        /// 対象のタスク。
+        task_id: TaskId,
+    },
+    /// 凍結を通知できなかった。`notified_at` は書いていない。
+    NotifyFailed {
+        /// 対象のタスク。
+        task_id: TaskId,
+        /// 原因の説明。
+        message: String,
+    },
     /// タスクファイルを保存できない。
     SaveFailed {
         /// 対象のタスク。
@@ -154,17 +215,69 @@ pub enum TickIssue {
     },
 }
 
+/// 実行を失敗として確定させた根拠。
+///
+/// 「誰が失敗と判断したか」を分類として持つ — デフォルト判定と判定コマンドを畳むと、
+/// 判定コマンドが失敗と判定した場合にエージェント側の終了コードが失敗の根拠として
+/// 読めてしまう(エージェントが 0 で終わっていても失敗になりうる)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunFailureCause {
+    /// 判定コマンドを持たないステータスのデフォルト判定が、非 0 終了を失敗とした。
+    DefaultJudgement {
+        /// 実行の終了コード。
+        exit: ExitCode,
+    },
+    /// 判定コマンドが失敗と判定した。
+    JudgeCommand {
+        /// 実行の終了コード。判定コマンドが受け取った材料であり、失敗の根拠ではない。
+        exit: ExitCode,
+    },
+    /// timeout を超えた実行を終了させた。
+    TimedOut {
+        /// 適用されていた timeout。
+        timeout: TimeoutSpec,
+    },
+    /// 終了コードを残さずに死亡していた。
+    DiedWithoutExit,
+}
+
+/// ベストエフォートの残存終了のあとに残った後始末。
+///
+/// `RemnantOutcome::Killed` は後始末を残さないため、この分類には現れない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemnantsLeft {
+    /// 実行単位を同定できず、いかなるプロセスも終了させていない。
+    NotIdentifiable,
+    /// 同定できたが終了操作が失敗した。
+    Failed {
+        /// 原因の説明。
+        message: String,
+    },
+}
+
+impl RemnantsLeft {
+    /// 残存終了の結末のうち、報告を要するものだけを取り出す。
+    fn of(outcome: RemnantOutcome) -> Option<Self> {
+        match outcome {
+            RemnantOutcome::Killed => None,
+            RemnantOutcome::NotIdentifiable => Some(Self::NotIdentifiable),
+            RemnantOutcome::Failed { message } => Some(Self::Failed { message }),
+        }
+    }
+}
+
 /// tick パスの結果。
 ///
-/// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` を足した形
-/// (ADR-094)。本スライスで値が入るのは、配線した手続きが埋める `launched` /
-/// `confirmed_running` / `frozen` / `errors` だけになる(ADR-101)。
+/// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` と `judged` を
+/// 足した形(ADR-094)。`archived` / `gc_deleted` / `gc_errors` はまだ値の入る経路を持たない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。
     pub launched: Vec<TaskId>,
     /// 起動を確認して running へ取り込んだタスク。
     pub confirmed_running: Vec<TaskId>,
+    /// 判定 completed を確定したタスク。
+    pub judged: Vec<TaskId>,
     /// タスクステータスが遷移したタスク。
     pub transitioned: Vec<TaskId>,
     /// skipped 判定で起動待ちへ戻したタスク。
@@ -191,6 +304,7 @@ impl TickSummary {
     pub fn is_empty(&self) -> bool {
         self.launched.is_empty()
             && self.confirmed_running.is_empty()
+            && self.judged.is_empty()
             && self.transitioned.is_empty()
             && self.skipped_back.is_empty()
             && self.frozen.is_empty()
@@ -206,7 +320,7 @@ impl TickSummary {
 ///
 /// ポートはジェネリック引数で受け取り、実アダプターとテストダブルのどちらにも同じ
 /// 制御フローが乗ることを型で示す(ADR-028)。
-pub struct Tick<'a, R, L, K, W, S, P> {
+pub struct Tick<'a, R, L, K, W, S, P, C> {
     config: &'a GlobalConfig,
     state_root: &'a StateRoot,
     worktree_root: &'a WorktreeRoot,
@@ -216,9 +330,10 @@ pub struct Tick<'a, R, L, K, W, S, P> {
     worktrees: &'a W,
     runs: &'a S,
     processes: &'a P,
+    commands: &'a C,
 }
 
-impl<'a, R, L, K, W, S, P> Tick<'a, R, L, K, W, S, P>
+impl<'a, R, L, K, W, S, P, C> Tick<'a, R, L, K, W, S, P, C>
 where
     R: TaskRepository,
     L: ExclusiveLock,
@@ -226,6 +341,7 @@ where
     W: WorktreeManager,
     S: RunStore,
     P: ProcessController,
+    C: CommandRunner,
 {
     /// 読み込み済みのグローバル設定・配置・各ポートを結線する。
     #[allow(clippy::too_many_arguments)]
@@ -239,6 +355,7 @@ where
         worktrees: &'a W,
         runs: &'a S,
         processes: &'a P,
+        commands: &'a C,
     ) -> Self {
         Self {
             config,
@@ -250,6 +367,7 @@ where
             worktrees,
             runs,
             processes,
+            commands,
         }
     }
 
@@ -281,13 +399,32 @@ where
                     .errors
                     .push(TickIssue::CorruptTaskFile { path, message });
             }
-            // 定義依存の判断はすべてスキップして報告する。`Stopped { notified_at: None }`
-            // の再通知だけは定義非依存で行えるが、通知そのものが Issue #3 の担当になる。
+            // 定義依存の判断はすべてスキップして報告する。報告は実行状態によらない —
+            // 修復が要るという事実は通知の成否と独立で、報告を欠くと notify_cmd 未定義の
+            // 破損タスクが毎 tick 無言で消える。
+            //
+            // ただし未通知の凍結への再通知は定義に依存しない(必要な3値はスナップショット
+            // 非依存のフィールドから得られる)ため行う — 欠くと、破損したタスクの凍結が
+            // 永久に通知されない。
             TaskEntry::Record(TaskRecord::SnapshotUnreadable(degraded)) => {
                 summary.errors.push(TickIssue::SnapshotUnreadable {
                     task_id: degraded.id().clone(),
                     message: degraded.snapshot_error().to_owned(),
                 });
+                match degraded.execution() {
+                    ExecutionState::Stopped {
+                        notified_at: None, ..
+                    } => self.notify_degraded(degraded, summary),
+                    ExecutionState::Pending
+                    | ExecutionState::Launching { .. }
+                    | ExecutionState::Running
+                    | ExecutionState::Completed
+                    | ExecutionState::Failed
+                    | ExecutionState::Stopped {
+                        notified_at: Some(_),
+                        ..
+                    } => {}
+                }
             }
             TaskEntry::Record(TaskRecord::Intact(task)) => self.dispatch(task, summary),
         }
@@ -300,27 +437,44 @@ where
             Branch::ConfirmSpawn { recorded_at } => self.confirm_spawn(task, recorded_at, summary),
             // 待機ステータスは tick が進めるものを持たない。
             Branch::Wait => {}
-            // 終端処理(手続きB)は Issue #6 が入れる。
+            // 手続きB(終端処理)は未実装。
             Branch::Cleanup => {}
-            // 観測・判定(手続きD)は Issue #3 が入れる。
-            Branch::Observe => {}
-            // completed からの `advance` は Issue #3 が入れる。
-            Branch::Advance => {}
-            // `notified_at` のない stopped への通知は Issue #3 が入れる。
-            Branch::Notify => {}
+            Branch::Observe => self.observe(task, summary),
+            Branch::Advance => self.advance(task, summary),
+            Branch::Notify => self.notify(task, summary),
+            // 再通知は未通知のものだけを対象とする。
+            Branch::AlreadyNotified => {}
         }
     }
 
-    /// 遷移の結果を永続化し、凍結ならサマリーに記録する。
+    /// タスクステータスを次へ進める。
     ///
-    /// stopped を書いたすべての経路がここを通るため、通知の共通手続きはこの関数の1箇所に
-    /// 置ける(ADR-074)。stopped は `notified_at: None` で永続化されるので、通知が無い間も
-    /// 次以降の tick が catch-up できる。
+    /// 分岐は判定確定(成功)のタスクだけをここへ導くので、前提が成立しないのは手動修復に
+    /// よる破れに限る。修復は人間に委ねる(書き込まない)。
+    fn advance(&self, task: Task, summary: &mut TickSummary) {
+        let id = task.id().clone();
+        match task.advance(self.clock.now()) {
+            Ok(advanced) => match self.commit(&advanced, Freeze::NotFrozen, summary) {
+                Persisted::Saved => summary.transitioned.push(id),
+                Persisted::Failed => {}
+            },
+            Err(error) => self.report_transition(id, error, summary),
+        }
+    }
+
+    /// 遷移の結果を永続化し、凍結ならサマリーに記録して同じ tick で通知する。
+    ///
+    /// stopped を書いたすべての経路がここを通るため、通知の共通手続きはこの1箇所から
+    /// 呼べる。順序は「stopped を書く → 通知を実行する → `notified_at` を追記する」で
+    /// 固定する — 逆にすると、失敗した通知が永久に再送されない。
     fn commit(&self, task: &Task, freeze: Freeze, summary: &mut TickSummary) -> Persisted {
         match self.tasks.save(task) {
             Ok(()) => {
                 match freeze {
-                    Freeze::Frozen => summary.frozen.push(task.id().clone()),
+                    Freeze::Frozen => {
+                        summary.frozen.push(task.id().clone());
+                        self.notify(task.clone(), summary);
+                    }
                     Freeze::NotFrozen => {}
                 }
                 Persisted::Saved
@@ -362,8 +516,9 @@ enum Persisted {
 /// この保存が凍結を意味するか。
 ///
 /// 凍結は遷移の結果であり、遷移を呼んだ側だけが知っている。保存後の状態が Stopped か
-/// どうかで導出すると、既に凍結しているタスクを別の理由で保存する経路(#3 の catch-up
-/// 通知は `mark_notified` した Stopped を保存する)が、過去の凍結を毎 tick 再計上する。
+/// どうかで導出すると、既に凍結しているタスクを別の理由で保存する経路 — `notify` は
+/// `mark_notified` した Stopped を `Freeze::NotFrozen` で保存する — が、過去の凍結を
+/// 毎 tick 再計上する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Freeze {
     /// この遷移が上限超過で凍結させた。
@@ -375,8 +530,9 @@ enum Freeze {
 impl Freeze {
     /// 上限超過で凍結しうる遷移の結果から決める。
     ///
-    /// 前提: 遷移前は凍結ではない(3つの記録系遷移は起動待ち・失敗確定・起動記録済みしか
-    /// 受け付けない)。この前提のもとでのみ、遷移後の Stopped は「今回凍結した」と同値。
+    /// 前提: 遷移前は凍結ではない(記録系の遷移は起動待ち・失敗確定・起動記録済み・
+    /// 起動確認済みのいずれかしか受け付けない)。この前提のもとでのみ、遷移後の Stopped は
+    /// 「今回凍結した」と同値。
     fn of_recorded_failure(task: &Task) -> Self {
         match task.execution_kind() {
             ExecutionStateKind::Stopped => Self::Frozen,
@@ -412,8 +568,10 @@ enum Branch {
     Observe,
     /// 次ステータスへの遷移。
     Advance,
-    /// 未通知の凍結への通知。
+    /// 未通知の凍結の通知。
     Notify,
+    /// 通知済みの凍結 — 何もしない。
+    AlreadyNotified,
 }
 
 /// タスクの分岐を決める。
@@ -431,6 +589,12 @@ fn branch_of(task: &Task) -> Branch {
         },
         ExecutionState::Running => Branch::Observe,
         ExecutionState::Completed => Branch::Advance,
-        ExecutionState::Stopped { .. } => Branch::Notify,
+        ExecutionState::Stopped {
+            notified_at: None, ..
+        } => Branch::Notify,
+        ExecutionState::Stopped {
+            notified_at: Some(_),
+            ..
+        } => Branch::AlreadyNotified,
     }
 }

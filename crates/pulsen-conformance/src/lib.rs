@@ -14,8 +14,8 @@
 //! スイート側に持ち込まないことで、ケースが特定のアダプター専用にならない。
 //!
 //! この性質が成り立つのは TaskRepository / Clock / TaskIdGenerator / ExclusiveLock /
-//! WorktreeManager / RunStore / ProcessController の7ポート。ConfigStore / WorkflowStore の
-//! 入力系フックは **YAML
+//! WorktreeManager / RunStore / ProcessController / CommandRunner の8ポート。
+//! ConfigStore / WorkflowStore の入力系フックは **YAML
 //! ソースを受け取り**、この2ポートのスイートは YAML 表現に結合している — 「YAML 構文
 //! エラー」「重複キー」を前提とする行は、表現そのものを渡す口が無ければ組み立てられない
 //! (ADR-053)。
@@ -83,6 +83,7 @@
 //! 適合スイートとは目的が違う(契約への適合 vs 分岐の網羅)ため、フックとは別の口にする。
 
 pub mod clock;
+pub mod command_runner;
 pub mod config_store;
 pub mod doubles;
 pub mod exclusive_lock;
@@ -96,13 +97,13 @@ pub mod worktree_manager;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use pulsen_domain::definition::{CommandLine, ConfigStore, WorkflowStore};
+use pulsen_domain::definition::{CommandLine, ConfigStore, PlainCommand, WorkflowStore};
 use pulsen_domain::execution::{
-    ExclusiveLock, ProcessController, RunStore, WorktreeManager, WrapperLaunchSpec,
+    CommandRunner, ExclusiveLock, ProcessController, RunStore, WorktreeManager, WrapperLaunchSpec,
 };
 use pulsen_domain::task::{
-    AttemptNumber, BranchName, Clock, RepoPath, RunDirPath, TaskId, TaskIdGenerator,
-    TaskRepository, Timestamp, Workspace, WorktreePath,
+    AttemptNumber, BranchName, Clock, KillIdent, Pid, RepoPath, RunDirPath, TaskId,
+    TaskIdGenerator, TaskRepository, Timestamp, Workspace, WorktreePath,
 };
 
 /// タスクファイルの置き場。
@@ -726,6 +727,146 @@ pub trait ProcessControllerHarness {
 
     /// run ディレクトリに何も書かれていないか(TC-port-process-controller-003)。
     fn run_dir_is_empty(&self, _spec: &WrapperLaunchSpec) -> Option<bool> {
+        None
+    }
+
+    /// 終了を確認済みのプロセスのPID(TC-port-process-controller-007)。
+    fn terminated_pid(&self) -> Option<Pid> {
+        None
+    }
+
+    /// 実行単位に属する全プロセスが生存している実行単位
+    /// (TC-port-process-controller-011/015)。
+    fn live_execution_unit(&self) -> Option<ExecutionUnit> {
+        None
+    }
+
+    /// spawn 元プロセスが終了済みの実行単位と、新規に構成したコントローラ
+    /// (TC-port-process-controller-012)。
+    ///
+    /// 「プロセス内に保持したハンドルに依存しない」ことは、起動した側とも起動時の
+    /// インスタンスとも縁の切れた入力だけで kill できることでしか示せない。
+    fn detached_execution_unit(&self) -> Option<(ExecutionUnit, &Self::Controller)> {
+        None
+    }
+
+    /// ラッパーのみ死亡し、残りのメンバーが実行単位に属したまま生存している実行単位
+    /// (TC-port-process-controller-014/016)。
+    fn orphaned_execution_unit(&self) -> Option<ExecutionUnit> {
+        None
+    }
+
+    /// 実行単位への終了操作自体が失敗する状態の実装
+    /// (TC-port-process-controller-013/016)。
+    ///
+    /// 存在しない終了操作の実体を注入した2つ目のコントローラを返す形にすると、権限にも
+    /// プラットフォームにも依存せず確定的に走る(ADR-076 と同じ手)。
+    fn failing_terminator_controller(&self) -> Option<&Self::Controller> {
+        None
+    }
+}
+
+/// 実行単位1つ分の観測対象。
+///
+/// 期待結果は契約の語彙(「実行単位に属する全プロセスが終了する」)で書くため、ケースは
+/// 同定子とメンバーのPIDだけを受け取り、プラットフォーム固有の機構名に踏み込まない
+/// (ADR-082)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionUnit {
+    /// 永続化された kill 同定子。
+    pub kill_ident: KillIdent,
+    /// 実行単位に属し、生存が確認されているプロセス。
+    pub members: Vec<Pid>,
+}
+
+/// テスト用コマンドに求める振る舞い。
+///
+/// `AgentBehavior` と同じく、ケースは**意味**だけを渡す。標準出力・標準エラーは捕捉されない
+/// 契約なので、観測結果は exit code かコマンド自身が書き出すファイルで表す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandBehavior {
+    /// 指定の exit code で終了する。
+    Exit(i32),
+    /// exit code を持たない終了(シグナル死等)をする。
+    Abort,
+    /// 受け取った引数が指定のトークン列とリテラル一致するなら 0 で終了する。
+    CheckArgs(Vec<String>),
+    /// 指定の環境変数が指定の値なら 0 で終了する。
+    CheckEnv {
+        /// 変数名。
+        name: String,
+        /// 期待する値。
+        value: String,
+    },
+    /// 作業ディレクトリが指定のパスなら 0 で終了する。
+    CheckCwd(PathBuf),
+    /// 標準出力・標準エラーへそれぞれ既知の文字列を書いて 0 で終了する。
+    Print {
+        /// 標準出力へ書く内容。
+        stdout: String,
+        /// 標準エラーへ書く内容。
+        stderr: String,
+    },
+    /// 指定の時間だけ実行を続けてから 0 で終了する。
+    Sleep(Duration),
+    /// 指定の時間だけ実行を続け、終了直前に証跡を残して 0 で終了する。
+    Record {
+        /// 証跡を残すまでの実行時間。
+        after: Duration,
+        /// 証跡の置き場。
+        evidence: PathBuf,
+    },
+}
+
+/// CommandRunner の適合スイートが要求する環境。
+pub trait CommandRunnerHarness {
+    /// 検証対象。
+    type Runner: CommandRunner;
+
+    /// 検証対象を返す。
+    fn runner(&self) -> &Self::Runner;
+
+    /// 指定の振る舞いをするテスト用コマンド。
+    fn command(&self, _behavior: CommandBehavior) -> Option<PlainCommand> {
+        None
+    }
+
+    /// 存在しないコマンド名(TC-port-command-runner-003)。
+    fn missing_command(&self) -> Option<PlainCommand> {
+        None
+    }
+
+    /// 実行できない実体を指すコマンド(TC-port-command-runner-004)。
+    ///
+    /// 制限が実際に効いたことを確認してから `Some` を返す。
+    fn non_executable_command(&self) -> Option<PlainCommand> {
+        None
+    }
+
+    /// 呼び出しプロセスに既に設定されている環境変数の (名前, 値)
+    /// (TC-port-command-runner-008/010)。
+    ///
+    /// 「設定する」ではなく「既にあるものを教える」形にするのは、実行中プロセスの環境の
+    /// 書き換えが安全に行えないため。継承の検証にはどちらでも足りる。
+    fn caller_env(&self) -> Option<(String, String)> {
+        None
+    }
+
+    /// 呼び出しプロセスに設定されていない変数名(TC-port-command-runner-009)。
+    fn absent_env_name(&self) -> Option<String> {
+        None
+    }
+
+    /// 呼び出しプロセスの作業ディレクトリ(TC-port-command-runner-011)。
+    fn caller_current_dir(&self) -> Option<PathBuf> {
+        None
+    }
+
+    /// まだ存在しない証跡の置き場(TC-port-command-runner-012/015)。
+    ///
+    /// 呼び出しごとに別のパスを返す契約。同じパスを返すと、前のケースの証跡が残って
+    /// 「終了させられている」ことの観測が壊れる。
+    fn evidence_path(&self) -> Option<PathBuf> {
         None
     }
 }

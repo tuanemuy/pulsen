@@ -7,8 +7,8 @@
 
 use pulsen_domain::definition::{AgentInput, CommandLine};
 use pulsen_domain::execution::{
-    ExclusiveLock, Io, ProcessController, RunStore, SpawnError, WorktreeError, WorktreeManager,
-    WrapperLaunchSpec,
+    CommandRunner, ExclusiveLock, Io, ProcessController, RunStore, SpawnError, WorktreeError,
+    WorktreeManager, WrapperLaunchSpec,
 };
 use pulsen_domain::task::{
     Clock, Task, TaskRepository, ToolFailureKind, WorkspacePlanner, WorktreePath,
@@ -16,7 +16,7 @@ use pulsen_domain::task::{
 
 use super::{Freeze, Persisted, Tick, TickIssue, TickSummary};
 
-impl<R, L, K, W, S, P> Tick<'_, R, L, K, W, S, P>
+impl<R, L, K, W, S, P, C> Tick<'_, R, L, K, W, S, P, C>
 where
     R: TaskRepository,
     L: ExclusiveLock,
@@ -24,6 +24,7 @@ where
     W: WorktreeManager,
     S: RunStore,
     P: ProcessController,
+    C: CommandRunner,
 {
     /// worktree を確保し、コマンドを展開して、ラッパーをデタッチ起動する。
     pub(super) fn launch(&self, task: Task, input: AgentInput, summary: &mut TickSummary) {

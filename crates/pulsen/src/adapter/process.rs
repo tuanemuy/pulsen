@@ -11,11 +11,13 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use pulsen_domain::definition::CommandLine;
 use pulsen_domain::execution::{
-    ExitCode, Io, ProcessController, SpawnError, WrapperIdentity, WrapperLaunchSpec,
+    ExitCode, Io, KillError, ProcessController, RemnantOutcome, SpawnError, WrapperIdentity,
+    WrapperLaunchSpec,
 };
 use pulsen_domain::task::{Clock, KillIdent, Pid, ProcessStartTime, StartTimeRecord, WorktreePath};
 
@@ -36,6 +38,31 @@ pub const COMMAND_SEPARATOR: &str = "--";
 const NOT_EXECUTABLE: i32 = 126;
 /// コマンドが存在しないことの符号化値(シェル慣例)。
 const NOT_FOUND: i32 = 127;
+
+/// 終了操作1段につき、実行単位の消滅を待つ上限。
+///
+/// tick はこの待ちのあいだ排他ロックを保持するので、判定の timeout(既定60秒)に対して
+/// 十分小さく取る。昇格を持つプラットフォーム([`terminate::ESCALATES`])では終了操作が
+/// 最大2段になるので、1回の終了で待ちうる最大はこの2倍になる。
+const TERMINATION_GRACE: Duration = Duration::from_secs(2);
+/// 消滅を確かめる間隔。
+const TERMINATION_POLL: Duration = Duration::from_millis(50);
+
+/// 終了操作の段。
+///
+/// POSIX は捕捉できる終了から始め、消えなければ捕捉できない終了へ昇格する。契約が `kill` の
+/// `Ok` に求めるのは「実行単位に属する全プロセスが終了する」ことなので、終了を捕まえる
+/// エージェントを生かしたまま成功を返さない。
+///
+/// 捕捉できる終了を持たないプラットフォームでは両者が同じ操作に落ちる。そのことは
+/// [`terminate::ESCALATES`] が宣言する。
+#[derive(Debug, Clone, Copy)]
+enum Termination {
+    /// 実行単位に後始末の余地を与える終了。
+    Graceful,
+    /// 捕捉できない終了。
+    Forced,
+}
 
 /// 同定情報の取得元。
 ///
@@ -64,6 +91,29 @@ impl IdentitySource {
     }
 }
 
+/// 実行単位の終了操作の実体。
+///
+/// 終了は外部コマンドの起動で行う(ADR-002)。取得元と同じく構築時に注入できるようにして、
+/// 適合テストが「終了操作自体が失敗する状況」を別のインスタンスとして作れるようにする。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminatorSource(PathBuf);
+
+impl TerminatorSource {
+    /// 終了操作の実体のパスを包む。
+    pub fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+
+    /// このプラットフォームの既定の実体。
+    pub fn platform_default() -> Self {
+        Self(terminate::default_source())
+    }
+
+    fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// 1回の観測から得られる同定情報。
 ///
 /// 起動時刻とプロセスグループを同じ観測から返すのは、どちらも POSIX では同じ1回の
@@ -79,6 +129,7 @@ struct ObservedProcess {
 pub struct SystemProcessController {
     self_exe: Option<PathBuf>,
     identity_source: IdentitySource,
+    terminator_source: TerminatorSource,
     clock: SystemClock,
 }
 
@@ -91,7 +142,19 @@ impl SystemProcessController {
         Self {
             self_exe: Some(self_exe),
             identity_source,
+            terminator_source: TerminatorSource::platform_default(),
             clock,
+        }
+    }
+
+    /// 終了操作の実体を差し替える。
+    ///
+    /// 既定は絶対パス(または PATH 解決の固定名)で、通常の運用では触らない。適合ケースが
+    /// 「終了操作自体が失敗する」状況を注入するための口として公開する。
+    pub fn with_terminator_source(self, terminator_source: TerminatorSource) -> Self {
+        Self {
+            terminator_source,
+            ..self
         }
     }
 
@@ -108,7 +171,97 @@ impl SystemProcessController {
         Self {
             self_exe: None,
             identity_source,
+            terminator_source: TerminatorSource::platform_default(),
             clock,
+        }
+    }
+
+    /// 実行単位を終了させ、成否を消滅の観測で決める。
+    ///
+    /// 成否を終了操作の終了ステータスに預けない。ステータスの規則は実体ごとに割れており
+    /// (実測: procps-ng の `kill` は `--` が無いと**何も終了させずに** 0 を返し、busybox の
+    /// `kill` は `--` をオペランドとして読んで**終了させたうえで** 1 を返す)、契約が求めるのは
+    /// 「実行単位に属する全プロセスが終了する」という結果だけである。
+    ///
+    /// 消滅を観測できないまま終了ステータスが成功なら、成功と読む。呼び出し側がメンバーの親の
+    /// ままだと、終了したプロセスがゾンビとして列挙に残りうるためで、生存の観測だけを失敗に
+    /// 写像すると実際には終了しているのに毎 tick 偽の失敗が積まれる。この帰結として、既に
+    /// 消滅している実行単位への終了は `Ok` になる(目標とする状態が満たされている)。
+    fn terminate(&self, target: &terminate::UnitTarget) -> Result<(), KillError> {
+        let graceful = self.run_termination(Termination::Graceful, target)?;
+        if self.gone_within_grace(target) {
+            return Ok(());
+        }
+        // 昇格を持たないプラットフォームでは2段目が1段目と同じ操作の再実行になる。得るものが
+        // 無いまま猶予ぶん排他ロックを保持し、同定子が pid そのものなら pid 再利用による誤殺の
+        // 窓をもう一度開くので、起動せずに終了ステータスの評価へ進む。
+        let forced = if terminate::ESCALATES {
+            let forced = self.run_termination(Termination::Forced, target)?;
+            if self.gone_within_grace(target) {
+                return Ok(());
+            }
+            Some(forced)
+        } else {
+            None
+        };
+
+        if graceful.status.success()
+            || forced
+                .as_ref()
+                .is_some_and(|forced| forced.status.success())
+        {
+            return Ok(());
+        }
+        let last = forced.unwrap_or(graceful);
+        let stderr = String::from_utf8_lossy(&last.stderr);
+        let detail = stderr.trim();
+        Err(KillError::Failed {
+            message: format!(
+                "実行単位 ({}) を終了できない: {}",
+                target.operand(),
+                // 終了操作の実体は失敗しても何も書かないことがある。原因が空文字列になると
+                // 運用者が何も読めないので、そのときは終了ステータスを添える。
+                if detail.is_empty() {
+                    last.status.to_string()
+                } else {
+                    detail.to_owned()
+                }
+            ),
+        })
+    }
+
+    /// 終了操作を1回起動する。実体を起動できないことだけが即座の失敗になる。
+    fn run_termination(
+        &self,
+        step: Termination,
+        target: &terminate::UnitTarget,
+    ) -> Result<Output, KillError> {
+        terminate::command(&self.terminator_source, step, target)
+            .output()
+            .map_err(|error| KillError::Failed {
+                message: format!(
+                    "終了操作 ({}) を起動できない: {error}",
+                    self.terminator_source.as_path().display()
+                ),
+            })
+    }
+
+    /// 実行単位のメンバーが消えたことを、上限つきのポーリングで確かめる。
+    ///
+    /// 観測機構の失敗(`Err(Io)`)は「消えたと確かめられなかった」として即座に返す。壊れた
+    /// 取得元は待っても直らず、待つあいだ tick は排他ロックを保持したままになる。
+    fn gone_within_grace(&self, target: &terminate::UnitTarget) -> bool {
+        let deadline = Instant::now() + TERMINATION_GRACE;
+        loop {
+            match identity::unit_is_live(&self.identity_source, target) {
+                Ok(false) => return true,
+                Ok(true) => {}
+                Err(Io::Failed { .. }) => return false,
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(TERMINATION_POLL);
         }
     }
 }
@@ -196,10 +349,49 @@ impl ProcessController for SystemProcessController {
             Err(_) => ExitCode::new(NOT_EXECUTABLE),
         }
     }
+
+    fn starttime_of(&self, pid: Pid) -> Result<Option<ProcessStartTime>, Io> {
+        // 三値をそのまま返す。`Ok(None)`(不在)を `Err(Io)`(機構の失敗)へ畳むと、
+        // 死亡したプロセスが running のまま永久に滞留する。
+        Ok(identity::observe(&self.identity_source, pid)?.map(|observed| observed.starttime))
+    }
+
+    fn kill(&self, ident: &KillIdent) -> Result<(), KillError> {
+        // 呼び出し前提として照合(`IdentityCheck` が `Alive`)は済んでいる。残るのは同定子が
+        // 実行単位を指す形かどうかで、満たさなければ終了操作を1度も起動せずに報告する。
+        let target = terminate::UnitTarget::parse(ident).ok_or_else(|| KillError::Failed {
+            message: format!(
+                "実行単位を一意に指さない同定子 ({}) には終了操作を行わない",
+                ident.as_str()
+            ),
+        })?;
+        self.terminate(&target)
+    }
+
+    fn try_kill_remnants(&self, ident: &KillIdent) -> RemnantOutcome {
+        // **列挙できたときだけ**終了を実行する。これが分離するのは「実行単位が既に消滅して
+        // いる」場合で、そこへ終了を投げずに `NotIdentifiable` を返す。ポートの入力が
+        // `KillIdent` だけである以上、その識別子が別の実行単位へ再利用されていることは
+        // ここでは検出できない — starttime 照合が PID 再利用に対して持つ強さは無い
+        // (ADR-002)。
+        let Some(target) = terminate::UnitTarget::parse(ident) else {
+            return RemnantOutcome::NotIdentifiable;
+        };
+        match identity::unit_is_live(&self.identity_source, &target) {
+            Ok(true) => match self.terminate(&target) {
+                Ok(()) => RemnantOutcome::Killed,
+                Err(KillError::Failed { message }) => RemnantOutcome::Failed { message },
+            },
+            Ok(false) | Err(Io::Failed { .. }) => RemnantOutcome::NotIdentifiable,
+        }
+    }
 }
 
 /// 終了状態を符号化値にする。
-fn encode(status: &ExitStatus) -> i32 {
+///
+/// `run_agent` と `CommandRunner` が共有する — エージェントと判定・通知コマンドで
+/// シグナル死の見え方が変わると、同じ結末が経路によって別の値になる。
+pub(crate) fn encode(status: &ExitStatus) -> i32 {
     match status.code() {
         Some(code) => code,
         // exit code を持たない終了(シグナル死等)。
@@ -378,6 +570,149 @@ mod inheritance {
     }
 }
 
+/// POSIX の実行単位の終了。
+///
+/// `KillIdent` は `-<pgid>` の形で作られている。
+#[cfg(unix)]
+mod terminate {
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    use pulsen_domain::task::KillIdent;
+
+    use super::{Termination, TerminatorSource};
+
+    /// 段によって終了操作が変わるか。
+    ///
+    /// `-TERM` は捕捉できる終了で、無視する実行単位が残りうる。`-KILL` への昇格は別の操作で
+    /// あり、1段目で消えなかった対象に対して結果が変わる。
+    pub const ESCALATES: bool = true;
+
+    /// 実行単位として受理する最小のプロセスグループID。
+    ///
+    /// POSIX の `kill` で `-1` は「シグナルを送れる全プロセス」、`-0` / `0` は「呼び出し側の
+    /// プロセスグループ」= tick 自身と呼び出し元シェルを指す。1 は init のグループで、
+    /// いずれもタスクの実行単位ではない。
+    const MIN_PGID: u32 = 2;
+
+    /// 終了操作を向けられる実行単位。
+    ///
+    /// `KillIdent` は非空しか検査しない永続化された不透明値で、形式を知っているのは
+    /// アダプターだけである(ADR-075)。手で編集された・破損した帳簿からも到達しうるため、
+    /// 形式の検査は境界で1度だけ行い、満たさない値からはこの型を作らない。
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct UnitTarget(u32);
+
+    impl UnitTarget {
+        /// 同定子をプラットフォームの形式として読む。
+        pub fn parse(ident: &KillIdent) -> Option<Self> {
+            let pgid: u32 = ident.as_str().strip_prefix('-')?.parse().ok()?;
+            (pgid >= MIN_PGID).then_some(Self(pgid))
+        }
+
+        /// メンバーの列挙に使うプロセスグループID。
+        pub fn group(self) -> u32 {
+            self.0
+        }
+
+        /// 終了操作へ渡すオペランド。
+        ///
+        /// 読み取った値から組み直す。10進の PGID は組み直しても指す対象が変わらず、変わり
+        /// うる表記(先頭の符号・空白)はここへ来る前に弾かれている。
+        pub fn operand(self) -> String {
+            format!("-{}", self.0)
+        }
+    }
+
+    /// 既定の実体。取得元と同じく絶対パスで固定する(PATH の違いで対象が変わらない)。
+    pub fn default_source() -> PathBuf {
+        PathBuf::from("/bin/kill")
+    }
+
+    /// シグナルの後に `--` を置き、以降をオペランドとして渡す。
+    ///
+    /// オペランドは `-<pgid>` の形でオプションと字面で区別できない。`--` が無いと procps-ng の
+    /// `kill` は `-<pgid>` をシグナル指定として読み、**何も終了させずに** 0 を返す(実測)。
+    /// `--` 自体をオペランドとして読む実体(busybox)では終了させたうえで非0を返すが、成否は
+    /// 終了ステータスではなく消滅の観測で決めるため結果に現れない。
+    pub fn command(source: &TerminatorSource, step: Termination, target: &UnitTarget) -> Command {
+        let signal = match step {
+            Termination::Graceful => "-TERM",
+            Termination::Forced => "-KILL",
+        };
+        let mut command = Command::new(source.as_path());
+        command
+            .arg(signal)
+            .arg("--")
+            .arg(target.operand())
+            .stdin(Stdio::null());
+        command
+    }
+}
+
+/// Windows の実行単位の終了。
+///
+/// `KillIdent` は `<pid>` の形で作られている。プロセスツリーごと終了させる。
+#[cfg(windows)]
+mod terminate {
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+
+    use pulsen_domain::task::KillIdent;
+
+    use super::{Termination, TerminatorSource};
+
+    /// 段によって終了操作が変わるか。
+    ///
+    /// [`command`] が `Graceful` と `Forced` のどちらにも同じ `taskkill /T /F` を返す
+    /// (捕捉できる終了が無い)ので、2段目は1段目の再実行にしかならない。
+    pub const ESCALATES: bool = false;
+
+    /// 終了操作を向けられる実行単位。理由は POSIX 側と同じ。
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct UnitTarget(u32);
+
+    impl UnitTarget {
+        /// 同定子をプラットフォームの形式として読む。
+        ///
+        /// 0 はどのプロセスも指さない。
+        pub fn parse(ident: &KillIdent) -> Option<Self> {
+            let pid: u32 = ident.as_str().parse().ok()?;
+            (pid != 0).then_some(Self(pid))
+        }
+
+        /// メンバーの観測に使う pid。
+        pub fn pid(self) -> u32 {
+            self.0
+        }
+
+        /// 終了操作へ渡すオペランド。
+        pub fn operand(self) -> String {
+            self.0.to_string()
+        }
+    }
+
+    /// 既定の実体。取得元と同じ理由で PATH 解決の名前のままにする。
+    pub fn default_source() -> PathBuf {
+        PathBuf::from("taskkill")
+    }
+
+    pub fn command(source: &TerminatorSource, step: Termination, target: &UnitTarget) -> Command {
+        // 終了操作はプロセスツリーごとの強制終了1段しかない。捕捉できる終了が無いので、
+        // 昇格しても同じ操作になる(`ESCALATES` が偽である根拠)。
+        let flags = match step {
+            Termination::Graceful | Termination::Forced => ["/T", "/F"],
+        };
+        let mut command = Command::new(source.as_path());
+        command
+            .args(flags)
+            .arg("/PID")
+            .arg(target.operand())
+            .stdin(Stdio::null());
+        command
+    }
+}
+
 /// シグナル等による終了を POSIX 慣例の `128+シグナル番号` に符号化する。
 #[cfg(unix)]
 fn signal_code(status: &ExitStatus) -> i32 {
@@ -403,6 +738,7 @@ mod identity {
     use pulsen_domain::execution::Io;
     use pulsen_domain::task::{KillIdent, Pid, ProcessStartTime};
 
+    use super::terminate::UnitTarget;
     use super::{IdentitySource, ObservedProcess};
 
     /// 既定の取得元。
@@ -420,7 +756,7 @@ mod identity {
     /// `lstart` の表現はロケールとタイムゾーンで変わる(実測: 既定 `水 8/12 20:04:53 2026`
     /// / `LC_ALL=C` `Wed Aug 12 20:04:53 2026` / `LC_ALL=C TZ=UTC` `Wed Aug 12 11:04:53
     /// 2026`)。記録した tick と照合する tick で環境が違えば、生存中のプロセスを Dead と
-    /// 誤判定して同一 worktree での並走に至るため、取得時の環境をここで固定する。
+    /// 誤判定して同一 worktree での並走に至るため、取得は環境を固定して行う。
     pub fn observe(source: &IdentitySource, pid: Pid) -> Result<Option<ObservedProcess>, Io> {
         let output = identity_command(source, pid)
             .output()
@@ -468,13 +804,53 @@ mod identity {
         }))
     }
 
+    /// 実行単位にメンバーが1つでも生きているか。
+    ///
+    /// 分けられるのは「実行単位が既に消滅している」場合だけで、PGID が別の実行単位へ
+    /// 再利用されていれば生存として返る。
+    pub fn unit_is_live(source: &IdentitySource, target: &UnitTarget) -> Result<bool, Io> {
+        let output = unit_command(source, target.group())
+            .output()
+            .map_err(|error| Io::Failed {
+                message: format!(
+                    "実行単位の列挙元 ({}) を起動できない: {error}",
+                    source.as_path().display()
+                ),
+            })?;
+        // 該当が無いときは終了ステータス非0・stdout 空になる(`observe` と同じ規則)。
+        // 出力を伴う異常終了は列挙元そのものの失敗として分ける。呼び出し側の結末は
+        // `Ok(false)` と同じ `NotIdentifiable` になる(ADR-002 の写像)が、`terminate` は
+        // 消滅の観測とは別に「観測できなかった」として読み、このモジュールの単体テストは
+        // 取得元の異常をこの区別で固定する。
+        if !output.status.success() && !output.stdout.is_empty() {
+            return Err(Io::Failed {
+                message: format!("実行単位の列挙が異常終了した ({})", target.operand()),
+            });
+        }
+        Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+    }
+
     /// 環境を固定した取得コマンド。
     fn identity_command(source: &IdentitySource, pid: Pid) -> Command {
-        let mut command = Command::new(source.as_path());
+        let mut command = fixed_env_command(source);
+        command.args(["-o", "lstart=,pgid=", "-p", &pid.get().to_string()]);
         command
-            .args(["-o", "lstart=,pgid=", "-p", &pid.get().to_string()])
-            .env("LC_ALL", "C")
-            .env("TZ", "UTC");
+    }
+
+    /// 環境を固定した列挙コマンド。
+    fn unit_command(source: &IdentitySource, pgid: u32) -> Command {
+        let mut command = fixed_env_command(source);
+        command.args(["-o", "pid=", "-g", &pgid.to_string()]);
+        command
+    }
+
+    /// 取得元を、出力表現を左右する環境変数を固定して起動する。
+    ///
+    /// 同定情報を読む経路をすべてこの環境に通す。記録した tick と照合する tick で表現が
+    /// 変われば、生存中のプロセスを Dead と誤判定して同一 worktree での並走に至る。
+    fn fixed_env_command(source: &IdentitySource) -> Command {
+        let mut command = Command::new(source.as_path());
+        command.env("LC_ALL", "C").env("TZ", "UTC");
         // 周囲の設定が残ると `LC_ALL` / `TZ` の指定より優先されうる。
         command.env_remove("LANG");
         command.env_remove("LC_TIME");
@@ -503,6 +879,12 @@ mod identity {
             IdentitySource::platform_default()
         }
 
+        /// 形式を満たす同定子から作った実行単位。
+        fn target(pgid: u32) -> UnitTarget {
+            let ident = KillIdent::parse(format!("-{pgid}")).expect("形式を満たす");
+            UnitTarget::parse(&ident).expect("実行単位を指す")
+        }
+
         #[test]
         fn 同一プロセスの2回の観測は等価な起動時刻を返す() {
             let pid = Pid::new(std::process::id());
@@ -518,20 +900,67 @@ mod identity {
         }
 
         #[test]
-        fn 取得はロケールとタイムゾーンを固定した環境で行われる() {
-            let command = identity_command(&source(), Pid::new(1));
+        fn 取得元を叩く経路はどれもロケールとタイムゾーンを固定した環境で行われる() {
+            for command in [
+                identity_command(&source(), Pid::new(1)),
+                unit_command(&source(), 1),
+            ] {
+                let fixed: Vec<_> = command.get_envs().collect();
+                assert!(fixed.contains(&(
+                    std::ffi::OsStr::new("LC_ALL"),
+                    Some(std::ffi::OsStr::new("C"))
+                )));
+                assert!(fixed.contains(&(
+                    std::ffi::OsStr::new("TZ"),
+                    Some(std::ffi::OsStr::new("UTC"))
+                )));
+                assert!(fixed.contains(&(std::ffi::OsStr::new("LANG"), None)));
+                assert!(fixed.contains(&(std::ffi::OsStr::new("LC_TIME"), None)));
+            }
+        }
 
-            let fixed: Vec<_> = command.get_envs().collect();
-            assert!(fixed.contains(&(
-                std::ffi::OsStr::new("LC_ALL"),
-                Some(std::ffi::OsStr::new("C"))
-            )));
-            assert!(fixed.contains(&(
-                std::ffi::OsStr::new("TZ"),
-                Some(std::ffi::OsStr::new("UTC"))
-            )));
-            assert!(fixed.contains(&(std::ffi::OsStr::new("LANG"), None)));
-            assert!(fixed.contains(&(std::ffi::OsStr::new("LC_TIME"), None)));
+        #[test]
+        fn 壊した列挙元では不在ではなく機構の失敗になる() {
+            let broken = IdentitySource::new(PathBuf::from("/no/such/identity-source"));
+
+            assert!(matches!(
+                unit_is_live(&broken, &target(4242)),
+                Err(Io::Failed { .. })
+            ));
+        }
+
+        /// 指定の標準出力と終了ステータスだけを返す列挙元を置く。
+        fn fake_source(
+            dir: &tempfile::TempDir,
+            name: &str,
+            stdout: &str,
+            code: u8,
+        ) -> IdentitySource {
+            use std::os::unix::fs::PermissionsExt;
+
+            let path = dir.path().join(name);
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\nprintf '{stdout}'\nexit {code}\n"),
+            )
+            .expect("書き出せる");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("実行権を与えられる");
+            IdentitySource::new(path)
+        }
+
+        #[test]
+        fn 列挙元の異常終了は出力の有無で不在と機構の失敗に分かれる() {
+            let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
+
+            assert_eq!(
+                unit_is_live(&fake_source(&dir, "silent", "", 1), &target(4242)),
+                Ok(false)
+            );
+            assert!(matches!(
+                unit_is_live(&fake_source(&dir, "noisy", "usage: ps", 1), &target(4242)),
+                Err(Io::Failed { .. })
+            ));
         }
 
         #[test]
@@ -599,6 +1028,7 @@ mod identity {
     use pulsen_domain::execution::Io;
     use pulsen_domain::task::{KillIdent, Pid, ProcessStartTime};
 
+    use super::terminate::UnitTarget;
     use super::{IdentitySource, ObservedProcess};
 
     /// `<procfs_root>/<pid>/stat` の「最後の `)` より後ろ」における位置。
@@ -683,6 +1113,39 @@ mod identity {
             starttime,
             kill_ident,
         }))
+    }
+
+    /// 実行単位にメンバーが1つでも生きているか。理由は POSIX 側と同じ。
+    pub fn unit_is_live(source: &IdentitySource, target: &UnitTarget) -> Result<bool, Io> {
+        let root = source.as_path();
+        if !matches!(root.try_exists(), Ok(true)) {
+            return Err(Io::Failed {
+                message: format!("実行単位の列挙元 ({}) が無い", root.display()),
+            });
+        }
+        let pgid = target.group();
+
+        let entries = std::fs::read_dir(root).map_err(|error| Io::Failed {
+            message: format!("{}: 列挙できない: {error}", root.display()),
+        })?;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.parse::<u32>().is_err() {
+                continue;
+            }
+            let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                continue;
+            };
+            let Some((_, tail)) = stat.rsplit_once(')') else {
+                continue;
+            };
+            let fields: Vec<&str> = tail.split_whitespace().collect();
+            if fields.get(PGRP_INDEX).and_then(|pgrp| pgrp.parse().ok()) == Some(pgid) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     #[cfg(test)]
@@ -847,6 +1310,7 @@ mod identity {
     use pulsen_domain::execution::Io;
     use pulsen_domain::task::{KillIdent, Pid, ProcessStartTime};
 
+    use super::terminate::UnitTarget;
     use super::{IdentitySource, ObservedProcess};
 
     /// 既定の取得元。
@@ -902,7 +1366,7 @@ mod identity {
         if trimmed.is_empty() {
             // 機構の失敗は終了コードで判定済みなので、完走した空出力は対象の不在だけを表す。
             // stderr の非空を機構の失敗に足すと、警告・情報ストリームを stderr に流した完走が
-            // 死亡したプロセスを `Err(Io)` に畳み、#3 で running のまま永久滞留する。
+            // 死亡したプロセスを `Err(Io)` に畳み、running のまま永久滞留する。
             return Ok(None);
         }
         let starttime = ProcessStartTime::parse(trimmed.to_owned()).map_err(|_| Io::Failed {
@@ -917,6 +1381,16 @@ mod identity {
             starttime,
             kill_ident,
         }))
+    }
+
+    /// 実行単位にメンバーが1つでも生きているか。
+    ///
+    /// 同定子はラッパー自身の pid であり、`try_kill_remnants` の呼び出し前提はそのラッパーが
+    /// 死亡した後なので、この観測は常に `Ok(None)` → `NotIdentifiable` になる。実行単位を
+    /// ラッパーと別に辿り直す手段(ジョブオブジェクト)を持たない現在の設計の帰結で、
+    /// `taskkill /T` はツリーの根が死んでいれば効かないため誤殺には至らない。
+    pub fn unit_is_live(source: &IdentitySource, target: &UnitTarget) -> Result<bool, Io> {
+        Ok(observe(source, Pid::new(target.pid()))?.is_some())
     }
 }
 
@@ -1000,6 +1474,143 @@ mod tests {
 
         assert_eq!(code, ExitCode::new(NOT_EXECUTABLE));
         assert!(!base.path().join("stdout.log").exists(), "ログも作られない");
+    }
+
+    /// 起動されると痕跡を残す終了操作の実体と、その痕跡のパス。
+    ///
+    /// 「終了操作を1度も起動しない」は結果の値では観測できないので、起動そのものを外から
+    /// 見える副作用にする。
+    #[cfg(unix)]
+    fn tracing_terminator(dir: &Path, code: u8) -> (TerminatorSource, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let trace = dir.join("terminator-trace");
+        let path = dir.join("terminator");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\nexit {code}\n",
+                trace.display()
+            ),
+        )
+        .expect("書き出せる");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("実行権を与えられる");
+        (TerminatorSource::new(path), trace)
+    }
+
+    /// 実行単位を1つ起こし、消滅を確認してからその同定子を返す。
+    #[cfg(unix)]
+    fn vanished_unit() -> KillIdent {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = Command::new("/bin/sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("sleep を起動できる");
+        let pgid = child.id();
+        child.kill().expect("終了させられる");
+        child.wait().expect("回収できる");
+        KillIdent::parse(format!("-{pgid}")).expect("形式を満たす")
+    }
+
+    /// 実行単位にメンバーが生きているか。
+    #[cfg(unix)]
+    fn unit_is_live(ident: &KillIdent) -> bool {
+        let target = terminate::UnitTarget::parse(ident).expect("実行単位を指す");
+        identity::unit_is_live(&IdentitySource::platform_default(), &target).expect("観測できる")
+    }
+
+    /// 実行単位を一意に指さない同定子。
+    ///
+    /// `-1` は「シグナルを送れる全プロセス」、`-0` / `0` は呼び出し側のプロセスグループ
+    /// (tick 自身と呼び出し元シェル)を指し、残りはどのプロセスも指さない。
+    #[cfg(unix)]
+    const UNTARGETABLE_IDENTS: [&str; 6] = ["-1", "-0", "0", "-", "abc", "12345"];
+
+    #[cfg(unix)]
+    #[test]
+    fn 実行単位を一意に指さない同定子へのkillは終了操作を起動せず失敗を返す() {
+        let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let (terminator, trace) = tracing_terminator(dir.path(), 0);
+        let controller = controller().with_terminator_source(terminator);
+
+        for ident in UNTARGETABLE_IDENTS {
+            let ident = KillIdent::parse(ident.to_owned()).expect("非空");
+
+            assert!(
+                matches!(controller.kill(&ident), Err(KillError::Failed { .. })),
+                "{}",
+                ident.as_str()
+            );
+        }
+
+        assert!(!trace.exists(), "終了操作が1度も起動されていない");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 実行単位を一意に指さない同定子への残存終了は終了操作を起動せず同定不能になる() {
+        let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let (terminator, trace) = tracing_terminator(dir.path(), 0);
+        let controller = controller().with_terminator_source(terminator);
+
+        for ident in UNTARGETABLE_IDENTS {
+            let ident = KillIdent::parse(ident.to_owned()).expect("非空");
+
+            assert!(
+                matches!(
+                    controller.try_kill_remnants(&ident),
+                    RemnantOutcome::NotIdentifiable
+                ),
+                "{}",
+                ident.as_str()
+            );
+        }
+
+        assert!(!trace.exists(), "終了操作が1度も起動されていない");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 終了ステータスが非0でも実行単位が消えていれば成功になる() {
+        let dir = tempfile::tempdir().expect("一時ディレクトリを作れる");
+        let (terminator, trace) = tracing_terminator(dir.path(), 1);
+        let controller = controller().with_terminator_source(terminator);
+        let ident = vanished_unit();
+
+        assert!(controller.kill(&ident).is_ok());
+        assert!(trace.is_file(), "終了操作は起動されている");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 猶予のうちに消えない実行単位は捕捉できない終了へ昇格させる() {
+        use std::os::unix::process::CommandExt;
+
+        // 終了を無視する実行単位を、直接の子が残らない形で起こす。呼び出し側が親のままだと
+        // 終了したメンバーがゾンビとして列挙に残り、消滅の観測にならない。
+        let mut launcher = Command::new("/bin/sh")
+            .arg("-c")
+            .arg("trap '' TERM; (while :; do sleep 1; done) &")
+            .process_group(0)
+            .spawn()
+            .expect("sh を起動できる");
+        let ident = KillIdent::parse(format!("-{}", launcher.id())).expect("形式を満たす");
+        launcher.wait().expect("回収できる");
+        let deadline = Instant::now() + TERMINATION_GRACE;
+        while !unit_is_live(&ident) && Instant::now() < deadline {
+            std::thread::sleep(TERMINATION_POLL);
+        }
+        assert!(unit_is_live(&ident), "実行単位が起きている");
+
+        assert!(controller().kill(&ident).is_ok());
+
+        assert!(
+            !unit_is_live(&ident),
+            "実行単位に属する全プロセスが終了する"
+        );
     }
 
     /// シグナル死の符号化(`128+シグナル番号`)は POSIX の慣例で、適合スイート側は
