@@ -1,0 +1,34 @@
+# ADR: ConfigStore / WorkflowStore の適合スイートは YAML ソースを受け取る
+
+## ステータス
+
+承認済み
+
+## コンテキスト
+
+`.adr/1-port-conformance-suite-and-harness-hooks.md` は、ハーネスのフックが「破損・状況の**意味**だけを受け取る」ことをスイートの設計原則にした。生の永続化表現をスイートに持ち込まないことで、ケースがアダプター専用にならず、別の実装（in-memory 等）でも同じ行を通せる。
+
+ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` / `put_named_with_ext` / `put_at_absolute` / `put_at_relative`）は、この原則の例外になっている。いずれも YAML のテキストを受け取る。
+
+意味だけを渡す形（構造化した入力値を渡し、表現への直列化をハーネスに任せる形）にできない行がある。
+
+- TC-port-config-store-014: YAML 構文エラー
+- TC-port-workflow-store-017: YAML 構文エラー・重複キー
+
+どちらも「構造として成立していない表現」が前提であり、構造化した値では表現できない。`.adr/1-yaml-value-then-hand-written-schema-walk.md`（YAML の値表現を経由して手書きでスキーマを走査する）と `WorkflowParseError::YamlSyntax` がアダプター生成であることも、この前提が表現の層に属することを示している。
+
+## 決定
+
+ConfigStore / WorkflowStore のスイートは YAML 表現に結合していることを、`HOOKS.md` と `pulsen-conformance` のクレートドキュメントに明記する。「フックを実装するだけで別の実装にも適用できる」という性質の適用範囲は、TaskRepository / Clock / TaskIdGenerator / ExclusiveLock / WorktreeManager の5ポートとする。
+
+コードの構造は変えない。
+
+## 検討した代替案
+
+- 構文エラー系の行だけをスイートから外す — spec の行と1:1の対応が崩れ、アダプターが最も間違えやすい分岐が適合スイートの外に出る
+- フックを「意味」（`SyntaxError` / `DuplicateKey` 等の列挙）で受け、表現の組み立てをハーネスに任せる — ハーネス側に「この表現形式で構文エラーを作る方法」を書くことになり、生テキストが場所を移るだけで結合はなくならない。加えて壊し方の網羅（引用符の不一致・インデント・タグ）をスイートが指定できなくなる
+
+## 影響
+
+- 後続スライスの in-memory な ConfigStore / WorkflowStore は、この2ポートの適合スイートを適用するなら YAML の解釈を持つ必要がある。持たない実装は残り5ポートのスイートだけを適用する
+- トレードオフ: 原則に例外が1つ増える。例外の範囲がドキュメントに書かれていない限り「フックを実装するだけで通る」という主張が過大になるため、適用範囲の明記とセットで成立する

@@ -2,13 +2,13 @@
 
 採番はこのファイル内の連番。`.adr/` への昇格判定は片付けフェーズ(steps.md ステップ10)で行い、昇格するときは `.adr/073` 以降を使う(既存の最大番号は 072)。
 
-判定の結果、ADR-001 / 002 / 003 / 005 / 006 を1本に畳んで `.adr/073-holder-capability-skip-vs-fail.md` に昇格した。ADR-004 / ADR-007 は寿命テストは満たすが波及テストを満たさないため作業ログ限りとする。各エントリの Status 行を参照。
+判定の結果、ADR-001 / 002 / 003 / 005 / 006 を1本に畳んで `.adr/13-holder-capability-skip-vs-fail.md` に昇格した。ADR-004 / ADR-007 は寿命テストは満たすが波及テストを満たさないため作業ログ限りとする。各エントリの Status 行を参照。
 
 ## ADR-001: 合図のタイムアウトは環境の能力の probe として表し、`SkipBudget` の宣言をそこから導く
 
 ### Status
 
-Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「能力は probe で1度だけ判定し、宣言と挙動の双方がその1点を見る」に昇格
+Accepted → `.adr/13-holder-capability-skip-vs-fail.md` の「決定」の「能力は probe で1度だけ判定し、宣言と挙動の双方がその1点を見る」に昇格
 
 ### Context
 
@@ -43,7 +43,7 @@ probe が「実際に1回保持させてみる」形を取るのは、それが�
 
 ### Status
 
-Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「能力側と失敗側を分ける基準」と、「影響」の `.adr/068` の帰結が改まる項に昇格
+Accepted → `.adr/13-holder-capability-skip-vs-fail.md` の「決定」の「能力側と失敗側を分ける基準」と、「影響」の `.adr/068` の帰結が改まる項に昇格
 
 ### Context
 
@@ -80,7 +80,7 @@ Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「�
 
 ### Status
 
-Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「probe の置き場所の基準」に昇格
+Accepted → `.adr/13-holder-capability-skip-vs-fail.md` の「決定」の「probe の置き場所の基準」に昇格
 
 ### Context
 
@@ -139,7 +139,7 @@ Accepted(作業ログ限り。昇格しない) — 寿命テストは満たす�
 
 ### Status
 
-Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「probe の判定基準は『合図が期限内に返ったか』だけに限る」と「期限の無い待ちは、正常に保持できたと分かっている相手にだけ許す」(射程の限定を含む)に昇格
+Accepted → `.adr/13-holder-capability-skip-vs-fail.md` の「決定」の「probe の判定基準は『合図が期限内に返ったか』だけに限る」と「期限の無い待ちは、正常に保持できたと分かっている相手にだけ許す」(射程の限定を含む)に昇格
 
 ### Context
 
@@ -171,7 +171,7 @@ probe は「合図が期限内に返ったか」だけで `Available` / `SignalT
 
 ### Status
 
-Accepted → `.adr/073-holder-capability-skip-vs-fail.md` の「決定」の「probe が成立したあとのタイムアウトは失敗にする」に昇格
+Accepted → `.adr/13-holder-capability-skip-vs-fail.md` の「決定」の「probe が成立したあとのタイムアウトは失敗にする」に昇格
 
 ### Context
 

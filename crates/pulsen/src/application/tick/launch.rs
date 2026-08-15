@@ -1,7 +1,7 @@
 //! 手続きA: 起動(Pending / Failed × AgentRun)。
 //!
 //! 順序は「worktree確保 → テンプレート展開 → launching記録 → `prepare_attempt` →
-//! spawn」に固定する(ADR-016)。launching 記録が復旧の起点であり、そこから後の失敗
+//! spawn」に固定する。launching 記録が復旧の起点であり、そこから後の失敗
 //! (`prepare_attempt` の失敗・`spawn_wrapper` の同期エラー)では**状態を変更しない** —
 //! pending へ戻すと、遅れて起動したラッパーと次の attempt が同じ worktree で並走しうる。
 

@@ -52,7 +52,7 @@ where
             }
             Delivery::Attempted(NotifyOutcome::Delivered) => {
                 match task.mark_notified(self.clock.now()) {
-                    // 凍結の計上は遷移を呼んだ側が行う(ADR-097)。ここで `Frozen` を通すと、
+                    // 凍結の計上は遷移を呼んだ側が行う。ここで `Frozen` を通すと、
                     // 過去の凍結が catch-up のたびに再計上される。
                     Ok(notified) => match self.commit(&notified, Freeze::NotFrozen, summary) {
                         Persisted::Saved => summary.notified.push(id),
@@ -92,7 +92,7 @@ where
     /// 通知コマンドを組み立てて実行する。
     ///
     /// timeout は組み込みの `NOTIFY_TIMEOUT` を必ず適用する — ハングした通知コマンドが
-    /// 排他ロックを保持したまま tick を塞ぐことを防ぐ(ADR-018)。
+    /// 排他ロックを保持したまま tick を塞ぐことを防ぐ。
     fn deliver(&self, id: &TaskId, workflow: &WorkflowName, status: &StatusName) -> Delivery {
         let Some(notify_cmd) = self.config.notify_cmd() else {
             return Delivery::NotConfigured;

@@ -25,7 +25,7 @@
               clippy
               rustfmt
               rust-analyzer
-              # WorktreeManager アダプターが git CLI へシェルアウトする(ADR-024)
+              # WorktreeManager アダプターが git CLI へシェルアウトする
               git
             ]
             ++ lib.optionals stdenv.isDarwin [ libiconv ];

@@ -1,7 +1,7 @@
 //! UTC 秒精度の時刻。
 //!
 //! タスクファイルの直列化表現である RFC3339(`YYYY-MM-DDTHH:MM:SSZ`)との相互変換を
-//! ドメインに持つ(ADR-020)。暦計算は proleptic Gregorian の days-from-civil /
+//! ドメインに持つ。暦計算は proleptic Gregorian の days-from-civil /
 //! civil-from-days を自前で持ち、外部クレートに依存しない。
 
 /// 1日の秒数。
@@ -84,7 +84,7 @@ impl Timestamp {
     ///
     /// `Clock::now` は無謬なので、壁時計が範囲外を指したときアダプターは値を返すしかない。
     /// 範囲の知識をドメインに置いたまま総関数を1つ用意することで、アダプターが既定値を
-    /// 捏造することも、範囲外でパニックすることもなくなる(ADR-036)。
+    /// 捏造することも、範囲外でパニックすることもなくなる。
     pub fn saturating_from_unix_secs(unix_secs: i64) -> Self {
         Self {
             unix_secs: unix_secs.clamp(Self::MIN_UNIX_SECS, Self::MAX_UNIX_SECS),

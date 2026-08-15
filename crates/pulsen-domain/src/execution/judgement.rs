@@ -13,7 +13,7 @@ const JUDGE_SKIPPED: i32 = 20;
 
 /// 判定コマンドを持たないステータスでの判定の結末。
 ///
-/// `Skipped` を持たない 2 値 — 見送りは判定コマンドの exit 20 だけが生む(ADR-008)。
+/// `Skipped` を持たない 2 値 — 見送りは判定コマンドの exit 20 だけが生む。
 /// `JudgeOutcome` の一部だが、デフォルト判定が見送りを導けないことを型で述べるために
 /// 別の型にしてある。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,8 +43,7 @@ impl JudgementService {
     /// 判定コマンドが未定義のステータスでの判定。
     ///
     /// 返り値を 2 値の `DefaultJudgement` に絞ることで、判定コマンドを持たないステータスで
-    /// `Skipped` を導く経路が無いことを型で担保する。exit 20 も他の非 0 と同じ失敗になる
-    /// (ADR-008)。
+    /// `Skipped` を導く経路が無いことを型で担保する。exit 20 も他の非 0 と同じ失敗になる。
     pub fn default_judgement(exit: &ExitCode) -> DefaultJudgement {
         if exit.is_success() {
             DefaultJudgement::Completed

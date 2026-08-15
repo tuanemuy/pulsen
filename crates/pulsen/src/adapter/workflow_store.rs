@@ -14,10 +14,10 @@ use super::yaml::{self, CommandInput, Yaml};
 /// 名前解決で使う拡張子。`.yml` へのフォールバックはしない。
 const NAME_EXTENSION: &str = "yaml";
 
-/// トップレベルに許されるキー(ADR-013)。
+/// トップレベルに許されるキー。
 const TOP_LEVEL_KEYS: &[&str] = &["workflow", "agent", "model", "initial", "statuses"];
 
-/// ステータスに書けるキー(ADR-013)。動作種別との整合は `WorkflowAssembler` が見る。
+/// ステータスに書けるキー。動作種別との整合は `WorkflowAssembler` が見る。
 const STATUS_KEYS: &[&str] = &[
     "prompt", "skill", "run", "agent", "model", "timeout", "retries", "judge", "next",
 ];
@@ -28,7 +28,7 @@ const TOP_LEVEL: &str = "(トップレベル)";
 /// ワークフロー定義ファイルを読み込むストア。
 ///
 /// 名前は `<workflows_dir>/<name>.yaml` にのみ解決し、相対パスは注入された基準
-/// ディレクトリから解決する(ADR-030)。カレントディレクトリというプロセス全体の
+/// ディレクトリから解決する。カレントディレクトリというプロセス全体の
 /// 可変状態を読まないため、複数のストアが同時に別の基準で動ける。
 pub struct FsWorkflowStore {
     workflows_dir: PathBuf,
@@ -41,7 +41,7 @@ impl FsWorkflowStore {
     /// 合成ルートが `std::env::current_dir()` を `base_dir` に渡すことで、spec の
     /// 「相対パスはカレントディレクトリから解決される」契約になる。
     ///
-    /// 前提条件: `base_dir` は絶対パス(ADR-030)。絶対化に使う `std::path::absolute` は
+    /// 前提条件: `base_dir` は絶対パス。絶対化に使う `std::path::absolute` は
     /// 引数が相対なら cwd を読むため、この前提が破れると「cwd を読むのは合成ルートの
     /// 1箇所だけ」がここで破れ、解決結果がプロセス全体の可変状態に左右される。
     pub fn new(workflows_dir: PathBuf, base_dir: PathBuf) -> Self {
@@ -100,7 +100,7 @@ fn read_error(error: &io::Error, attempted: PathBuf) -> WorkflowLoadError {
     }
 }
 
-/// どのファイルの話かをメッセージに載せる(ADR-050)。
+/// どのファイルの話かをメッセージに載せる。
 ///
 /// `WorkflowLoadError::Io` と `WorkflowParseError::YamlSyntax` はパスを持つフィールドを
 /// 持たず、`NotFound` と違って CLI 側も解決先を知らないため、ここで前置する。

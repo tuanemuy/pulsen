@@ -19,7 +19,7 @@ use pulsen_domain::task::{
 /// 登録の入力。
 ///
 /// `repo` は絶対化済みであることを前提とする — カレントディレクトリの読み取りは
-/// 合成ルートの責務(ADR-030)。
+/// 合成ルートの責務。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterTaskInput {
     /// `--workflow` の値(名前またはパス)。
@@ -79,7 +79,7 @@ pub enum RegisterTaskError {
 /// ワークフローと対象を検証し、スナップショットを埋め込んだタスクを登録する。
 ///
 /// ポートはジェネリック引数で受け取り、実アダプターとテストダブルのどちらにも同じ
-/// 制御フローが乗ることを型で示す(ADR-028)。
+/// 制御フローが乗ることを型で示す。
 pub struct RegisterTask<'a, S, M, G, K, R, L> {
     config: &'a GlobalConfig,
     workflows: &'a S,

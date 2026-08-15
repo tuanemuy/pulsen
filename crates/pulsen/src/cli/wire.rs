@@ -1,7 +1,7 @@
 //! 合成ルート。
 //!
-//! ホームの解決・カレントディレクトリの取得・アダプターの構築と結線をここだけで行う
-//! (ADR-030 / ADR-031)。アプリケーション層はここから渡されたポートしか知らない。
+//! ホームの解決・カレントディレクトリの取得・アダプターの構築と結線をここだけで行う。
+//! アプリケーション層はここから渡されたポートしか知らない。
 
 use std::env;
 use std::io;
@@ -114,8 +114,7 @@ impl Runtime {
     /// ワークフロー定義のストアを組む。
     ///
     /// `compose` では組まない — 名前とパスからワークフローを解決するのは `add` だけで、
-    /// 相対パスの解決基準になるカレントディレクトリを要するのもこのストアだけである
-    /// (ADR-099)。
+    /// 相対パスの解決基準になるカレントディレクトリを要するのもこのストアだけである。
     pub fn workflow_store(&self) -> Result<FsWorkflowStore, WireError> {
         let base_dir = env::current_dir().map_err(|error| WireError::CurrentDirUnavailable {
             message: error.to_string(),
@@ -150,7 +149,7 @@ impl Runtime {
 
     /// 相対パスをカレントディレクトリ基準で絶対化する。
     ///
-    /// ユースケースには絶対パスだけが入る(ADR-030)。存在の検証はポートが行う。
+    /// ユースケースには絶対パスだけが入る。存在の検証はポートが行う。
     pub fn absolute_repo(&self, repo: PathBuf) -> Result<PathBuf, WireError> {
         absolute(&repo).map_err(|error| WireError::RepoPathUnusable {
             given: repo,
@@ -185,9 +184,9 @@ pub fn compose(home_flag: Option<PathBuf>) -> Result<Runtime, WireError> {
 
 /// ラッパーモードだけが使うアダプター。
 ///
-/// ホームも config も読まない — ラッパーが必要とする情報はすべて起動引数で受け取る
-/// (ADR-078)。`Runtime` とは別の型にすることで、ラッパーの経路にホーム解決や設定の
-/// 読み込みが後から紛れ込まないようにする。
+/// ホームも config も読まない — ラッパーが必要とする情報はすべて起動引数で受け取る。
+/// `Runtime` とは別の型にすることで、ラッパーの経路にホーム解決や設定の読み込みが
+/// 後から紛れ込まないようにする。
 pub struct WrapperRuntime {
     runs: FsRunStore,
     processes: SystemProcessController,
@@ -212,7 +211,7 @@ impl WrapperRuntime {
 /// `~/.pulsen` へ落ちる。値が使われないことに依存した配線は次の変更で壊れる。
 ///
 /// `current_exe()` も読まない — ラッパーが呼ぶのは自身の同定情報の取得とエージェントの
-/// 起動だけで、自バイナリのパスを要するのはラッパーを spawn する側だけ(ADR-076)。
+/// 起動だけで、自バイナリのパスを要するのはラッパーを spawn する側だけ。
 pub fn compose_wrapper(run_dir: &RunDirPath) -> Result<WrapperRuntime, WireError> {
     let state_root = run_dir
         .state_root()
@@ -232,7 +231,7 @@ pub fn compose_wrapper(run_dir: &RunDirPath) -> Result<WrapperRuntime, WireError
 /// 自バイナリのパスと同定情報の取得元を解決してプロセス操作を組む。
 ///
 /// `compose` には載せない — `ProcessController` を要するのはプロセスを起動する経路
-/// だけであり、`current_exe()` の失敗で `add` が落ちるのは筋が通らない(ADR-076)。
+/// だけであり、`current_exe()` の失敗で `add` が落ちるのは筋が通らない。
 pub fn process_controller() -> Result<SystemProcessController, WireError> {
     let self_exe = env::current_exe().map_err(|error| WireError::SelfExeUnavailable {
         message: error.to_string(),
@@ -255,7 +254,7 @@ pub fn command_runner() -> SystemCommandRunner {
 /// 乱数を初期化してタスクIDの発行を組む。
 ///
 /// `compose` には載せない — IDを発行するのはタスクを登録する経路だけで、乱数を取れない
-/// ことで `tick` が落ちるのは筋が通らない(ADR-099)。
+/// ことで `tick` が落ちるのは筋が通らない。
 pub fn id_generator() -> Result<DefaultTaskIdGenerator<SystemClock>, WireError> {
     DefaultTaskIdGenerator::new(SystemClock::new()).map_err(|error| WireError::IdGenerator {
         message: id_generator_cause(&error),

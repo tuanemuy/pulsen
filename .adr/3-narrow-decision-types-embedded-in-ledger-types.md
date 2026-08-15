@@ -11,7 +11,7 @@
 同じ形が2箇所にあった。
 
 - **running の分類。** 分類は2段で行う。1段目(exit の有無)は観測を行うユースケース側にあり、`RunningClassifier::classify_alive` が受け持つのは2段目(生存)だけである — exit があれば実行は終了しており、生存観測の一過性の失敗で判定を遅延させない。ところが `classify_alive` の返り値は4値の `RunningDecision` のままで、ユースケース側に `RunningDecision::Judge(_) => unreachable!(...)` が現れていた
-- **デフォルト判定。** 見送り(`Skipped`)は判定コマンドの exit 20 だけが生む(ADR-008)。`JudgementService::default_judgement` はこの規則により2値しか返さないが、返り値は3値の `JudgeOutcome` のままで、ユースケース側の `Settled::by_default` に到達不能な `JudgeOutcome::Skipped` アームが生きていた
+- **デフォルト判定。** 見送り(`Skipped`)は判定コマンドの exit 20 だけが生む(`.adr/2026-08-11-skipped-judgement-outcome.md`)。`JudgementService::default_judgement` はこの規則により2値しか返さないが、返り値は3値の `JudgeOutcome` のままで、ユースケース側の `Settled::by_default` に到達不能な `JudgeOutcome::Skipped` アームが生きていた
 
 広い型を狭い型へ**置き換える**ことはできない。`spec/inventory/domain.md` の PASS 要件が、`DOM-execution-008` は `Judge(ExitCode)` を含む4値の `RunningDecision` を、`DOM-execution-004` は `Skipped` を含む3値の `JudgeOutcome` を要求している。落とすと台帳の行が満たせなくなる。
 
@@ -24,7 +24,7 @@
 
 **規則が値を絞る返り値には、その値だけを持つ専用の型を足し、返り値をそれに絞る。広い型は残し、`From` で埋め込む。**
 
-- `AliveDecision`(`KeepRunning` / `KillOnTimeout` / `DiedWithoutExit`)を足し、`classify_alive` の返り値をこれに絞る。ユースケースは1段目を `RunningDecision::Judge(exit)` として値にし、2段目を `.into()` で合流させてから1つの網羅 `match` で分岐する。分類を値にしてから分岐する形は ADR-091 と同じ
+- `AliveDecision`(`KeepRunning` / `KillOnTimeout` / `DiedWithoutExit`)を足し、`classify_alive` の返り値をこれに絞る。ユースケースは1段目を `RunningDecision::Judge(exit)` として値にし、2段目を `.into()` で合流させてから1つの網羅 `match` で分岐する。分類を値にしてから分岐する形は `.adr/2-tick-branch-decision-as-value.md` と同じ
 - `DefaultJudgement`(`Completed` / `Failed`)を足し、`default_judgement` の返り値をこれに絞る
 
 対応は `From` の1箇所に閉じ、狭い型の全変種がそのまま写ることをユニットテストで主張する。

@@ -1,11 +1,11 @@
 //! ProcessController の適合ケース(`spec/testcases/ports/process-controller.md` の27行)。
 //!
-//! スイートを3つに分けるのは、要る前提が違うため(ADR-083)。`own_identity` / `run_agent`
+//! スイートを3つに分けるのは、要る前提が違うため。`own_identity` / `run_agent`
 //! の13件はアダプター単体で閉じ、`spawn_wrapper` の3件と `starttime_of` / `kill` /
 //! `try_kill_remnants` の11件はラッパーモードの実装(実バイナリ)を要する。
 //!
 //! 期待結果は契約の語彙(「非0の符号化値」「実行単位」)で書き、プラットフォーム固有の
-//! 具体値(`128+シグナル番号`)には踏み込まない(ADR-082)。
+//! 具体値(`128+シグナル番号`)には踏み込まない。
 
 /// `own_identity` / `run_agent` のスイート(13行)。
 pub mod identity_and_agent {
@@ -188,7 +188,7 @@ pub mod identity_and_agent {
             .run_agent(&command, &cwd, &stdout, &stderr);
 
         // 具体値(POSIX 慣例の 128+シグナル番号)はプラットフォーム実装の性質であり、
-        // 契約が要求するのは「常に値を返し、非0である」ことまで(ADR-082)。
+        // 契約が要求するのは「常に値を返し、非0である」ことまで。
         assert!(!code.is_success(), "非0の符号化値になる: {code:?}");
         CaseOutcome::Ran
     }
@@ -337,7 +337,7 @@ pub mod spawn {
 /// `starttime_of` / `kill` / `try_kill_remnants` のスイート(11行)。
 ///
 /// 期待結果は契約の語彙で書く — 終了の主張は「実行単位に属する全プロセスが終了する」で
-/// あり、その観測は `starttime_of` が各PIDで `None` を返すことに還元する(ADR-082)。
+/// あり、その観測は `starttime_of` が各PIDで `None` を返すことに還元する。
 pub mod observation {
     use std::time::{Duration, Instant};
 
@@ -602,7 +602,7 @@ macro_rules! process_controller_identity_conformance {
 /// `spawn_wrapper` の適合スイートをアダプターに適用する。
 ///
 /// ラッパーモード(実バイナリ)の実装を前提にするため、`identity` のスイートとは別に
-/// 適用する(ADR-083)。1つのテストファイルに3つとも適用できる。
+/// 適用する。1つのテストファイルに3つとも適用できる。
 #[macro_export]
 macro_rules! process_controller_spawn_conformance {
     ($setup:expr, $allowed_skips:expr) => {

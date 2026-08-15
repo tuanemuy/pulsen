@@ -30,14 +30,14 @@ pub enum WorkflowParseError {
         /// 位置が取れた場合のテキスト上の位置。
         location: Option<SourceLocation>,
     },
-    /// スキーマに無いキー(ADR-013)。
+    /// スキーマに無いキー。
     UnknownKey {
         /// 論理パス(例: `statuses.queued`)。
         location: String,
         /// 見つかったキー。
         key: String,
     },
-    /// 動作種別に無関係なキー(ADR-013)。
+    /// 動作種別に無関係なキー。
     ForbiddenKey {
         /// 対象のステータス名。
         status: String,

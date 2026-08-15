@@ -141,7 +141,7 @@ crates/pulsen/tests/
 - **変更内容:** `JudgementService`(`default_judgement` / `interpret_judge_completion` / `judge_env`)と `NotificationService`(`notify_env` / `interpret_notify_completion` / `const NOTIFY_TIMEOUT`(60秒))を実装する。`judge_env` は `TASK_ID` / `WORKSPACE` / `EXIT_CODE`(10進文字列)/ `RUN_DIR`、`notify_env` は `TASK_ID` / `WORKFLOW` / `TASK_STATUS`。通知の成否解釈もドメインに置き、結末を `NotifyOutcome`(`Delivered` / `Failed { detail }`)で返す — stopped を書く経路がすべてこの規則を共有するので、ユースケース側に散らすと at-least-once の破れが片方の経路にだけ入る。ユニットテストで、0 / 非0(20 を含む)のデフォルト判定、`Exited(0/10/20/その他)` / `TimedOut` / `FailedToStart` の解釈、`JudgeFailure.detail` と `NotifyOutcome::Failed.detail` が3つの原因を判別できること、env の変数名と値の形式を検証する。
 - **理由:** 判定プロトコルの4値解釈(ADR-008)と通知の組み込み timeout(ADR-018)は spec が決めきっている定数であり、ユースケースを書く前にドメイン側で固定する。デフォルト判定が2値であること(`Skipped` を返さない)を型で示すと、`exit 20` を skipped と取り違える実装が書けなくなる。
 - **消化するチェックリスト:** DOM-execution-018, 019, 020, 021, 022, 071(TC-exec-tick-089〜092 / 096〜098 / 120 の意味づけもここで裏付ける)
-- **参照:** `spec/domains/execution.md#judgementservice` / `#notificationservice`、`.adr/008-skipped-judgement-outcome.md`、`.adr/018-notify-cmd-timeout.md`
+- **参照:** `spec/domains/execution.md#judgementservice` / `#notificationservice`、`.adr/2026-08-11-skipped-judgement-outcome.md`、`.adr/2026-08-11-notify-cmd-timeout.md`
 
 ### 4. task ドメイン: 判定・遷移・通知の遷移関数
 
@@ -149,7 +149,7 @@ crates/pulsen/tests/
 - **変更内容:** `complete_run` / `skip_run` / `fail_run` / `record_judge_failure` / `advance` / `mark_notified` を実装し、`DegradedTask::mark_notified` を同じ規則で足す。カウンタのリセットは `RetryCounters` の `pub(super)` 関数に集約し、公開 API を増やさない。上限超過の判定(`count > limit`)は #2 が置いた private ヘルパーを再利用する。ユニットテストで、前提状態の不一致(6状態それぞれからの呼び出し)、`complete_run` / `skip_run` の `attempt_count` / `judge_attempt_count` リセットと `spawn_fail_count` の保持、`skip_run` のタスクステータス不変、`fail_run` の `attempt_count += 1` かつ `judge_attempt_count = 0`、`record_judge_failure` の `Running` 維持と `last_failure = JudgeFail`、上限の等号(凍結しない)と +1(凍結する)、`retries: 0` での即凍結、`advance` の `next` 参照と非 AgentRun での `NotAgentRunStatus`、`mark_notified` の `Stopped { notified_at: None }` 以外からの拒否を検証する。`TransitionError` は #2 が置いた5種が `DOM-task-053` の PASS 要件(5種を区別する)を満たすことを確認したうえで、**`AlreadyNotified` を1種足して6種にする** — 通知済みの凍結への再通知は「前提状態の不一致」ではなく「達成済み」の拒否で、`InvalidState` に畳むと `Stopped` を期待しながら `Stopped` を拒む説明のつかない報告になる(`WorkspaceAlreadySet` と同じ形。adr.md ADR-006)。あわせて前提検査を遷移関数に載せる — `ensure_running` は `Running` に加えて `current_attempt.process` が Some であること(不変条件2・3)を、`ensure_completed` は `Completed` に加えて `current_attempt` が Some であること(不変条件5 の導出元)を検査し、どちらの破れも `MissingCurrentAttempt` で返す。手動修復で破られた不変条件はデコードを通るので(`adapter/task_file.rs` の分類表)、結末を確定させる遷移がここで止める。
 - **理由:** 判断を純粋関数として確定させ、ユースケースを配線に徹させる。カウンタのリセット規則(ADR-009)を事後条件として1箇所に固定する。
 - **消化するチェックリスト:** DOM-task-038, 039, 040, 041, 043, 045, 059(+ DOM-task-053 は5種の確認と `AlreadyNotified` の追加)。TC-exec-tick-112〜116 / 121 / 122 の境界もここで裏付ける
-- **参照:** `spec/domains/task.md#振る舞い遷移関数` / `#エラー型` / `#degradedtaskスナップショット破損タスク`、`.adr/009-counters-track-consecutive-failures.md`
+- **参照:** `spec/domains/task.md#振る舞い遷移関数` / `#エラー型` / `#degradedtaskスナップショット破損タスク`、`.adr/2026-08-11-counters-track-consecutive-failures.md`
 
 ### 5. ポートの追加とテストダブルの追随
 
@@ -157,7 +157,7 @@ crates/pulsen/tests/
 - **変更内容:** `ProcessController` に `starttime_of` / `kill` / `try_kill_remnants` を足し、`RemnantOutcome` / `KillError` を定義する。`CommandRunner` トレイトを新設する。各メソッドに `/// 契約:` の箇条書きを付ける(上記「ポート」の節の内容)。同じステップで既存の実装を追う — `SystemProcessController` には**この時点では最小の実装**を置かず、ステップ6 でまとめて実装するとワークスペースが壊れるため、宣言と同時にステップ6 の内容へ進めるようコミットを分ける場合はダブル側を先に揃える。`ScriptedProcessController` に `with_starttime_of` / `with_kill` / `with_try_kill_remnants` と対応する `ProcessControllerCall` の変種を、`ScriptedRunStore` に `with_read_exit` と `RunStoreCall::ReadExit` を足す(現在の `read_exit` はパニックする)。`ScriptedCommandRunner`(結果列 + 呼び出し記録。`cmd` / `env` / `timeout` を記録する)を新設する。あわせて**ダブルをまたぐ順序を主張できるようにする**(adr.md ADR-014)— プロセス全体で単調な採番(`RecordSeq`)を、**順序の契約がポートをまたぐメソッドだけ**に掛ける。本スライスでは4つで、`TaskRepository::save` / `TaskRepository::save_degraded` / `CommandRunner::run` / `ProcessController::try_kill_remnants` に対して `saved_in_order()` / `saved_degraded_in_order()` / `ScriptedCommandRunner::calls_in_order()` / `ScriptedProcessController::calls_in_order()` を足す。ダブルごとの記録は別々の列なので、採番なしでは「stopped の `save` → `run` → `mark_notified` の `save`」も「`try_kill_remnants` → `fail_run` の `save`」も主張できない(at-least-once と残存の後始末はこの順序でしか成立しない)。`starttime_of` / `kill` には掛けない — 主張するのが「呼ばれない」「失敗しても書かない」だけで、またぐ順序を持たない。`ScriptedProcessController` は採番を `Option<RecordSeq>` として持ち、`calls_in_order()` は採番のある呼び出しだけを返す。既存アクセサ(`saved()` / `saved_degraded()` / `calls()`)のシグネチャは変えず、順序を要るテストだけが新しいアクセサを使う。`doubles/tests.rs` にダブル自身のテストを追記する。
 - **理由:** ドメインが外界に要求する操作をここで固定し、以降のアダプター・ユースケースが同じ形に乗る。ダブルを先に揃えることで、ステップ6・7 のアダプター実装とステップ9・10 のユースケーステストを並行して書ける。
 - **消化するチェックリスト:** DOM-execution-049, 050, 051, 056, 058, 067
-- **参照:** `spec/domains/execution.md#processcontroller` / `#commandrunner`、`.adr/028-usecase-error-paths-via-test-doubles.md`
+- **参照:** `spec/domains/execution.md#processcontroller` / `#commandrunner`、`.adr/1-usecase-error-paths-via-test-doubles.md`
 
 ### 6. ProcessController アダプター: 観測・終了の3メソッドと適合11件
 
@@ -165,7 +165,7 @@ crates/pulsen/tests/
 - **変更内容:** `SystemProcessController` に3メソッドを実装する。`starttime_of` は既存の `identity::observe` に委譲して `starttime` を取り出すだけにし、**`Ok(None)` を `Err(Io)` に畳まない**(#2 のアダプターユニットテストが既に三値の区別を主張しているので、その上に乗る)。`kill` / `try_kill_remnants` は adr.md ADR-002 / ADR-015 の決定に従って実装し(ADR-015 が置き換えた3点 — 同定子は境界で parse して組み直す / 成否は消滅の観測で決める / 昇格の段 — を含む)、OS 依存分岐はこのファイルに閉じる。適合スイートに `observation` モジュール(TC-port-process-controller-006〜016 の11件)を足し、`ProcessControllerHarness` にフックを5つ追加する — 終了を確認済みのプロセスの pid(`terminated_pid`。回収まで済ませないとゾンビとして観測され前提が成立しない)、生存中の実行単位(`live_execution_unit`)、spawn 元が終了済みの実行単位(`detached_execution_unit`)、ラッパーだけが死んだ実行単位(`orphaned_execution_unit`)、終了操作が失敗するコントローラ(`failing_terminator_controller`)。同定手段が失われた状態は #2 の `failing_identity_controller` をそのまま使う。**終了操作の実体(`TerminatorSource`)も差し替えられるようにする**(adr.md ADR-007。ADR-076 の取得元と同じ手で、既定はプラットフォームの実体、差し替えはテストのための builder に限る)— 存在しない実体を差し込めば「終了操作自体が失敗する」状況が権限操作に依存せず確定的に作れ、TC-013 / 016 が環境まかせのスキップにならない。期待結果は契約の語彙で書き、プラットフォーム固有の機構名に踏み込まない(ADR-082)。冒頭のドキュメントコメントの**「8行」を「11行」に訂正**し、`HOOKS.md` の ProcessController の節を16行 → 27行に、冒頭の集計・区分表・「環境で走らなくなりうる行」の表を更新する。同表に足すのは3行 — フィクスチャの実行ファイルを要する 007 / 011〜016(**スキップ許容集合には入れない**。作り忘れを緑にしないため)、実行単位を要する 011 / 012 / 013 / 015、その一部だけの終了を要する 014 / 016。注入で確定的に走る 005 / 010 は載せない。3ランナーの実測列は `未測定` で置く(実測は CI を回して初めて得られる)。適用先(`crates/pulsen/tests/conformance_process_controller.rs`)のスキップ許容集合は、`cfg!(unix)` のようなプラットフォーム述語ではなく**実行時の能力 probe** で決める — 実行単位を1回起こしてみて「起こせて一部だけ終了させられる / 起こせるが一部だけは終了させられない / 起こせない / フィクスチャの実行ファイルが無い」の4つを区別し、最後の1つは許容集合に入れない(adr.md ADR-013。ADR-073 の基準どおり、原因も回避方法も一意なものはスキップにしない)。
 - **理由:** `kill` を `unsafe` なし・依存追加なしで組めるかどうかが本スライスの技術リスクの片方。実測で先に確かめ、破れたら計画を見直す。誤殺しないことは適合スイートの `NotIdentifiable` ケースでしか主張できない。
 - **消化するチェックリスト:** ADP-process-002, 003, 004、TC-port-process-controller-006〜016
-- **参照:** `spec/testcases/ports/process-controller.md`、`spec/domains/execution.md#processcontroller`、`.adr/075-process-controller-without-unsafe.md`、`.adr/076-process-controller-injects-self-exe-and-identity-source.md`
+- **参照:** `spec/testcases/ports/process-controller.md`、`spec/domains/execution.md#processcontroller`、`.adr/2-process-controller-without-unsafe.md`、`.adr/2-process-controller-injects-self-exe-and-identity-source.md`
 
 ### 7. CommandRunner アダプターと適合16件
 
@@ -173,7 +173,7 @@ crates/pulsen/tests/
 - **変更内容:** `SystemCommandRunner` を実装する — シェル非経由の直接起動、呼び出しプロセスの環境の継承と `env` による追加・上書き、cwd の非変更、`timeout` 指定時の期限つき待機(adr.md ADR-001)と超過時のプロセス終了、起動不能の `FailedToStart`、シグナル死等の非0符号化(`run_agent` と同じ `encode` を共有する)、標準出力・標準エラーの非捕捉、同期実行。適合スイート `command_runner`(TC-port-command-runner-001〜016)を1行1関数で置き、`CommandRunnerHarness` を定義する。検査用コマンドは `examples/judge_probe.rs` として供給し(ADR-082)、引数のリテラル一致・環境変数の値・cwd の一致・完了の証跡の書き出し・標準出力への既知文字列を exit code またはファイルで表現する。`HOOKS.md` に CommandRunner の節(16行 / A 0・B 15・C 1)を新設し、冒頭の対象ポート数・総行数・区分別件数表を更新する。「環境で走らなくなりうる行」に足すのは2行 — `004`(実行権限のない実体を作れない。判定は `permission_restrictions_effective`)と、`examples/judge_probe` を要する `001 / 002 / 005〜016`(**スキップ許容集合には入れない**。作り忘れを緑にしないため。`003` は `missing_command`、`004` は `non_executable_command` で組むのでこの実行ファイルを要さない)。`005`(外部からの強制終了)は前提を作れない環境が無いため載せない — 期待が「非0の符号化値」までで、シグナル死になるかを問うフックが無い(ADR-082)。
 - **理由:** timeout を追加依存なしで組めるかどうかが技術リスクのもう片方。判定と通知の両方がこのポートに乗るため、ここで契約を閉じておかないとステップ9・10 の異常系が書けない。
 - **消化するチェックリスト:** ADP-commandrunner-001、TC-port-command-runner-001〜016
-- **参照:** `spec/testcases/ports/command-runner.md`、`spec/domains/execution.md#commandrunner`、`.adr/082-agent-and-spawn-probes-as-examples.md`
+- **参照:** `spec/testcases/ports/command-runner.md`、`spec/domains/execution.md#commandrunner`、`.adr/2-agent-and-spawn-probes-as-examples.md`
 
 ### 8. Tick への CommandRunner の結線と TickIssue の拡張
 
@@ -188,7 +188,7 @@ crates/pulsen/tests/
 - **変更内容:** 共通手続き notify を spec の順序どおりに実装する — `config.notify_cmd` が None なら何もしない(`notified_at` も書かない)→ `NotificationService::notify_env` → `CommandRunner::run(notify_cmd, env, NOTIFY_TIMEOUT)` → `NotificationService::interpret_notify_completion` → `Delivered` のときだけ `mark_notified(now)` → `save` / `save_degraded` → `notified` に記録(adr.md ADR-011)。`Failed { detail }`(非0 / `TimedOut` / `FailedToStart`)は `TickIssue::NotifyFailed` として報告するだけで、`notified_at` を書かない。`Task` と `DegradedTask` の両方から呼べる形にする(adr.md ADR-003)。この手続きを3箇所から呼ぶ — (a) `Tick::commit` の `Freeze::Frozen` の枝、(b) `Branch::Notify` アーム(通知アームの保存は `Freeze::NotFrozen`。`Branch::AlreadyNotified` は何もしない)、(c) `TaskRecord::SnapshotUnreadable` かつ `Stopped { notified_at: None }`。`SnapshotUnreadable` の報告そのものは実行状態によらず必ず積み、そのうえで未通知の凍結だけが notify へ進む(adr.md ADR-012)— 報告を通知で置き換えると、notify_cmd 未定義の既定構成では破損したタスクがサマリーから消える。あわせて `Branch::Advance` アーム(`task.advance(now)` → `save` → `transitioned` に記録。`TransitionError` は報告してスキップ)を配線する。ダブルに対するユースケーステストで、通知の順序(stopped の `save` → `run` → `mark_notified` の `save`)、notify_cmd 未定義での無通知かつ `notified_at` 未記録、`notified_at` 記録済みへの再通知なし、非0 / `TimedOut` / `FailedToStart` での `notified_at` 未記録、`mark_notified` 後の `save` 失敗、クラッシュ相当の中間状態(未通知 stopped)からの再導出、catch-up(notify_cmd を後から定義)、DegradedTask への再通知と `save_degraded`、stopped を離脱したタスクへの無通知、同一 tick 内での凍結 → 通知、completed の `advance` と `TransitionError` のスキップを検証する。
 - **理由:** notify は stopped を書く3経路と2つの検出経路が共有する唯一の手続きで、`Tick::commit` に置き場所が予約されている(`.thread/2/adr.md` ADR-074)。at-least-once の担保は「書く → 実行 → 追記」の順序でしか成立しない。
 - **消化するチェックリスト:** UC-execution-001、PAGE-tick-007、TC-exec-tick-009, 010, 011, 021, 026, 147〜159
-- **参照:** `spec/usecases/execution.md#共通手続き-凍結の確定と通知notify` および処理フロー 2 / 6 / 7、`spec/pages/index.md#縮退状態の共通規則`(※5)、`spec/testcases/execution/tick.md#正常系-6` / `#異常系-6` / `#エッジケース-6`、`.adr/097-freeze-is-passed-by-the-caller-of-the-transition.md`
+- **参照:** `spec/usecases/execution.md#共通手続き-凍結の確定と通知notify` および処理フロー 2 / 6 / 7、`spec/pages/index.md#縮退状態の共通規則`(※5)、`spec/testcases/execution/tick.md#正常系-6` / `#異常系-6` / `#エッジケース-6`、`.adr/2-freeze-is-passed-by-the-caller-of-the-transition.md`
 
 ### 10. 手続きD: 観測・判定(Running)
 
@@ -246,7 +246,7 @@ crates/pulsen/tests/
   タスクファイルを直に組み立てるヘルパー(running・completed・未通知 stopped・スナップショットのみ破損した未通知 stopped)を `tick_fixture` に足す — これらは本スライスの CLI だけでは作れない状態がある。滞留するエージェントを使うケースは、テストを終える前に `exit` の出現を `wait_until` で待つ(一時ホームの削除と孫プロセスの書き込みの競合を避ける)。
 - **理由:** ポート単位・ユースケース単位で緑でも、合成ルートの結線とクロス tick の引き継ぎが壊れていれば主経路は動かない。Issue の「検証」欄の項目をここで機械的に裏付ける。
 - **消化するチェックリスト:** UC-flow-001, 003, 008(いずれも部分消化。plan.md の表のとおり)
-- **参照:** `spec/flows/index.md#f1-タスクの実行状態ライフサイクル` / `#f3-stopped-通知at-least-once` / `#f8-ポーリング循環skipped-ループ`、`.adr/093-usecase-and-acceptance-fixtures-are-separated.md`
+- **参照:** `spec/flows/index.md#f1-タスクの実行状態ライフサイクル` / `#f3-stopped-通知at-least-once` / `#f8-ポーリング循環skipped-ループ`、`.adr/2-usecase-and-acceptance-fixtures-are-separated.md`
 
 ### 14. 手動確認
 

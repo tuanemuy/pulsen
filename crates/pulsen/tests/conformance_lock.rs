@@ -26,7 +26,7 @@ impl FileExclusiveLockHarness {
         let home = tempfile::tempdir().expect("一時ホームを作れる");
         let separate = tempfile::tempdir().expect("別の一時ホームを作れる");
         // ロックの置き場としてディレクトリがあると開けない。権限操作と違い root でも
-        // Windows でも成立するため、機構の異常を環境非依存に再現できる(ADR-032)。
+        // Windows でも成立するため、機構の異常を環境非依存に再現できる。
         let occupied = home.path().join("unusable-lock");
         fs::create_dir(&occupied).expect("ディレクトリを作れる");
 
@@ -105,8 +105,8 @@ const LOCK_HOLDER_CASES: [&str; 4] = [
 /// 許容するのは保持プロセスの合図が期限内に返らない環境だけ。実行ファイルが無い場合は
 /// 原因も回避方法も一意で、起動できない場合は理由が起動時のエラーにしか無く、いずれも
 /// スキップの宣言だけからは次の一手が定まらないため、緑にせずケースの失敗にする
-/// (HOOKS.md / ADR-068 / ADR-073)。同じ判定を CLI 側の受け入れテスト
-/// (TC-task-register-task-017)も使うため、両者で扱いが揃う(ADR-055)。
+/// (HOOKS.md)。同じ判定を CLI 側の受け入れテスト
+/// (TC-task-register-task-017)も使うため、両者で扱いが揃う。
 fn allowed_skips() -> Vec<&'static str> {
     match holder_capability() {
         HolderCapability::SignalTimedOut => LOCK_HOLDER_CASES.to_vec(),

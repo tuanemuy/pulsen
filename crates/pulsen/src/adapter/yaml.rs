@@ -1,7 +1,7 @@
 //! YAML テキストの構文解析と、スキーマ走査が使う値表現。
 //!
 //! 外部の YAML クレートに任せるのは「テキスト → 値」の一段だけにして、スキーマの走査は
-//! 各ストアのアダプターが手書きで行う(ADR-021)。serde の派生デシリアライズと
+//! 各ストアのアダプターが手書きで行う。serde の派生デシリアライズと
 //! `deny_unknown_fields` に頼ると、未知キー・型不一致・値の生成失敗がすべて同じ
 //! `serde::de::Error` になり、`UnknownKey` と `InvalidValue` を区別できない。
 //!
@@ -176,7 +176,7 @@ impl YamlMapping {
             .filter(|value| !value.is_absent())
     }
 
-    /// 許容されるキーの集合に無い最初のキー(ADR-013)。
+    /// 許容されるキーの集合に無い最初のキー。
     pub fn unknown_key(&self, allowed: &[&str]) -> Option<&str> {
         self.entries
             .iter()
@@ -187,7 +187,7 @@ impl YamlMapping {
 
 /// YAML テキストを1つの値として読む。
 ///
-/// 空ファイル・null ドキュメントは `Yaml::Null` になる(「全キー省略」の表現。ADR-021)。
+/// 空ファイル・null ドキュメントは `Yaml::Null` になる(「全キー省略」の表現)。
 /// 重複キーは構文エラーとして落ちる。
 pub fn parse_document(text: &str) -> Result<Yaml, YamlSyntaxError> {
     let value: serde_yaml_ng::Value =
@@ -261,7 +261,7 @@ fn position(path: &str) -> String {
 ///
 /// `agents:` / `statuses:` の直下はキー自体が自由形式なので、非文字列キーを文字列化すると
 /// スキーマ走査は通り、そのまま名前として受理される(複合キーは同じ表現に潰れて後勝ちで
-/// 消える)。スキーマに無い記法を黙って読み替えないのはタグの拒否(ADR-042)と同じ根拠。
+/// 消える)。スキーマに無い記法を黙って読み替えないのはタグの拒否と同じ根拠。
 ///
 /// `location` が `None` なのは `Yaml` がテキスト上の位置を持たないため(位置は
 /// `serde_yaml_ng` がパースを終えた時点で失われる)。代わりに、どのキーがどこで

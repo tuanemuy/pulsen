@@ -1,6 +1,6 @@
 //! WorkflowStore の適合ケース(`spec/testcases/ports/workflow-store.md` の31行)。
 //!
-//! 厳格パース(ADR-013)の全エラー種をポート越しに検証する。パースの分担は
+//! 厳格パースの全エラー種をポート越しに検証する。パースの分担は
 //! 「アダプターが YAML テキストを `RawWorkflowDoc` に変換し(`YamlSyntax` / `UnknownKey` を
 //! 検出)、`WorkflowAssembler` が残りを検証する」であり、どちらが生成したかはポートの
 //! 外からは見えない。

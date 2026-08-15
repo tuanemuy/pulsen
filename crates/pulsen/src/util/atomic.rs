@@ -29,7 +29,7 @@ const FIRST_RETRY_WAIT: Duration = Duration::from_millis(1);
 /// 試行と試行の間に待つ時間の列。上限まで拒まれ続けたときに待つ全量でもある。
 ///
 /// 再試行ループはこの列だけを消費して眠るため、実際の待ちの出典はここ1つに閉じる。
-/// 公開関数の doc と ADR-072 が根拠にしている「1回の呼び出しあたり最大 511ms」は
+/// 公開関数の doc が根拠にしている「1回の呼び出しあたり最大 511ms」は
 /// この列の和であり、ユニットテストが公称値との一致を固定している。待ちの決め方を
 /// ループから切り出しているのは、上限を壁時計で測らずに検証できるようにするため。
 fn retry_waits() -> impl Iterator<Item = Duration> {
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn 再試行に費やす待ちの合計は公称する上限と一致する() {
-        // 公開関数の doc と ADR-072 は「1回の呼び出しあたり最大 511ms」を根拠に、
+        // 公開関数の doc は「1回の呼び出しあたり最大 511ms」を根拠に、
         // 遅延が排他ロックの保持時間に乗るトレードオフを受け入れている。待ちの列は
         // ループが実際に消費するものなので、伸び幅も回数もここに現れる。
         assert_eq!(retry_budget(), Duration::from_millis(511));
@@ -372,7 +372,7 @@ mod tests {
         //
         // 公開関数が `transiently_denied` を渡している配線そのものはここでは押さえられない。
         // 緩い分類に差し替えても、この拒否が `NotFound` であることは変わらないため。
-        // 配線が壊れたときの被害は有界な遅延に限られる（ADR-072）。
+        // 配線が壊れたときの被害は有界な遅延に限られる。
         for error in [read_error, rename_error] {
             assert_eq!(error.kind(), io::ErrorKind::NotFound);
             assert_eq!(budget_spent_on(&error), Duration::ZERO, "{error:?}");

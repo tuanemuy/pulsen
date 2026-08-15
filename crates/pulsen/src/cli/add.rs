@@ -23,7 +23,7 @@ pub fn execute(home: Option<PathBuf>, args: AddArgs) -> Result<RegisteredTask, A
     let runtime = wire::compose(home).map_err(AddError::Wire)?;
     let repo = runtime.absolute_repo(args.repo).map_err(AddError::Wire)?;
     // ワークフローの解決基準になるカレントディレクトリとID発行の乱数は、登録の経路
-    // だけが要る資源なので `compose` ではなくここで解決する(ADR-099)。
+    // だけが要る資源なので `compose` ではなくここで解決する。
     let workflows = runtime.workflow_store().map_err(AddError::Wire)?;
     let ids = wire::id_generator().map_err(AddError::Wire)?;
 

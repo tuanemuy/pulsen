@@ -1,6 +1,6 @@
 //! CommandRunner の適合スイートを `SystemCommandRunner` に適用する。
 //!
-//! テスト用コマンドは `examples/judge_probe` を使う(ADR-082)。見つからない場合は
+//! テスト用コマンドは `examples/judge_probe` を使う。見つからない場合は
 //! フックが `None` を返してスキップになるが、**スキップ許容集合には入れない** —
 //! 「examples を作り忘れた」が緑にならないようにする。
 
@@ -168,8 +168,8 @@ const PERMISSION_CASES: [&str; 1] = ["tc_port_command_runner_004"];
 
 /// この環境でスキップを許容するケース。
 ///
-/// exit code を持たない終了(TC-005)は許容しない — 期待は「非0の符号化値」までであり
-/// (ADR-082)、`judge_probe abort` はどのプラットフォームでも非0を返す。
+/// exit code を持たない終了(TC-005)は許容しない — 期待は「非0の符号化値」までであり、
+/// `judge_probe abort` はどのプラットフォームでも非0を返す。
 fn allowed_skips() -> Vec<&'static str> {
     let mut allowed = Vec::new();
     if !pulsen_conformance::permission_restrictions_effective() {

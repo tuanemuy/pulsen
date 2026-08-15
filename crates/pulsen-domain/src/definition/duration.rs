@@ -61,7 +61,7 @@ impl DurationSpec {
         Ok(Self { seconds })
     }
 
-    /// 組み込み定数(ADR-014)のための生成口。呼び出し側が非ゼロを保証する。
+    /// 組み込み定数のための生成口。呼び出し側が非ゼロを保証する。
     pub(crate) const fn from_secs_unchecked(seconds: u64) -> Self {
         Self { seconds }
     }

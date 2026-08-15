@@ -17,8 +17,7 @@
 //! WorktreeManager / RunStore / ProcessController / CommandRunner の8ポート。
 //! ConfigStore / WorkflowStore の入力系フックは **YAML
 //! ソースを受け取り**、この2ポートのスイートは YAML 表現に結合している — 「YAML 構文
-//! エラー」「重複キー」を前提とする行は、表現そのものを渡す口が無ければ組み立てられない
-//! (ADR-053)。
+//! エラー」「重複キー」を前提とする行は、表現そのものを渡す口が無ければ組み立てられない。
 //!
 //! 対象は共有参照でしか渡らないため、「構築済みの対象を壊す」フックは置けない。壊れた
 //! 状況が要るケースは、別ハンドルを返すフック(`concurrent_repo` / `concurrent_store` /
@@ -40,7 +39,7 @@
 //! ことを確認してから `Some` を返す**規則にする。`chmod 000` は root では効かないため、
 //! 確認せずに `Some` を返すと `Err(Io)` を期待するケースがスキップに落ちずに失敗する。
 //! 許容する集合も同じ述語([`permission_restrictions_effective`])で決めることで、宣言が
-//! プラットフォームではなく**環境の能力**に対応する(ADR-055)。
+//! プラットフォームではなく**環境の能力**に対応する。
 //!
 //! # スイートの適用
 //!
@@ -79,7 +78,7 @@
 //!
 //! # テストダブル
 //!
-//! ユースケースの分岐網羅に使うスクリプト式のポート実装は [`doubles`] にある(ADR-028)。
+//! ユースケースの分岐網羅に使うスクリプト式のポート実装は [`doubles`] にある。
 //! 適合スイートとは目的が違う(契約への適合 vs 分岐の網羅)ため、フックとは別の口にする。
 
 pub mod clock;
@@ -201,7 +200,7 @@ impl CaseOutcome {
 /// 件数ではなく集合で宣言するのは、想定した行が走った代わりに別の行がフックを得られず
 /// スキップしても、合計が合えば緑のまま通ってしまうため。集合は実行時に組んでよく、
 /// 環境の能力([`permission_restrictions_effective`])から導くと、宣言が
-/// プラットフォームではなく実際に前提を作れるかどうかに対応する(ADR-055)。
+/// プラットフォームではなく実際に前提を作れるかどうかに対応する。
 pub struct SkipBudget {
     allowed: Vec<&'static str>,
 }
@@ -243,8 +242,8 @@ impl SkipBudget {
 
 /// この環境で「読み取れないファイル」を作れるか(1度だけ調べて使い回す)。
 ///
-/// 権限操作のフックは「制限が実際に効いたことを確認してから `Some` を返す」規則
-/// (ADR-027)なので、root 実行や権限を持たないファイルシステムでは必ず `None` を返し、
+/// 権限操作のフックは「制限が実際に効いたことを確認してから `Some` を返す」規則なので、
+/// root 実行や権限を持たないファイルシステムでは必ず `None` を返し、
 /// 権限を前提とするケースはスキップされる。[`SkipBudget`] の宣言をこの述語で決めると、
 /// 「環境が前提を作れないからスキップした」と「フックの実装漏れでスキップした」を
 /// 取り違えずに済む。
@@ -610,7 +609,7 @@ pub trait ExclusiveLockHarness {
 ///
 /// 適合ケースは「exit code を制御できる」「引数どおりに出力する」といった**意味**だけを
 /// 渡し、それを満たすコマンドの組み立てはハーネスに委ねる。プラットフォーム固有の
-/// コマンド名やシェルをケースに持ち込まないための口(ADR-082)。
+/// コマンド名やシェルをケースに持ち込まないための口。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentBehavior {
     /// 指定の exit code で終了する。
@@ -635,7 +634,7 @@ pub enum AgentBehavior {
 /// ProcessController の適合スイートが要求する環境。
 ///
 /// スイートは `own_identity` / `run_agent` の [`process_controller::identity_and_agent`] と
-/// `spawn_wrapper` の [`process_controller::spawn`] に分かれる(ADR-083)。前者はアダプター
+/// `spawn_wrapper` の [`process_controller::spawn`] に分かれる。前者はアダプター
 /// 単体で閉じ、後者はラッパーモードの実装を要するため適用の時期が違う。
 pub trait ProcessControllerHarness {
     /// 検証対象。
@@ -653,7 +652,7 @@ pub trait ProcessControllerHarness {
     /// (TC-port-process-controller-005)。
     ///
     /// 存在しない取得元を注入した2つ目のコントローラを返す形にすると、権限操作にも
-    /// root 実行の可否にも依存せず確定的に走る(ADR-076)。
+    /// root 実行の可否にも依存せず確定的に走る。
     fn failing_identity_controller(&self) -> Option<&Self::Controller> {
         None
     }
@@ -720,7 +719,7 @@ pub trait ProcessControllerHarness {
 
     /// ラッパーの起動自体が不可能な状態の実装(TC-port-process-controller-003)。
     ///
-    /// 存在しないパスを自バイナリとして注入した2つ目のコントローラを返す(ADR-076)。
+    /// 存在しないパスを自バイナリとして注入した2つ目のコントローラを返す。
     fn failing_controller(&self) -> Option<&Self::Controller> {
         None
     }
@@ -760,7 +759,7 @@ pub trait ProcessControllerHarness {
     /// (TC-port-process-controller-013/016)。
     ///
     /// 存在しない終了操作の実体を注入した2つ目のコントローラを返す形にすると、権限にも
-    /// プラットフォームにも依存せず確定的に走る(ADR-076 と同じ手)。
+    /// プラットフォームにも依存せず確定的に走る(取得元の注入と同じ手)。
     fn failing_terminator_controller(&self) -> Option<&Self::Controller> {
         None
     }
@@ -769,8 +768,7 @@ pub trait ProcessControllerHarness {
 /// 実行単位1つ分の観測対象。
 ///
 /// 期待結果は契約の語彙(「実行単位に属する全プロセスが終了する」)で書くため、ケースは
-/// 同定子とメンバーのPIDだけを受け取り、プラットフォーム固有の機構名に踏み込まない
-/// (ADR-082)。
+/// 同定子とメンバーのPIDだけを受け取り、プラットフォーム固有の機構名に踏み込まない。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionUnit {
     /// 永続化された kill 同定子。
@@ -980,7 +978,7 @@ pub trait WorktreeManagerHarness {
     /// パスもブランチも未使用のワークスペース(TC-port-worktree-manager-010/016)。
     ///
     /// `ws.path` の親(worktree_root)は存在する。正規化の分岐を必ず通すため、置き場は
-    /// シンボリックリンクを経由するパスとして組む(ADR-085)。
+    /// シンボリックリンクを経由するパスとして組む。
     fn unused_workspace(&self) -> Option<Workspace> {
         None
     }
@@ -998,7 +996,7 @@ pub trait WorktreeManagerHarness {
     }
 
     /// 自タスクのパスとブランチの登録は残るが実体が消えた(`prunable`)ワークスペースと、
-    /// 消える前にコミットしたマーカーの内容(ADR-085 由来の追加ケース)。
+    /// 消える前にコミットしたマーカーの内容(台帳行に対応しない追加ケース)。
     fn workspace_with_prunable_registration(&self) -> Option<(Workspace, String)> {
         None
     }
