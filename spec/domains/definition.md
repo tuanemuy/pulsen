@@ -35,7 +35,7 @@
 | `WorkflowName` | `String` | 非空。前後空白なし |
 | `InputText` | `String` | 制約なし(`{input}` へ渡る値。プロンプトまたは skill_input の展開結果) |
 
-いずれも `parse(s: String) -> Result<Self, NameError>` でのみ生成する。等価性は文字列の完全一致。
+制約のある型は `parse(s: String) -> Result<Self, NameError>` でのみ生成する。制約のない `InputText` は総関数 `new(s: String) -> Self` で生成する(`Err` になる経路のない `Result` を呼び出し側に持ち込まない)。等価性は文字列の完全一致。
 
 - エラー型: `NameError = Empty | SurroundingWhitespace`(前後空白)
 
@@ -94,7 +94,7 @@ YAMLの「文字列またはトークン配列」からトークン列へ落と�
 ### CommandLine
 
 - フィールド: `tokens: Vec<String>`(1 以上。先頭がプログラム)
-- 生成: `CommandTemplate::expand` の結果としてのみ生成する
+- 生成: `CommandTemplate::expand` の結果、またはプロセス境界を越えた復元 `rehydrate(tokens: Vec<String>) -> Result<Self, CommandError>`(トークン0個は `Empty`)。ラッパーが受け取った argv から復元するための経路であり、テンプレートを持たない側でも同じ不変条件(1トークン以上)を通す
 - 等価性: トークン列の一致
 
 ### RawAgentDefinition と AgentDefinition
@@ -268,6 +268,7 @@ WorkflowParseError =
     - `input` が `Skill` の場合、エージェント定義に `skill_input` があること(`MissingSkillInput { status, agent }`)
     - `cmd` が `{model}` を参照する場合、実効モデルが解決できること(`MissingModel { status, agent }`)
   - エラーは全ステータス分をまとめて返す(最初の1件で打ち切らない)
+  - `status` を持たない2種(`UnknownAgent` / `InvalidAgentDefinition`)はステータスではなく**エージェント単位**の誤りであり、複数のステータスが同じエージェントを参照しても値まで同一のエラーになるため、同値の重複は1件にまとめる(直す先が1つしかない案内を参照回数だけ並べない)。`status` を持つ3種は各ステータス分を積む
 - 依存ポート: なし(純粋。config は値で受け取る)
 
 ```
@@ -302,9 +303,10 @@ RegistrationError =
   - `LoadedWorkflow { parsed: ParsedWorkflow, resolved_from: PathBuf }` — `resolved_from` は実際に読み込んだ絶対パス(add の成功表示「解決したワークフロー名と解決先」(pages)の供給元。名前解決の知識をポートの内側に閉じる)
 - エラー:
   - `NotFound { attempted: PathBuf }` — 解決を試みた絶対パスを含む(pages add の案内用)
-  - `Parse(WorkflowParseError)`
+  - `Parse { error: WorkflowParseError, resolved_from: PathBuf }` — 解決先の絶対パスを構造として持つ
   - `Io { message }` — 存在するが読めない(権限不足・I/O障害)
 - 契約:
+  - 解決先の案内は**構造化フィールドに一本化する**。`NotFound { attempted }` と `Parse { resolved_from }` は対象ファイルを構造として持ち、その内側の `WorkflowParseError` 12種はどれもパスを持たない(`location` は論理位置 `statuses.queued.prompt` そのものを指す)。自由形式のメッセージにパスを前置するのは、構造化フィールドを持てない `Io { message }` だけ — `--workflow` を名前で指定した場合、解決先(`<home>/workflows/<n>.yaml`)は利用者が直接書いていないため、案内に出す責務はポート側にある
   - 名前解決の規則: `Name(n)` → `<home>/workflows/<n>.yaml`(固定。`.yml` へのフォールバックはしない)。`Path(p)` → そのパス(相対はプロセスのカレントディレクトリから解決)
   - アダプターが YAML テキストを `RawWorkflowDoc` に変換し(構文エラー・スキーマ外キーはここで `YamlSyntax` / `UnknownKey` として検出)、ドメインの `WorkflowAssembler::assemble` で検証する。表示名の決定はしない(呼び出し側が `WorkflowRef::display_name` で行う)
   - 読み取り専用。可視性: 呼び出し時点のファイル内容

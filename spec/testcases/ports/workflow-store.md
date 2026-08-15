@@ -34,19 +34,19 @@ WorkflowStore のすべてのアダプター実装が共通で通す適合テス
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| YAML として不正な内容(構文エラー・重複キー)のファイルを置く | `load` | `Err(Parse(YamlSyntax))`。message・location を含む | |
-| トップレベルに許容外のキー(`workflow` / `agent` / `model` / `initial` / `statuses` 以外)を含む定義を置く | `load` | `Err(Parse(UnknownKey))` | |
-| ステータス内にスキーマ外のキー(`prmopt` 等の typo)を含む定義を置く | `load` | `Err(Parse(UnknownKey))` | |
-| `run: wait` / `run: cleanup` のステータスにエージェント実行系のキー(`judge`・`next` 等)を併記した定義を置く | `load` | `Err(Parse(ForbiddenKey))`(`Wait` / `Cleanup` に許されるキーは `run` のみ) | |
-| `initial` キーの無い定義を置く | `load` | `Err(Parse(MissingInitial))` | |
-| `initial` が `statuses` に無い名前を指す定義を置く | `load` | `Err(Parse(InitialNotFound))` | |
-| `statuses` が空・欠落した定義を置く | `load` | `Err(Parse(EmptyStatuses))` | |
-| 動作宣言(`prompt` / `skill` / `run`)の無いステータスを含む定義を置く | `load` | `Err(Parse(NoAction))` | |
-| 動作宣言が複数あるステータス(`prompt` と `skill`、`prompt` と `run` 等)を含む定義を置く | `load` | `Err(Parse(MultipleActions))` | |
-| `run` の値が `cleanup` / `wait` 以外の定義を置く | `load` | `Err(Parse(UnknownRunValue))` | |
-| AgentRun ステータスに `next` の無い定義を置く | `load` | `Err(Parse(MissingNext))` | |
-| `next` が `statuses` に無い名前を指す定義を置く | `load` | `Err(Parse(NextNotFound))` | |
-| 値の生成エラーを含む定義(空の `prompt`、`timeout: 0s`、空文字列の `judge`、前後空白を含むステータス名等)を置く | `load` | `Err(Parse(InvalidValue))`(`NameError` / `DurationError` / `CommandError` を包む) | |
+| YAML として不正な内容(構文エラー・重複キー)のファイルを置く | `load` | `Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`) | |
+| トップレベルに許容外のキー(`workflow` / `agent` / `model` / `initial` / `statuses` 以外)を含む定義を置く | `load` | `Err(Parse { error: UnknownKey, .. })` | |
+| ステータス内にスキーマ外のキー(`prmopt` 等の typo)を含む定義を置く | `load` | `Err(Parse { error: UnknownKey, .. })` | |
+| `run: wait` / `run: cleanup` のステータスにエージェント実行系のキー(`judge`・`next` 等)を併記した定義を置く | `load` | `Err(Parse { error: ForbiddenKey, .. })`(`Wait` / `Cleanup` に許されるキーは `run` のみ) | |
+| `initial` キーの無い定義を置く | `load` | `Err(Parse { error: MissingInitial, .. })` | |
+| `initial` が `statuses` に無い名前を指す定義を置く | `load` | `Err(Parse { error: InitialNotFound, .. })` | |
+| `statuses` が空・欠落した定義を置く | `load` | `Err(Parse { error: EmptyStatuses, .. })` | |
+| 動作宣言(`prompt` / `skill` / `run`)の無いステータスを含む定義を置く | `load` | `Err(Parse { error: NoAction, .. })` | |
+| 動作宣言が複数あるステータス(`prompt` と `skill`、`prompt` と `run` 等)を含む定義を置く | `load` | `Err(Parse { error: MultipleActions, .. })` | |
+| `run` の値が `cleanup` / `wait` 以外の定義を置く | `load` | `Err(Parse { error: UnknownRunValue, .. })` | |
+| AgentRun ステータスに `next` の無い定義を置く | `load` | `Err(Parse { error: MissingNext, .. })` | |
+| `next` が `statuses` に無い名前を指す定義を置く | `load` | `Err(Parse { error: NextNotFound, .. })` | |
+| 値の生成エラーを含む定義(空の `prompt`、`timeout: 0s`、空文字列の `judge`、前後空白を含むステータス名等)を置く | `load` | `Err(Parse { error: InvalidValue, .. })`(`NameError` / `DurationError` / `CommandError` を包む) | |
 
 ## エラー・可視性
 

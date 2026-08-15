@@ -1,0 +1,93 @@
+# 実装計画 — Issue #9: spec 追従: Issue #1 / #2 / #3 の実装で判明した記述の食い違い
+
+**Issue:** #9
+**作成日:** 2026-08-15
+**複雑度:** 大規模
+**実装方針:** steps.md
+
+---
+
+## 目的
+
+Issue #1 / #2 / #3 の実装で判明した spec と実装の食い違い25件について、25件それぞれを「spec を言い換える」か「現状の spec が正しく実装を直す」かに決着させ、決めた側を反映して spec と実装の一致を回復する。23件は spec の言い換え、2件（A2 / C5）は spec と実装を同時に直す（`.adr/` の該当エントリも更新する）。
+
+## 受け入れ基準
+
+件番号は Issue 本文6件を A1〜A6、コメント1（#2 由来）11件を B1〜B11、コメント2（#3 由来）8件を C1〜C8 とする。「台帳」は `spec/inventory/` を指す。
+
+| # | 基準（検証可能な形で） | 由来 | 対応ステップ |
+|---|---|---|---|
+| AC-A1 | `spec/testcases/task/register-task.md` 異常系と `spec/pages/index.md` 縮退規則 ※1 の「エラー位置」が「構文エラー・重複キーは行・列、スキーマ違反はキーのパス」に言い換えられ、`spec/inventory/test.md` TC-task-register-task-015 / `spec/inventory/frontend.md` PAGE-common-008 / `spec/inventory/adapter.md` ADP-config-001 が同じ語になっている | Issue本文1 | 6, 7, 14, 15, 16 |
+| AC-A2 | `spec/domains/definition.md#workflowstore` のエラー一覧が `Parse { error: WorkflowParseError, resolved_from: PathBuf }` になり、`spec/testcases/ports/workflow-store.md`「パースエラー」節の13行が `Err(Parse { error: <変種>, .. })` の記法になって**先頭行（37行）の期待結果が `resolved_from` = 解決先の絶対パスを主張し**、`spec/usecases/task.md` RegisterTask のエラーケース表の「位置・原因を表示」が「位置・原因・解決先パスを表示」になり、台帳（`spec/inventory/domain.md` DOM-definition-052 / DOM-definition-055、`spec/inventory/adapter.md` ADP-workflowstore-001、`spec/inventory/usecase.md` UC-task-001、`spec/inventory/test.md` TC-port-workflow-store-017〜029）が追従し、`crates/pulsen-domain/src/definition/port.rs` の `WorkflowLoadError::Parse` が同じ形になり、参照する3ファイル（`crates/pulsen/src/adapter/workflow_store.rs` / `crates/pulsen/src/cli/render.rs` / `crates/pulsen-conformance/src/workflow_store.rs`）が追従している。`grep -rn 'Parse(' spec/` が0件になっている | Issue本文2 | 1, 5, 10, 13, 14, 15, 17 |
+| AC-A2b | 解決先パスの提示が**構造化フィールドに一本化**されている: `crates/pulsen/src/adapter/workflow_store.rs` の `parse_document` 失敗アームが `at()` を呼ばなくなり（`WorkflowParseError::YamlSyntax { message }` からパスの前置が消える）、`at()` の doc から `YamlSyntax` の記述が外れて利用者が `read_error` の `WorkflowLoadError::Io { message }` だけになり、パスの案内は `cli/render.rs` の `Parse` アームが `resolved_from` から1回だけ出す（同じパスが1つの案内に2回現れない） | Issue本文2 | 1, 17, 19, 20 |
+| AC-A3 | `spec/testcases/task/register-task.md` の例示が「語幹が空白のみになるファイル名(` .yaml`)」を含み、`spec/manual-tests/setup.md` TC-46 の目的文と手順1のファイル名が ` .yaml` に直り、**手順1のコマンド例が `pulsen add --workflow "$WORK/ .yaml" --repo "$REPO"` の形（引数がクォートされ、シェルが先頭の空白で分割しない）**になり、`spec/manual-tests/task-execution.md` の対象外の表と `spec/inventory/test.md` TC-task-register-task-034 が追従している | Issue本文3 | 7, 12, 14 |
+| AC-A4 | `spec/domains/definition.md#名前系(文字列 newtype)` の締めが「制約のある型は `parse` でのみ生成する。制約のない `InputText` は総関数 `new(s: String) -> Self` で生成する」になり、`spec/inventory/domain.md` DOM-definition-007 が追従している | Issue本文4 | 1, 13 |
+| AC-A5 | `spec/domains/definition.md#registrationvalidator` に「`status` を持たない `UnknownAgent` / `InvalidAgentDefinition` はエージェント単位の誤りであり、同値の重複は1件にまとめる」が明記され、`spec/inventory/domain.md` DOM-definition-049 が追従している。`spec/inventory/domain.md` DOM-definition-050（`RegistrationError` 5種の列挙）は**列挙自体が変わらないため更新しない**（波及表の消化としては「対応なし」で確定） | Issue本文5 | 1, 13 |
+| AC-A6 | `spec/testcases/ports/task-repository.md` の破損フィクスチャ**3箇所**——「Corrupt と SnapshotUnreadable の区別」の現役側(52行)とアーカイブ側(58行)、「save / save_degraded」の前提条件(24行)——がいずれも「有効な JSON だがスナップショットとして解釈できない内容」に言い換えられ、`spec/inventory/test.md` TC-port-task-repository-009 / 022 / **028** が追従している。`grep -rnE 'スナップショットフィールドのみ(を)?構文不正' spec/` が0件になっている | Issue本文6 | 8, 14 |
+| AC-B1 | `spec/domains/definition.md#commandline` の生成が2経路（`CommandTemplate::expand` / プロセス境界からの `rehydrate(tokens) -> Result<Self, CommandError>`）になり、`spec/inventory/domain.md` DOM-definition-023 が追従し、`CommandLine.rehydrate` の新規行（DOM-definition-057）が追加されている | #2コメント1 | 1, 13 |
+| AC-B2 | `spec/domains/task.md#rundirpath` と `spec/domains/execution.md#rundirpath-のファイル配置(語彙)` に逆写像 `state_root(&self) -> Option<StateRoot>`（`derive` との一致を条件に復元）が記され、台帳に新規行（DOM-task-081）が追加されている | #2コメント2 | 2, 3, 13 |
+| AC-B3 | `spec/pages/index.md#wrapper(内部コマンド)` に「終了コードはラッパー自身が責務を果たせたかを表す（エージェント実行・マーカーによる未起動は 0、同定情報を何も残せなかった場合と引数不正は非0）」が明記され、`spec/usecases/execution.md#runwrapper` のエラーケース表と台帳（PAGE-wrapper-006 新規、UC-execution-009）が追従している | #2コメント3 | 4, 6, 14, 16 |
+| AC-B4 | `spec/usecases/execution.md#出力DTO(サマリー)` の `errors` が `Vec<TickIssue>` になり、`TickIssue` が**各変種が必要なフィールドだけを持つ直和型**（`CorruptTaskFile { path, message }` は `task_id` を持たず、`MissingCurrentAttempt { task_id }` は `path` を持たない）として定義され、完成文言を持たず CLI 層が組み立てることが明記され、`spec/inventory/usecase.md` UC-execution-002 が追従している。`grep -n 'message: String' spec/usecases/execution.md` が0件になっている | #2コメント4 | 4, 14 |
+| AC-B5 | `spec/usecases/execution.md#出力DTO(サマリー)` の表に `confirmed_running: Vec<TaskId>`（launching → running の取込。`transitioned` にも `skipped_back` にも語義が合わない）が追加され、`spec/inventory/usecase.md` UC-execution-002 が追従している（C2 と一括） | #2コメント5 | 4, 14 |
+| AC-B6 | `spec/domains/execution.md#runstore` の契約に「write 系はいずれも書き込み先のディレクトリを必要に応じて作る」が加わり、`spec/testcases/ports/run-store.md` の表**末尾**に対応する適合ケースが1行追加され、台帳（DOM-execution-041/042/043、ADP-runstore-008/009/010、TC-port-run-store-035 新規）が追従している | #2コメント6 | 3, 9, 13, 14, 15 |
+| AC-B7 | `spec/domains/task.md` に `ToolFailureKind = WorktreeCreate \| WorktreeRemove \| ArchiveMove` が値オブジェクトとして加わり、`record_tool_failure` の遷移表の引数型が `ToolFailureKind` に絞られ、`FailureKind` との関係（記録時に写す）が記され、台帳（DOM-task-042、DOM-task-080 新規）が追従している | #2コメント7 | 2, 13 |
+| AC-B8 | `spec/domains/task.md#エラー型`（230行）の `TransitionError` が実装の6種（`InvalidState { expected: &'static [ExecutionStateKind], actual }` / `WorkspaceAlreadySet` / `WorkspaceNotSet` / `NotAgentRunStatus { status }` / `MissingCurrentAttempt` / `AlreadyNotified`）になり、`InvariantViolated` に言及する残り7箇所——`spec/domains/task.md`「検証の境界」(164行) と `TaskRepository` のデコード節(300行)、`spec/usecases/execution.md` 処理フロー7(56行)・手続きC 手順0(83行)・AbortTask のエラーケース表(178行)、`spec/testcases/execution/tick.md` 走査と分岐 異常系(39行)、`spec/testcases/ports/task-repository.md`「Corrupt と SnapshotUnreadable の区別」(56行)——と台帳（`spec/inventory/domain.md` DOM-task-053、`spec/inventory/usecase.md` UC-execution-002 / 005 / 006 / 008、`spec/inventory/test.md` TC-exec-tick-022 / TC-port-task-repository-026）がすべて追従し、`grep -rn 'InvariantViolated' spec/` が0件になっている。**加えて `spec/usecases/execution.md` 手続きD 手順0(95行)**——この行は `InvariantViolated` の語を含まないため grep には現れないが、「不変条件2〜3の破れ」の記述に報告分類（`MissingCurrentAttempt` / `MissingProcessIdent`）を添える追従先である | #2コメント8 / #3コメント1 | 2, 4, 8, 11, 13, 14 |
+| AC-B8b | `spec/domains/task.md`「検証の境界」が不変条件の破れの検出主体を3つに書き分けている: 不変条件2〜3 は遷移関数が前提として検査し `MissingCurrentAttempt` を返す / 不変条件4 は `record_launching` が `WorkspaceNotSet` で拒否する / 判定コマンドへ渡す `WORKSPACE` を組めない形の破れは遷移関数を呼ばずユースケースが検出し tick の報告分類 `MissingWorkspace` として報告する（理由は `.thread/3/adr.md` ADR-008「不変条件4の破れは遷移エラーに相乗りさせず、tick の報告分類にする」を ADR 番号ではなく理由そのものとして書く） | #2コメント8 / #3コメント1 | 2 |
+| AC-B9 | `spec/domains/execution.md#launchingclassifier` の `InconsistentRunFiles` が種別のみを持つ列挙（現在の変種は `MissingStartTime` の1つ）になり、`spec/inventory/domain.md` DOM-execution-016 が追従している | #2コメント9 / #3コメント8 | 3, 13 |
+| AC-B10 | `spec/usecases/execution.md#出力DTO(サマリー)` の `TickIssue` の分類に `SpawnNotObserved`（猶予超過で確定した spawn 失敗。カウンタを消費し凍結しうる）と `SpawnFailed`（`spawn_wrapper` の同期エラー）が**別の変種**として載り、`spec/inventory/usecase.md` UC-execution-002 / UC-execution-005 が追従している | #2コメント10 | 4, 14 |
+| AC-B11 | `spec/pages/index.md#tick` にサマリーの見出しの規約が置かれ、(a) ID を並べる見出しはサマリーの10フィールドと1対1で対応し空の見出しは出さないこと、(b) 報告(`errors`)の見出しは4つで、その**文言を「失敗を記録 / 起動の結果が未確定 / スキップ / 後始末が残っている」に固定する**こと、(c) 見出しの軸が「タスクファイルに何を残したか」ではなく「報告が何を残したか＝運用者が次に取る行動」であること、(d) 記録すべきことが1つも起きなかった tick は「処理対象のタスクはありませんでした」を表示することが読める。ID 系10見出しの日本語文言は**規約ではなく例示**として置く（フィールドとの1対1対応が規約であり、表示文字列は表示層の裁量に残す）。台帳（`spec/inventory/frontend.md` PAGE-tick-004 更新、PAGE-tick-010 新規）が追従している | #2コメント11 / #3コメント7 | 6, 16 |
+| AC-C2 | `spec/usecases/execution.md#出力DTO(サマリー)` の表に `judged: Vec<TaskId>` が追加され、`complete_run` による判定確定の受け皿であること（`advance` の結果である `transitioned` に混ぜない理由）が読め、`spec/inventory/usecase.md` UC-execution-002 が追従している（B5 と一括） | #3コメント2 | 4, 14 |
+| AC-C3 | `spec/domains/execution.md#runningclassifier` が「`classify_alive` は3値の `AliveDecision` を返す（`Judge` を含まない）」「2段規則の1段目（exit が Some なら観測なしで `Judge`）はユースケース側にある」と記し、`RunningDecision` は4値のまま残り、`spec/usecases/execution.md` 手続きD(97行) と `spec/testcases/execution/tick.md`(203行)、台帳（`spec/inventory/domain.md` DOM-execution-008 / 017、DOM-execution-072 新規、`spec/inventory/usecase.md` UC-execution-006、**`spec/inventory/test.md` TC-exec-tick-103**）が追従している。`grep -rn 'RunningClassifier の2段規則' spec/` が0件になっている | #3コメント3 | 3, 4, 11, 13, 14 |
+| AC-C4 | `spec/domains/execution.md#judgementservice` の `default_judgement` が2値の `DefaultJudgement` を返す形になり、`JudgeOutcome` は3値のまま残り、台帳（DOM-execution-019、DOM-execution-073 新規）が追従している | #3コメント4 | 3, 4, 13 |
+| AC-C5 | `spec/domains/execution.md#notificationservice` の**責務行が「stopped 確定通知の環境変数の構成」から「環境変数の構成と、通知の結末の成否の解釈」へ広がり**、`interpret_notify_completion(&CommandCompletion) -> NotifyOutcome` と `NotifyOutcome = Delivered \| Failed { cause: NotifyFailureCause }` / `NotifyFailureCause = ExitedNonZero { exit } \| TimedOut \| FailedToStart { message }` が載り、**成否の規則（超過・起動不能・非0終了はいずれも通知失敗で `notified_at` を書かない）が定数 `NOTIFY_TIMEOUT` の行ではなく解釈関数の説明に一本化されている**（同じ規則が1つの節に2回現れない）。`spec/usecases/execution.md#共通手続き` 手順4 がこの関数を経由し、台帳（`spec/inventory/domain.md` DOM-execution-022 / DOM-execution-071 更新・DOM-execution-074 / 075 / 076 新規、`spec/inventory/usecase.md` UC-execution-001 / UC-execution-002）が追従している。`crates/pulsen-domain/src/execution/notification.rs` / `crates/pulsen-domain/src/execution/mod.rs` / `crates/pulsen/src/application/tick/mod.rs` / `crates/pulsen/src/application/tick/notify.rs` / `crates/pulsen/src/cli/render.rs` が同じ形になり、**通知失敗の完成文言が `cli::render` にしか存在しない**（`grep -rnE '通知コマンドが終了コード\|秒のうちに終了しませんでした\|通知コマンドを起動できませんでした' crates/pulsen-domain/` と `grep -rn 'detail' crates/pulsen-domain/src/execution/notification.rs` がいずれも0件） | #3コメント5 | 3, 4, 13, 14, 18 |
+| AC-C5b | 通知失敗の**報告先が経路ごとに書き分けられている**: `spec/usecases/execution.md` の共通手続き notify の手順4 が固定するのは「`interpret_notify_completion` を経由し、`Delivered` のときだけ `mark_notified` → `save` する」ことまでで、失敗の報告先は呼び出し側の記述にある——Tick は `errors` に `NotifyFailed { task_id, cause }` を積み（処理フローの記述）、AbortTask は出力DTO の `notify_warning: Option<String>` に載せる（AbortTask 処理フロー 5）。共通手順が AbortTask に存在しないフィールドを要求していない | #3コメント5 | 4, 14 |
+| AC-C6 | `spec/usecases/execution.md#出力DTO(サマリー)` の分類表に `MissingProcessIdent` / `MissingWorkspace` / `ObservationFailed` / `KillFailed` / `RunFailed { cause: RunFailureCause }` / `RemnantsUnhandled { remnants: RemnantsLeft }` が含まれ、`RunFailureCause`（4値）と `RemnantsLeft`（2値）も同じ節で定義され、`spec/inventory/usecase.md` UC-execution-002 が追従している | #3コメント6 | 4, 14 |
+| AC-C6b | `MissingWorkspace` を積む手順が spec 本体から読める: `spec/usecases/execution.md` 手続きD 手順2 の「`judge` 定義あり」の枝の先頭に「`task.workspace` が None なら不変条件4の破れとして `MissingWorkspace` を報告しスキップする（判定コマンドは起動せず、書き込みも行わない）」が入り、`spec/inventory/usecase.md` UC-execution-006 の要点にも同じ分岐がある | #3コメント6 | 4, 14 |
+| AC-Z1 | 25件すべてについて、spec 本体と台帳の両方が更新されている（`.thread/9/research.md` の対応表と波及表の全行が消化されている。「対応なし」と決めた行は research.md 側にその旨が書かれている） | 計画 | 20 |
+| AC-Z2 | `spec/inventory/*.md` の5ファイルすべてで `最終同期` の日付が更新され、新規行の ID が各グループの最大番号 + 1 で**表の末尾に**追記され、既存 ID が1つも変わっていない | `_shared/references/spec-inventory.md` | 13〜16, 20 |
+| AC-Z3 | `crates/` の変更が A2 / C5 の2件に閉じている。`git diff --name-only crates/` に現れるのは次の**9ファイル**のみ: `pulsen-domain/src/definition/port.rs` / `pulsen/src/adapter/workflow_store.rs` / `pulsen-conformance/src/workflow_store.rs` / **`pulsen-conformance/HOOKS.md`（A2。`TC-port-workflow-store-017` の「組み立て手段」に `expected_path_for_name` を足す — HOOKS.md 冒頭が「フックを足すときはこの表も更新する」を規約として宣言しているため、放置すると表が嘘になる。件数の欄は据え置き）**（A2）、`pulsen-domain/src/execution/notification.rs` / **`pulsen-domain/src/execution/mod.rs`（C5。`NotifyFailureCause` の再エクスポート — `mod notification;` は非公開のため `pub use` を広げないと `application` / `cli` から型を名指しできない）** / `pulsen/src/application/tick/mod.rs` / `pulsen/src/application/tick/notify.rs`（C5）、`pulsen/src/cli/render.rs`（両方）。内訳は「A2 の5 + C5 の5 − 重複する `cli/render.rs` の1 = 9」 | 計画 | 17, 18, 20 |
+| AC-Z4 | 実装を直す判断になった2件に対応する `.adr/` エントリが更新されている（**3ファイル**）: `.adr/1-workflow-error-file-path-goes-into-free-form-messages.md`（A2。回避策の前提「ポート表を変えられない」が本 Issue で消えたことと、現在の形が `Parse { error, resolved_from }` であることが Status / 影響 から読める）、**`.adr/1-schema-error-location-is-logical.md`（A2。決定節18行の但し書き「解決先を知っているのはストアのアダプターだけで、パスを載せられる場所が自由形式のメッセージに限られるため」と影響節31行のトレードオフ「スキーマ違反の案内にそのパスが出ない」が、`Parse { resolved_from }` の新設によりいずれも成立しなくなったことが書かれている。`location` を論理位置に限る決定本体は有効なまま）**、`.adr/3-notification-procedure-layering.md`（C5。代替案節の「分類化は spec 追従の提起に回す」が決定側へ移り、決定節が `Failed { cause: NotifyFailureCause }` を述べている。**決定節29行の `Failed { detail }` も書き換わっており、`grep -n 'Failed { detail }' .adr/3-notification-procedure-layering.md` が0件になっている**——追記だけで済ませると同じ節に2つの形が並ぶ） | Issue の完了条件 | 19 |
+| AC-Z5 | `cargo fmt --check` / `cargo clippy` / `cargo test` がいずれも通る（A2 / C5 の実装変更に既存テストが追従している） | 計画 | 17, 18, 20 |
+
+## スコープ
+
+### 含まれるもの
+
+- 23件（A1 / A3 / A4 / A5 / A6 / B1〜B11 / C1〜C4 / C6〜C8）の spec 本体と台帳の言い換え。実装は正しいので触らない。
+- 2件（A2 / C5）の spec + 台帳 + `crates/` + `.adr/` の同時改訂。Issue の完了条件が「実装を直す判断になったものは、対応する `.adr/` エントリも更新する」として実装変更を明示的に想定しているため、判断だけを残して反映を先送りにしない。
+
+### 含まれないもの
+
+- **A2 / C5 以外の `crates/` の実装変更。** 残り23件はいずれも ADR に「なぜ spec のままでは成立しないか」の根拠があり、実装側が正しい。実装変更をこの2件の参照箇所（AC-Z3 の9ファイル）の外へ波及させない。
+- **`.thread/3/adr.md` の未昇格 ADR（ADR-005 `judged` / ADR-006 `AlreadyNotified`）の `.adr/` への昇格。** これは Issue #3 の片付けであって25件のいずれにも由来しない。本 Issue が更新する `.adr/` は「実装を直す判断になった2件に対応するエントリ」に限る（AC-Z4）。spec からは ADR 番号ではなく理由そのものを書くため、昇格しなくても spec の記述は自足する。
+- **`RunStore` の未実装メソッド**（`attempt_exists` / `list_runs` / `delete_attempt` / `remove_task_dir_if_empty`）。spec に定義があり実装が無いのは後続スライスの未実装であって記述の食い違いではないため、spec を削らない。
+- **`TC-port-run-store-035`（B6 で追加する適合ケース）の適合スイート実装。** `crates/pulsen-conformance/src/run_store.rs` へのケース追加は後続スライスに残す。契約（write 系がディレクトリを作る）は既存のアダプター実装が既に満たしており、spec 側だけが先行するのは記述の食い違いではない。実装変更は A2 / C5 に閉じる（AC-Z3）。同じ理由で `crates/pulsen-conformance/HOOKS.md` の件数（冒頭の196行と `## RunStore` 節）も**据え置く** — `HOOKS.md` が数えるのは「これまでのスライスで扱った行」であり、適合スイート実装を伴わない新規行はまだ数えない。数え直すと AC-Z3 の変更ファイル一覧と食い違う。
+- **Issue #17**（`try_kill_remnants` のポート契約に実行単位ID再利用の検出手段を足す件）。#3 のコメントで明示的に本 Issue の対象外とされている。
+- ついでのリファクタリング・無関係な記述改善・Markdown の整形。差分は25件の追従に限る。
+
+## リスクと注意点
+
+- **台帳の追従漏れが最大のリスク。** 完全性ゲート・`implement-audit`・`spec-to-issues` はいずれも `spec/inventory/` の行を基準に走るため、本体だけ直して台帳を直し忘れると、以降のすべての検証が古い基準で走り、しかもそのこと自体が検出されない。ステップ20の横断確認で全対象語を `grep` で潰す。
+- **台帳 ID の安定性。** `_shared/references/spec-inventory.md` は「一度振った ID は変えない」と定める。一方で連番は「spec 内の出現順」であり、`spec/testcases/` の表の途中に行を挿入すると以降の TC ID がすべてずれる。**新しいテストケース行は表の末尾に置き、台帳の新規 ID は各グループの最大番号 + 1 にする**（steps.md の設計と adr.md ADR-001）。
+- **1件の言い換えが複数ファイルに波及する。** `TransitionError`（B8/C1）は domains / usecases / testcases / inventory の4層に現れ、`errors` の分類（B4/B10/C6）は usecases の DTO 表・エラーケース表・手続きA〜E の記述に散る。research.md の波及表を消化台帳として使う。
+- **同じ件が複数コメントに現れる。** B8=C1、B9=C8、B5+C2、B11+C7、B4+B10+C6 は一括で直す。片方だけ直すと同じ型が2つの形で spec に残る。
+- **`spec/manual-tests/setup.md` TC-46 は手順自体が誤っている。** `$WORK/.yaml` では `Path::file_stem` が `.yaml` を返して登録が成功してしまう。A3 の追従では目的文だけでなく手順1のファイル名も ` .yaml` に直す必要がある。
+- **Issue 本文・コメントの ADR 番号は旧スキーム。** `.adr/` は `4a00abe` でリネーム済みで、#2 由来のコメントは現 `.thread/2/adr.md` の番号ともさらに +8 ずれている。research.md のマッピング表を必ず参照する（誤った ADR を spec に引用すると恒久的な誤リンクになる）。
+- **未昇格の ADR がある。** `judged`（C2）・`TransitionError::AlreadyNotified`（C1）・不変条件4の破れの扱い（B8b）の根拠は `.thread/3/adr.md` にしかなく `.adr/` に無い。昇格はスコープ外なので、spec からは ADR 番号ではなく**理由そのもの**を書く（spec が `.thread/` を参照しない状態を保つ）。
+- **spec 内の ADR 参照表記。** spec 本文は `ADR-008` のような番号で ADR を参照している箇所がある。本 Issue では新規に参照を足す場合のみ現ファイル名で書き、既存の番号表記の一括置換は行わない（スコープ外）。
+- **実装変更は A2 / C5 に閉じるが、`crates/pulsen/src/cli/render.rs` は両方が触る唯一のファイル。** A2 は `workflow_load_error` の `Parse` アーム、C5 は `TickIssue::NotifyFailed` の文言を組む関数で、互いに独立した関数に閉じる（見出しの振り分け `issue_outcome`（132行）は `NotifyFailed { .. }` で受けているため変更を要さない）。ステップ17 と18 を分けたまま同一ファイルを2回触ることになるので、コンフリクトではなく**取りこぼし**（片方だけ直して他方の match が壊れたまま `cargo test` を回さない）に注意する。
+- **C5 の `Delivered` / `Failed` の2分岐を壊さない。** `Failed` を平坦化して `NotifyOutcome` を4変種にすると、「`Delivered` だけが `notified_at` を書く根拠になる」という規則を呼び出し側が3変種の列挙で書くことになり、at-least-once の根拠が型から読めなくなる。分類は `Failed { cause: NotifyFailureCause }` として内側に持つ（adr.md ADR-004）。
+- **A2 は `WorkflowParseError` の12種の**形**には触らない。** 変えるのは `WorkflowLoadError::Parse` が `resolved_from` を伴うことと、その帰結として `YamlSyntax { message }` からパスの前置が消えること（AC-A2b）だけで、`location` が論理位置を指す契約（`.adr/1-schema-error-location-is-logical.md`）は変えない。適合スイートが値の一致で固定している `UnknownKey` / `InvalidValue` の `location` に影響を出さない。`YamlSyntax` の前置を外しても安全であることは確認済み: 受け入れテスト `crates/pulsen/tests/cli_add_error.rs`（197 / 207行）は `["YAML 構文エラー", "位置:", "行"]` の3語しか見ておらず、適合スイート（`crates/pulsen-conformance/src/workflow_store.rs:435-437`）も `message` の非空と `location` の存在しか主張していない（前置された絶対パスを見ている主張は1つもない）。
+- **A2 の波及は `spec/testcases/ports/workflow-store.md` にも及ぶ。** ポート契約にフィールドを増やすのに適合ケースが旧いタプル記法（`Err(Parse(YamlSyntax))`、13行）のまま残ると、同じ型が spec 内に2つの形で存在する——本 Issue が閉じようとしている食い違いそのものになる。`resolved_from` の主張は先頭行1行に置けば契約は固定できる（全13行に同じ主張を足さない。`.adr/1-conformance-skip-budget.md` の主旨）。
+
+## テスト方針
+
+- 23件は spec のみの変更でテストは追加・変更しない。A2 / C5 の2件だけが `crates/` を変えるため、既存テストの追従とツールチェーンの通過を確認する。
+- **対応表の消化確認**: `.thread/9/research.md` の25件対応表と波及表の全行について、spec 本体と台帳の両方に該当の差分があることを確認する。「対応なし」と決めた行（`DOM-definition-050`）は research.md 側にその判断が書かれていることを確認する。
+- **横断 `grep` による残存確認**: 言い換え前の語が spec 配下に残っていないことを確認する。各語は「正しく実装したときに0件になり、かつ無関係な行を拾わない」ことを実測で確かめた形にする（ステップ20 に列挙。現行のヒット数を併記する）。
+- **台帳の整合確認**: 各 `spec/inventory/*.md` の新規行 ID がグループ内で一意かつ最大番号 + 1 であること、既存 ID が変わっていないこと、`最終同期` の日付が更新されていることを確認する。
+- **実装変更の範囲確認**: `git diff --name-only crates/` が AC-Z3 の9ファイルに収まること。A2 / C5 以外の23件で `crates/` に触れていないこと。
+- **既存テストの追従**（仕様は変わらず型の形だけが変わるため、新規テストは A2 の適合ケースへの1主張のみ）。
+  - C5: `crates/pulsen-domain/src/execution/notification.rs` のユニットテスト `通知の失敗の3つの原因は説明から判別できる`（122行）を、完成文言の差ではなく `NotifyFailureCause` の変種の判別で主張する形に書き換える（テストヘルパー `detail_of` は不要になる）。結合テスト（`crates/pulsen/tests/tick_notify.rs:356` / `tick_scan.rs:546`）は `TickIssue::NotifyFailed { .. }` で受けているため変更を要さない。
+  - A2: `crates/pulsen-conformance/src/workflow_store.rs` の4つの match アームを新しい変種の形に追従させる。適合ケースの**本数**は増やさないが、ヘルパー `expect_parse_error`（846行）が `WorkflowParseError` だけを返して解決先を捨てているため `(WorkflowParseError, PathBuf)` を返す形に改め、`tc_port_workflow_store_017`（434行付近）で `resolved_from == harness.expected_path_for_name("wf")` を1回だけ主張する。これがないと、契約にフィールドが増えるのに適合スイートがそのフィールドを1件も検証しない状態になる（B6 で「契約を足したら適合ケースで主張する」を採ったのと対称にする）。`expected_path_for_name` は `WorkflowStoreHarness` に既にあり（`crates/pulsen-conformance/src/lib.rs:394`、既定は `None` = skip 予算）、`tc_port_workflow_store_001 / 003` が同じ形で使っている。
+- **ツールチェーンの通過**: `cargo fmt --check` / `cargo clippy` / `cargo test` がいずれも通ること（CLAUDE.md の技術方針）。

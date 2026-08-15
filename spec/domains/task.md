@@ -69,6 +69,7 @@
 
 - フィールド: `PathBuf`(絶対パス)
 - 生成: `derive(state_root: &StateRoot, id: &TaskId, n: AttemptNumber) -> Self` = `<state_root>/runs/<task-id>/attempt-<n>`。決定的導出だが、requirements §4.1・§9 に従いタスクファイルにも記録する(人間が直接辿れるようにする)
+- 逆写像: `state_root(&self) -> Option<StateRoot>` — パスから `attempt-<n>` と task-id を読み、`derive` で組み直した結果が自身と一致する場合にのみ `StateRoot` を返す。config もホームも読まないラッパーが `RunStore` を組むために使う(`RunDirPath` は起動引数として渡る)。導出の一致を条件にすることで、`derive` と逆写像が食い違う値を返さない
 - 等価性: パスの一致
 
 ### TaskFilePath
@@ -101,6 +102,7 @@
 
 - フィールド: `kind: FailureKind`、`message: String`(非空)、`at: Timestamp`
 - `FailureKind = WorktreeCreate | WorktreeRemove | ArchiveMove | SpawnFail | JudgeFail`
+- `ToolFailureKind = WorktreeCreate | WorktreeRemove | ArchiveMove` — `FailureKind` のうちツール操作の3種だけを取り出した型。`record_tool_failure` はこれだけを受け取り、記録時に `FailureKind` へ写す(`SpawnFail` / `JudgeFail` を渡すとカウンタと失敗種別が食い違う帳簿になるため、型で排除する)
 - 意味: 直近のツール操作の失敗(requirements §9)および判定失敗の記録。`JudgeFail` は requirements §9 の列挙にはないが、§8「凍結に至った要因はタスクファイルに記録し、参照可能にする」を JudgeLimitExceeded 経路で満たすために含める(プロトコル外の exit code・判定timeout・起動不能のどれかを message で判別できる)。エージェント実行自体の失敗はここに記録しない(証跡はrunディレクトリの exit / ログにある)。上書きは新しい失敗の発生時のみで、成功時にクリアしない(「直近の」失敗要因)
 
 ### StopReason
@@ -161,7 +163,7 @@ ExecutionState =
 7. `Running` / `Completed` になった直後の `spawn_fail_count` は 0 である(起動確認でリセット)
 8. `Stopped` 以外の状態は `notified_at` を持たない(型で表現済み)
 
-検証の境界: 不変条件 1(および snapshot 自体の構造)は TaskRepository のアダプターがデコード時に検証し、破れは `SnapshotUnreadable` として返す(`Intact(Task)` に対しては常に成立する — `current_status_def` の全域シグネチャの根拠)。不変条件 2〜4 は手動修復で破られたままデコードを通り得るため、遷移関数が前提として検査し、崩れていれば `TransitionError::InvariantViolated` を返す(tick はそのタスクをスキップして報告し、修復は人間に委ねる)。パニックは「遷移関数自身が事後条件を破った」場合(プログラミングエラー)に限る。
+検証の境界: 不変条件 1(および snapshot 自体の構造)は TaskRepository のアダプターがデコード時に検証し、破れは `SnapshotUnreadable` として返す(`Intact(Task)` に対しては常に成立する — `current_status_def` の全域シグネチャの根拠)。不変条件 2〜3 は手動修復で破られたままデコードを通り得るため、遷移関数が前提として検査し、崩れていれば `TransitionError::MissingCurrentAttempt` を返す(tick はそのタスクをスキップして報告し、修復は人間に委ねる)。不変条件 4(workspace)の破れは `record_launching` が `TransitionError::WorkspaceNotSet` で拒否する。判定コマンドへ渡す `WORKSPACE` を組めない形の破れは、遷移関数を呼ぶ前にユースケースが検出し、tick の報告分類 `MissingWorkspace` として報告する(遷移エラーに相乗りさせない — 遷移を呼ばずにスキップする判断であり、帳簿には何も残らない)。パニックは「遷移関数自身が事後条件を破った」場合(プログラミングエラー)に限る。
 
 #### ライフサイクル(実行状態の遷移)
 
@@ -202,7 +204,7 @@ ExecutionState =
 | `skip_run` | `(self, now) -> Result<Task>` | `Running` | 判定 skipped(ADR-008)。`Pending`(タスクステータス不変)、`attempt_count = 0`、`judge_attempt_count = 0` |
 | `fail_run` | `(self, retry_limit: u32, now) -> Result<Task>` | `Running` | 判定 failed / timeout kill / プロセス死亡。`attempt_count += 1`、`judge_attempt_count = 0`。超過なら `Stopped { RetryLimitExceeded }`、でなければ `Failed` |
 | `record_judge_failure` | `(self, detail: String, judge_attempt_limit: u32, now) -> Result<Task>` | `Running` | 判定不能。`judge_attempt_count += 1`、`last_failure = JudgeFail { detail }`(プロトコル外の code・判定timeout・起動不能の別を残す)。超過なら `Stopped { JudgeLimitExceeded }`、でなければ `Running` のまま(次tickで再判定) |
-| `record_tool_failure` | `(self, kind, message, retry_limit: u32, now) -> Result<Task>` | `Pending \| Failed` | worktree作成・削除、アーカイブ移動の失敗(ADR-012)。`attempt_count += 1`、`last_failure` 更新。超過なら `Stopped { RetryLimitExceeded }`、でなければ `Failed` |
+| `record_tool_failure` | `(self, kind: ToolFailureKind, message, retry_limit: u32, now) -> Result<Task>` | `Pending \| Failed` | worktree作成・削除、アーカイブ移動の失敗(ADR-012)。`attempt_count += 1`、`last_failure` 更新。超過なら `Stopped { RetryLimitExceeded }`、でなければ `Failed` |
 | `advance` | `(self, now) -> Result<Task>` | `Completed`、現ステータスが AgentRun | `task_status = 現ステータスの next`、`Pending` |
 | `abort` | `(self, now) -> Result<Task>` | `Stopped` 以外 | `Stopped { Aborted, notified_at: None }`(kill の成否確認はユースケースの責務。kill失敗時はこのメソッドを呼ばない) |
 | `mark_notified` | `(self, now) -> Result<Task>` | `Stopped { notified_at: None }` | `notified_at = Some(now)` |
@@ -223,16 +225,21 @@ ExecutionState =
 
 ```
 TransitionError =
-  InvalidState { expected: &'static str, actual: ExecutionStateKind }  // 前提状態の不一致
+  InvalidState { expected: &'static [ExecutionStateKind], actual: ExecutionStateKind }  // 前提状態の不一致
 | WorkspaceAlreadySet                                                  // confirm_workspace の再確定
 | WorkspaceNotSet                                                      // workspace 未確定での record_launching
 | NotAgentRunStatus { status: StatusName }                             // AgentRun 前提の遷移を Wait / Cleanup で呼んだ(advance / record_launching)
-| InvariantViolated { message: String }                                // 手動修復で破られた不変条件2〜4(Running なのに attempt / process が None 等)
+| MissingCurrentAttempt                                                // 手動修復で破られた不変条件2〜3(Running なのに attempt / process が None 等)
+| AlreadyNotified                                                      // 通知済みの stopped への mark_notified
 
 RetryError     = NotStopped { actual: ExecutionStateKind }             // pages retry の案内文言の分岐に使う
 SetStatusError = Active { actual: ExecutionStateKind }                 // launching / running。「先に abort せよ」の案内
                | UnknownStatus { given: StatusName, defined: Vec<StatusName> }
 ```
+
+- `TransitionError` は永続化されず表示にしか使われないため、**分類だけを持ち完成文言を持たない**(`expected` は受理される実行状態そのもの。文言は CLI 層が組み立てる)
+- `MissingCurrentAttempt` は手動修復で破られた不変条件2〜3の破れ(`Running` なのに `current_attempt` / `process` が None)
+- `AlreadyNotified` は `Stopped { notified_at: Some }` への `mark_notified`。判別子だけの `InvalidState` では `expected = [stopped]` / `actual = stopped` という自己矛盾した報告になるため専用の変種にする
 
 ### DegradedTask(スナップショット破損タスク)
 
@@ -297,7 +304,7 @@ SetStatusError = Active { actual: ExecutionStateKind }                 // launch
   - **破損スナップショットの温存**: `save_degraded` は、ファイル内のスナップショットフィールドを**元の内容のまま**書き戻す(読めない部分を消さず、修復の材料を保存する)。往復可能性はアダプターの責務
   - **ディレクトリの不在**: 走査対象ディレクトリ(`state/tasks/` / `state/archive/`)の不在は空結果として扱う(`find` は `NotFound`)。走査はタスクファイルの命名形式(`<task-id>.json`)に合致するエントリのみを対象とし、形式外のエントリ(アトミック置換の一時ファイル残骸・手動で置かれたファイル等)は列挙せず触れない(RunStore の `attempt-<n>` 形式外の扱いと同じ規則)。書き込みメソッド(`create` / `save` / `save_degraded` / `archive`)は必要なディレクトリを自動作成する(`state/` 配下はツールが管理する領域のため。pages ※3)
   - **クエリ要件**: 走査は全件読み込み(数十〜数百タスクの規模。requirements §9)。絞り込み・並び順はユースケース側で行う。ページングなし
-  - **デコード**: 直列化形式(人間可読なJSON)と検証はアダプター境界の責務。スナップショットを含む全フィールドを往復可能に保存する。デコード時に検証する範囲: (a) タスク側フィールドの構文・値制約 — 破れは `Corrupt`、(b) スナップショットの構文と構造不変条件(`initial ∈ statuses`・`next ∈ statuses`)、および `task_status ∈ snapshot.statuses` の照合 — 破れは `SnapshotUnreadable`(message に理由)。これにより `Intact(Task)` は不変条件1を常に満たす。不変条件2〜4(状態間の整合)はデコードでは検証せず、遷移関数の前提検査(`InvariantViolated`)に委ねる
+  - **デコード**: 直列化形式(人間可読なJSON)と検証はアダプター境界の責務。スナップショットを含む全フィールドを往復可能に保存する。デコード時に検証する範囲: (a) タスク側フィールドの構文・値制約 — 破れは `Corrupt`、(b) スナップショットの構文と構造不変条件(`initial ∈ statuses`・`next ∈ statuses`)、および `task_status ∈ snapshot.statuses` の照合 — 破れは `SnapshotUnreadable`(message に理由)。これにより `Intact(Task)` は不変条件1を常に満たす。不変条件2〜4(状態間の整合)はデコードでは検証せず、遷移関数の前提検査(`TransitionError::MissingCurrentAttempt` / `WorkspaceNotSet`)とユースケース側の検査に委ねる
 
 ### TaskIdGenerator
 

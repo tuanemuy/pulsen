@@ -670,7 +670,7 @@ exit 20
 | RegisterTask | ワークフロー解決失敗(`NotFound`) | TC-08, TC-09 | 名前指定(TC-08)・パス指定(TC-09 手順2)の両方 |
 | RegisterTask | ワークフロー解決失敗(`Io`) | 対象外 | 読み取りI/O障害の注入が必要 |
 | RegisterTask | ワークフローのパースエラー(`WorkflowParseError` 全種) | TC-09 | 構文エラーで経路を代表確認。キー単位の検証エラー全種(`MissingInitial` 等)は `testcases/task/register-task.md` の自動テストで網羅 |
-| RegisterTask | 表示名の決定失敗(`NameError`) | 対象外 | 拡張子を除くと空になるファイル名という特殊入力のみ。自動テストで網羅 |
+| RegisterTask | 表示名の決定失敗(`NameError`) | 対象外 | 語幹が空白のみになるファイル名という特殊入力のみ。自動テストで網羅 |
 | RegisterTask | リポジトリ不在・非リポジトリ | TC-10 | |
 | RegisterTask | ブランチ不在 / HEAD 解決不能(detached HEAD) | TC-11 | 空リポジトリのケースは同一経路のため detached HEAD で代表確認 |
 | RegisterTask | 対象検証の git 操作自体の失敗(`TargetError::Failed`) | 対象外 | git 実行環境の障害注入が必要 |

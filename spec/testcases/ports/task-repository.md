@@ -21,7 +21,7 @@ TaskRepository のすべてのアダプター実装が共通で通す適合テ�
 | `create` 済みのタスク | 遷移後の値(実行状態・カウンタ・`updated_at` を変更)で `save` | `Ok`。直後の `find` が更新後の内容を返す(read-your-writes) | |
 | `create` していない ID のタスク | `save` | `Err(NotFound)`(現役に存在しない) | |
 | `create` → `archive` 済みのタスク | `save` | `Err(NotFound)`(アーカイブ側は `save` の対象外) | |
-| スナップショットフィールドのみを不正な内容に書き換えたタスクファイルを `find` し、`SnapshotUnreadable(DegradedTask)` を得る | タスク側フィールドを変更(`abort` による Stopped 化等)して `save_degraded` | `Ok`。直後の `find` は変更後のタスク側フィールドを持つ `SnapshotUnreadable` を返し、スナップショットフィールドは元の(破損した)内容のままファイルに温存される(往復。修復の材料を消さない) | |
+| スナップショットフィールドのみを有効な JSON だがスナップショットとして解釈できない内容に書き換えたタスクファイルを `find` し、`SnapshotUnreadable(DegradedTask)` を得る | タスク側フィールドを変更(`abort` による Stopped 化等)して `save_degraded` | `Ok`。直後の `find` は変更後のタスク側フィールドを持つ `SnapshotUnreadable` を返し、スナップショットフィールドは元の(破損した)内容のままファイルに温存される(往復。修復の材料を消さない) | |
 | 現役に存在しない ID の DegradedTask | `save_degraded` | `Err(NotFound)` | |
 | `create` 済みのタスク。書き込み先へ書き込めない(`state/tasks/` が書き込み不能等。再現できるアダプター環境に限る) | `save` | `Err(Io)`。message を含む(部分的な書き込み結果を残さないことは「原子性の観測面」で検証) | |
 | `find` で `SnapshotUnreadable(DegradedTask)` を得た状態で、書き込み先へ書き込めない(再現できるアダプター環境に限る) | `save_degraded` | `Err(Io)`。message を含む | |
@@ -45,17 +45,19 @@ TaskRepository のすべてのアダプター実装が共通で通す適合テ�
 
 ## Corrupt と SnapshotUnreadable の区別
 
+タスクファイル全体を1回の JSON パースで読む実装では、`Corrupt` と `SnapshotUnreadable` を同時に満たす内容は作れない — 構文を壊せばファイル全体のパースが落ちて `Corrupt` になる。スナップショットのみの破損は「有効な JSON だがスナップショットとして解釈できない」形でのみ作る。
+
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
 | タスクファイル全体を JSON として不正な内容に置き換える | `find` | `Corrupt { path, message }`(path は当該ファイル) | |
 | タスク側フィールドの構文・値制約を破る(実行状態に未知の値、`task_id` の文字集合違反等)よう書き換える | `find` | `Corrupt`(タスク側フィールドの破れはファイル全体の破損として扱う) | |
-| スナップショットフィールドのみを構文不正な内容に置き換える(タスク側フィールドは有効なまま) | `find` | `Active(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールド(実行状態・カウンタ・attempt 参照等)はすべて読める | |
+| スナップショットフィールドのみを**有効な JSON だがスナップショットとして解釈できない内容**に置き換える(タスク側フィールドは有効なまま) | `find` | `Active(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールド(実行状態・カウンタ・attempt 参照等)はすべて読める | |
 | スナップショットフィールドを**削除**する(不在。タスク側フィールドは有効なまま) | `find` | `Active(SnapshotUnreadable(DegradedTask))`(欠落も「スナップショットのみ読めない」に分類する。`Corrupt` に落とさない — pages 縮退表「スナップショット 不在・パース不能」) | |
 | `task_status` を snapshot の statuses に無い名前に書き換える | `find` | `SnapshotUnreadable`(不変条件1の照合破れ。`RehydrateError::StatusNotInSnapshot` の写像) | |
 | スナップショットの構造不変条件を破る(`initial ∉ statuses`、または AgentRun の `next ∉ statuses`)よう書き換える | `find` | `SnapshotUnreadable` | |
-| 状態間整合の不変条件2〜4を破る内容(例: Running なのに `current_attempt.process` が無い)に書き換える(構文・値制約とスナップショットは有効なまま) | `find` | `Active(Intact)`(不変条件2〜4はデコードでは検証しない。遷移関数の前提検査 `InvariantViolated` に委ねる) | |
+| 状態間整合の不変条件2〜4を破る内容(例: Running なのに `current_attempt.process` が無い)に書き換える(構文・値制約とスナップショットは有効なまま) | `find` | `Active(Intact)`(不変条件2〜4はデコードでは検証しない。遷移関数の前提検査(`TransitionError::MissingCurrentAttempt` 等)に委ねる) | |
 | `state/archive/` に JSON として不正な内容のタスクファイルを置く(ファイルフィクスチャ。現役側に同 ID なし) | `find` | `Corrupt { path, message }`(path はアーカイブ側の当該ファイル。破損の区分は tasks / archive で変わらない) | |
-| `state/archive/` にスナップショットフィールドのみ構文不正なタスクファイルを置く(タスク側フィールドは有効なまま。現役側に同 ID なし) | `find` | `Archived(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールドはすべて読める | |
+| `state/archive/` にスナップショットフィールドのみ**有効な JSON だがスナップショットとして解釈できない内容**のタスクファイルを置く(タスク側フィールドは有効なまま。現役側に同 ID なし) | `find` | `Archived(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールドはすべて読める | |
 | 上記の各破損フィクスチャのうち**現役側(`state/tasks/`)に置いたもの** | `list_active` | `find` と同じ区分で列挙される(`Corrupt` は `TaskEntry::Corrupt`、スナップショット破損は `Record(SnapshotUnreadable)`)。アーカイブ側のフィクスチャは現れない | |
 | `state/tasks/` に命名形式(`<task-id>.json`)に合致しないエントリ(一時ファイル残骸・手動配置のファイル等)を置く | `list_active` | 形式外エントリは列挙されない(`Corrupt` としても現れない)。既存タスクの走査には影響しない(RunStore の `attempt-<n>` 形式外と同じ規則) | |
 
