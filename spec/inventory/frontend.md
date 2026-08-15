@@ -19,7 +19,7 @@
 | PAGE-add-007 | 検証済み定義のスナップショット保存とタスクファイルの作成 | spec/pages/index.md#add | 検証済みのワークフロー定義をスナップショットとして保存し、実行状態 pending のタスクファイルを作成すれば PASS。 |
 | PAGE-add-008 | タスクIDの発行と表示 | spec/pages/index.md#add | 登録時にタスクIDを発行し、その値を利用者に表示すれば PASS。 |
 | PAGE-add-009 | 成功時の終了 | spec/pages/index.md#add | 検証・登録が成功した場合にタスクIDを表示して 0 で終了すれば PASS。 |
-| PAGE-add-010 | 検証エラー時の拒否 | spec/pages/index.md#add | ワークフロー不在・YAML不正・エージェント未定義・skill_input 欠落・リポジトリ/ブランチ不在の各原因を表示して非0で終了し、タスクを作らず、ワークフロー名解決失敗時は解決を試みたパス(`workflows/<name>.yaml` の絶対パス)を、エージェント未定義時は config.yaml に定義済みのエージェント名一覧を添えれば PASS。 |
+| PAGE-add-010 | 検証エラー時の拒否 | spec/pages/index.md#add | ワークフロー不在・YAML不正・エージェント未定義・skill_input 欠落・リポジトリ/ブランチ不在の各原因を表示して非0で終了し、タスクを作らず、ワークフロー名解決失敗時は解決を試みたパス(`workflows/<name>.yaml` の絶対パス)を、ワークフロー定義のパースエラー時は解決先の絶対パス(名前指定では利用者が直接書いていないため)を、エージェント未定義時は config.yaml に定義済みのエージェント名一覧を添えれば PASS。 |
 | PAGE-tick-001 | tick コマンド | spec/pages/index.md#tick | `pulsen tick` の構文で1回のtickパスを実行して終了し、定期実行は外部スケジューラーに委ねる責務であれば PASS。 |
 | PAGE-tick-002 | 全タスクファイルの走査と状態応じた処理 | spec/pages/index.md#tick | 全タスクファイルを走査し、実行状態・タスクステータスに応じて起動/launching分類/観測・判定/遷移/クリーンアップ/通知を行えば PASS。 |
 | PAGE-tick-003 | run_retention 設定時のgc | spec/pages/index.md#tick | `run_retention` が設定されている場合にのみ保持期間を超えたattemptのrunディレクトリをgcし(保護規則・失敗時の扱いは requirements §9.2 準拠)、未設定なら行わなければ PASS。 |
@@ -88,4 +88,4 @@
 | PAGE-set-status-007 | タスク不在・アーカイブ済み・パース不能時の拒否 | spec/pages/index.md#縮退状態の共通規則 | いずれの場合も書き込みを行わず非0 |
 | PAGE-set-status-008 | スナップショット不在・パース不能時の拒否 | spec/pages/index.md#縮退状態の共通規則 | 遷移先の検証にスナップショットが必要なため、状態を変更せず非0で拒否する(※7) |
 | PAGE-tick-010 | サマリーの報告(errors)の見出しの規約 | spec/pages/index.md#tick | 報告の見出しが「失敗を記録 / 起動の結果が未確定 / スキップ / 後始末が残っている」の4つに固定され、見出しの軸が「タスクファイルに何を残したか」ではなく「報告が何を残したか＝運用者が次に取る行動」であれば PASS |
-| PAGE-wrapper-006 | 終了コードの規約 | spec/pages/index.md#wrapper内部コマンド | 終了コードがラッパー自身の責務の達否を表し、エージェントを実行した場合とマーカーにより起動しなかった場合は 0、同定情報を何も残せずに終えた場合と起動引数が不正な場合は非0であり、エージェントの終了コードを伝播しなければ PASS |
+| PAGE-wrapper-006 | 終了コードの規約 | spec/pages/index.md#wrapper内部コマンド | 終了コードがラッパー自身の責務の達否を表し、エージェントを実行した場合とマーカーにより起動しなかった場合は 0、同定情報一式を残せずに終えた場合と起動引数が不正な場合は非0であり、エージェントの終了コードを伝播しなければ PASS |

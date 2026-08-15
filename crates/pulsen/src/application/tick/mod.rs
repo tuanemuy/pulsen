@@ -268,8 +268,11 @@ impl RemnantsLeft {
 
 /// tick パスの結果。
 ///
-/// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` と `judged` を
-/// 足した形。`archived` / `gc_deleted` / `gc_errors` はまだ値の入る経路を持たない。
+/// 1タスクは1tickで1ステップしか進まないため、進んだステップごとに別のフィールドで受ける
+/// (`confirmed_running` は launching → running の取込、`judged` は判定の確定、
+/// `transitioned` は次ステータスへの前進)。まとめると、どのステップが起きたかを結果から
+/// 読み分けられなくなる。`archived` / `gc_deleted` / `gc_errors` は対応する手続きが未実装で、
+/// まだ値の入る経路を持たない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。

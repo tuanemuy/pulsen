@@ -440,10 +440,15 @@ statuses:
             WorkflowParseError::YamlSyntax { message, location } => {
                 assert!(!message.is_empty());
                 assert!(location.is_some(), "テキスト上の位置を伴う");
+                assert!(
+                    !message.contains(&expected.display().to_string()),
+                    "解決先は構造化フィールドで示し、メッセージには前置しない"
+                );
             }
             other => panic!("YamlSyntax として拒否される: {other:?}"),
         }
         assert_eq!(resolved_from, expected);
+        assert!(resolved_from.is_absolute(), "案内に使える絶対パスを返す");
     }
     CaseOutcome::Ran
 }

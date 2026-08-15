@@ -24,15 +24,27 @@ agents:
 
 /// 与えた設定と定義で名前指定の登録を行い、拒否の共通の帰結を確かめる。
 fn reject(config: &str, definition: &str, expected: &[&str]) {
+    reject_resolved(config, definition, |_| {
+        expected.iter().map(|word| (*word).to_owned()).collect()
+    });
+}
+
+/// `reject` と同じだが、期待語を解決先の絶対パスから組み立てられる。
+///
+/// 名前指定(`--workflow broken`)では利用者が解決先を書いていないため、どのファイルを
+/// 読んだのかは案内からしか分からない。
+fn reject_resolved(config: &str, definition: &str, expected: impl FnOnce(&Path) -> Vec<String>) {
     let home = Home::new();
     home.write_config(config);
-    home.write_workflow("broken", definition);
+    let definition_path = home.write_workflow("broken", definition);
     let repo = Repo::with_commit();
     let untouched = home.untouched();
 
     let run = add("broken", repo.path()).home(home.path()).run();
 
-    run.assert_rejected().assert_reports(expected);
+    let expected = expected(&definition_path);
+    let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+    run.assert_rejected().assert_reports(&expected);
     assert!(home.has_no_task(), "タスクは作られない");
     untouched.assert_unchanged();
 }
@@ -193,9 +205,19 @@ fn tc_task_register_task_021_定義が読めなければ拒否される() {
 }
 
 #[test]
-fn tc_task_register_task_022_定義のyamlが構文として不正なら位置と原因を示して拒否される() {
-    reject_definition("statuses: [\n", &["YAML 構文エラー", "位置:", "行"]);
-    reject_definition(
+fn tc_task_register_task_022_定義のyamlが構文として不正なら位置と原因と解決先を示して拒否される() {
+    fn expected(resolved: &Path) -> Vec<String> {
+        vec![
+            "YAML 構文エラー".to_owned(),
+            "位置:".to_owned(),
+            "行".to_owned(),
+            resolved.display().to_string(),
+        ]
+    }
+
+    reject_resolved(CONFIG, "statuses: [\n", expected);
+    reject_resolved(
+        CONFIG,
         "\
 initial: queued
 initial: done
@@ -204,7 +226,7 @@ statuses:
     prompt: 実装して
     next: queued
 ",
-        &["YAML 構文エラー", "位置:", "行"],
+        expected,
     );
 }
 

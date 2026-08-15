@@ -138,7 +138,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| runディレクトリに pid・starttime の両方がある | tick を実行する | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる | |
+| runディレクトリに pid・starttime の両方がある | tick を実行する | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる。サマリーの `confirmed_running` に記録される | |
 | pid がなく、launching 記録からの経過が猶予時間内 | tick を実行する | `KeepWaiting`: 何もしない(ラッパーの書き込み待ち) | |
 | pid がなく、猶予時間を超過している | tick を実行する | 無効化マーカーを書き、pid を再読する。なお pid がなければ `record_spawn_failure`: pending 復帰・spawn_fail_count 加算・last_failure = SpawnFail | |
 | マーカー書き込み後の再読で pid・starttime が現れていた | tick を実行する | pending に戻さず `confirm_running` で running へ取り込む | |
@@ -179,7 +179,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| exit ファイルに 0・judge 未定義 | tick を実行する | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick) | |
+| exit ファイルに 0・judge 未定義 | tick を実行する | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick)。サマリーの `judged` に記録される | |
 | exit ファイルに非0・judge 未定義 | tick を実行する | デフォルト判定で Failed → `fail_run`: failed になり attempt_count 加算・judge_attempt_count リセット | |
 | exit ファイルあり・judge 定義あり | tick を実行する | 判定コマンドが `TASK_ID` / `WORKSPACE` / `EXIT_CODE`(10進文字列)/ `RUN_DIR` の環境変数と `config.judge_timeout` で、シェルを介さず直接起動される(引数なし・プレースホルダ展開なし) | |
 | 判定コマンドが exit 0 で終了する | tick を実行する | Completed → `complete_run` | |
@@ -203,6 +203,7 @@
 | exit ファイルあり・`starttime_of` が失敗する環境 | tick を実行する | 生存観測に依存せず判定が遅延なく実行され、分類が確定する(exit が Some なら判定 — 2段規則の1段目はユースケース側にあり、`classify_alive` は生存の分類だけを返す。観測の一過性失敗で判定を遅延させない) | |
 | `read_exit` が `RunFileError` を返す | tick を実行する | 当該タスクをスキップして報告する(書き込まない)。tick は 0 | |
 | `try_kill_remnants` が `NotIdentifiable` / `Failed` を返す | tick を実行する | 結果は報告のみで、分類(failed)には影響しない(孤児の残存は許容) | |
+| exit ファイルあり・judge 定義あり・`task.workspace` が None(手動修復による不変条件4の破れ) | tick を実行する | 判定コマンドを起動せず書き込みも行わず、`MissingWorkspace` として報告してスキップする。tick は 0 | |
 
 ### 境界値
 

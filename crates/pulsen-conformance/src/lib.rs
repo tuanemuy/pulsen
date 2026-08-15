@@ -390,7 +390,7 @@ pub trait WorkflowStoreHarness {
     }
 
     /// 名前が解決されるべきパス。`NotFound` の `attempted` と `resolved_from` の期待値
-    /// (TC-port-workflow-store-001/002/003)。
+    /// (TC-port-workflow-store-001/002/003/017)。
     fn expected_path_for_name(&self, _name: &str) -> Option<PathBuf> {
         None
     }

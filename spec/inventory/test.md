@@ -51,7 +51,7 @@
 | TC-task-register-task-019 | RegisterTask 異常系: 名前指定で登録する(指定した名前に対応する `workflows/<name>.yaml` が存在しない) | spec/testcases/task/register-task.md#異常系 | 解決を試みた絶対パスを添えて非0で終了する |
 | TC-task-register-task-020 | RegisterTask 異常系: パス指定で登録する(指定したファイルパスのワークフロー定義が存在しない) | spec/testcases/task/register-task.md#異常系 | 解決を試みたパスを添えて非0で終了する |
 | TC-task-register-task-021 | RegisterTask 異常系: 登録する(ワークフロー定義ファイルが存在するが読めない(I/O障害)) | spec/testcases/task/register-task.md#異常系 | 非0で終了する |
-| TC-task-register-task-022 | RegisterTask 異常系: 登録する(ワークフローYAMLが構文として不正(重複キー含む)) | spec/testcases/task/register-task.md#異常系 | 位置・原因を表示して非0で終了する(`YamlSyntax`) |
+| TC-task-register-task-022 | RegisterTask 異常系: 登録する(ワークフローYAMLが構文として不正(重複キー含む)) | spec/testcases/task/register-task.md#異常系 | 位置・原因に加えて解決先の絶対パスを表示して非0で終了する(`YamlSyntax`) |
 | TC-task-register-task-023 | RegisterTask 異常系: 登録する(ワークフローYAMLにスキーマ外のキーがある) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`UnknownKey`。ADR-013) |
 | TC-task-register-task-024 | RegisterTask 異常系: 登録する(`run: wait` のステータスに `judge` 等のエージェント実行用キーがある) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`ForbiddenKey`。ADR-013) |
 | TC-task-register-task-025 | RegisterTask 異常系: 登録する(`initial` が欠落している) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`MissingInitial`) |
@@ -327,7 +327,7 @@
 | TC-exec-tick-065 | Tick 手続きB: 終端処理(Pending / Failed × Cleanup) > 境界値: tick を繰り返し実行する(Cleanup ステータスでの失敗の繰り返し) | spec/testcases/execution/tick.md#境界値-1 | 適用される上限は常に組み込みデフォルト 2(ADR-014。上書き不可): 加算後 attempt_count = 2 では failed のまま、= 3 で stopped になる |
 | TC-exec-tick-066 | Tick 手続きB: 終端処理(Pending / Failed × Cleanup) > エッジケース: 次の tick を実行する(worktree 削除成功後にアーカイブ移動が失敗した) | spec/testcases/execution/tick.md#エッジケース-2 | `remove` が `AlreadyAbsent` を返すため、実質アーカイブ移動から再開する(冪等) |
 | TC-exec-tick-067 | Tick 手続きB: 終端処理(Pending / Failed × Cleanup) > エッジケース: 次の tick を実行する(worktree 削除とアーカイブの間で前回の tick がクラッシュした) | spec/testcases/execution/tick.md#エッジケース-2 | 「Cleanup ステータスのタスクがまだ tasks にある」ことから同じ処理が再導出される。worktree なしの削除は成功扱いで、二重処理は無害 |
-| TC-exec-tick-068 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(runディレクトリに pid・starttime の両方がある) | spec/testcases/execution/tick.md#正常系-3 | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる |
+| TC-exec-tick-068 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(runディレクトリに pid・starttime の両方がある) | spec/testcases/execution/tick.md#正常系-3 | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる。サマリーの `confirmed_running` に記録される |
 | TC-exec-tick-069 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(pid がなく、launching 記録からの経過が猶予時間内) | spec/testcases/execution/tick.md#正常系-3 | `KeepWaiting`: 何もしない(ラッパーの書き込み待ち) |
 | TC-exec-tick-070 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(pid がなく、猶予時間を超過している) | spec/testcases/execution/tick.md#正常系-3 | 無効化マーカーを書き、pid を再読する。なお pid がなければ `record_spawn_failure`: pending 復帰・spawn_fail_count 加算・last_failure = SpawnFail |
 | TC-exec-tick-071 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(マーカー書き込み後の再読で pid・starttime が現れていた) | spec/testcases/execution/tick.md#正常系-3 | pending に戻さず `confirm_running` で running へ取り込む |
@@ -346,7 +346,7 @@
 | TC-exec-tick-084 | Tick 手続きC: spawn確認(Launching) > エッジケース: tick を繰り返し実行する(runファイルの破損(`Corrupt` / `InconsistentRunFiles`…) | spec/testcases/execution/tick.md#エッジケース-3 | スキップと報告が続き、タスクは launching のまま滞留する(stopped に至らないため通知されない) |
 | TC-exec-tick-085 | Tick 手続きC: spawn確認(Launching) > エッジケース: 次の tick を実行する(人間が破損した runファイルを削除した) | spec/testcases/execution/tick.md#エッジケース-3 | 「不在」として無効化マーカープロトコルに合流し、通常の spawn失敗分類で決着する |
 | TC-exec-tick-086 | Tick 手続きC: spawn確認(Launching) > エッジケース: 次の tick を実行する(spawn失敗で pending 復帰したタスクが再起動される) | spec/testcases/execution/tick.md#エッジケース-3 | 新しい attempt 番号が採番され、runディレクトリも新しいパスになる(過去の試行の残骸と混同しない) |
-| TC-exec-tick-087 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルに 0・judge 未定義) | spec/testcases/execution/tick.md#正常系-4 | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick) |
+| TC-exec-tick-087 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルに 0・judge 未定義) | spec/testcases/execution/tick.md#正常系-4 | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick)。サマリーの `judged` に記録される |
 | TC-exec-tick-088 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルに非0・judge 未定義) | spec/testcases/execution/tick.md#正常系-4 | デフォルト判定で Failed → `fail_run`: failed になり attempt_count 加算・judge_attempt_count リセット |
 | TC-exec-tick-089 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルあり・judge 定義あり) | spec/testcases/execution/tick.md#正常系-4 | 判定コマンドが `TASK_ID` / `WORKSPACE` / `EXIT_CODE`(10進文字列)/ `RUN_DIR` の環境変数と `config.judge_timeout` で、シェルを介さず直接起動される(引数なし・プレースホルダ展開なし) |
 | TC-exec-tick-090 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(判定コマンドが exit 0 で終了する) | spec/testcases/execution/tick.md#正常系-4 | Completed → `complete_run` |
@@ -634,3 +634,4 @@
 | TC-port-worktree-manager-020 | WorktreeManager: 同じ引数で再度 `remove`(`remove` で `Removed` を得た直後) | spec/testcases/ports/worktree-manager.md | `Ok(AlreadyAbsent)`(冪等)。ブランチは引き続き残る |
 | TC-port-worktree-manager-021 | WorktreeManager: `remove(repo, ws.path)`(`create` 成功済みの worktree が存在し、その削除操作自体が失敗する状況…) | spec/testcases/ports/worktree-manager.md | `Err(WorktreeError::Failed { message })` を値として返す(パニックしない。呼び出し側が `record_tool_failure(WorktreeRemove)` の入力にする報告用エラー)。worktree(実体・登録)とブランチの既存状態には触れない(次回の `remove` が同じ前提から再試行できる) |
 | TC-port-run-store-035 | RunStore: `write_starttime` / `write_pid_file` / `write_exit` のいずれか(`prepare_attempt` を経ずに attempt ディレクトリが不在) | spec/testcases/ports/run-store.md | `Ok`。書き込み先のディレクトリが作られ、対応する read 系が書いた値を返す(`prepare_attempt` の失敗後も spawn は行われるため、ラッパーが自力で置き場を作って書けることが自己修復の前提) |
+| TC-exec-tick-160 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(exit ファイルあり・judge 定義あり・`task.workspace` が None(手動修復による不変条件4の破れ)) | spec/testcases/execution/tick.md#異常系-4 | 判定コマンドを起動せず書き込みも行わず、`MissingWorkspace` として報告してスキップする。tick は 0 |

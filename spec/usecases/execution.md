@@ -135,7 +135,7 @@ RemnantsLeft    = NotIdentifiable | Failed { message }
 0. 冒頭で `current_attempt` / `current_attempt.process` が None なら不変条件2〜3の破れとして報告しスキップする(手続きC の冒頭検査と同じ)。報告分類は前者が `MissingCurrentAttempt`、後者が `MissingProcessIdent`(修復の手がかりが違う — 後者は pidファイルから復元しうる)
 1. `RunStore::read_exit(run_dir)`
 2. exit が Some → 判定(生存観測は行わない。2段規則の1段目はここで `RunningDecision::Judge(exit)` として値にする):
-   - `judge` 未定義 → `JudgementService::default_judgement(exit)` → `DefaultJudgement`(Completed / Failed)を `JudgeOutcome` へ埋め込む
+   - `judge` 未定義 → `JudgementService::default_judgement(exit)` の2値(Completed / Failed)をそのまま結末へ写す(`Skipped` はこの経路に現れないことを返り値型が述べる)
    - `judge` 定義あり → `task.workspace` が None なら不変条件4の破れとして `MissingWorkspace` を報告しスキップする(判定コマンドは起動せず、書き込みも行わない)。Some なら `judge_env(id, workspace, exit, run_dir)` → `CommandRunner::run(judge, env, config.judge_timeout)` → `interpret_judge_completion`:
      - `Outcome(o)` → o で分岐、`JudgeFailure { detail }` → `task.record_judge_failure(detail, config.judge_attempt_limit, now)` → `save` → (Stopped なら notify)→ 終了
    - Completed → `task.complete_run(now)` → `save`(遷移は次tickの Completed 処理)
@@ -189,7 +189,7 @@ RemnantsLeft    = NotIdentifiable | Failed { message }
 | `task_id` | `TaskId` |
 | `killed` | `bool`(kill を実行したか) |
 | `already_stopped` | `bool`(冪等成功) |
-| `notify_warning` | `Option<String>`(通知失敗時: 次のtickが再通知する旨。文言は表示層が `NotifyFailureCause` から組み立てる) |
+| `notify_warning` | `Option<NotifyFailureCause>`(通知失敗時の原因の分類。文言(次のtickが再通知する旨を含む)は表示層が組み立てる) |
 
 ### 処理フロー
 
@@ -246,9 +246,9 @@ RemnantsLeft    = NotIdentifiable | Failed { message }
 5. `ProcessController::run_agent(agent_cmd, workspace, run_dir.stdout_log(), run_dir.stderr_log())` → `ExitCode`(起動不能は 127 / 126、シグナル死は 128+n、リダイレクト不能は 126 に符号化)
 6. `RunStore::write_exit(run_dir, exit)` → 終了
 
-ステップ1〜3・6 の書き込みが失敗した場合は何も書き残さず終了する(観測されない = 猶予経路またはプロセス死亡としてtickが分類する。ラッパーは自前のエラー報告経路を持たない)。
+ステップ1〜3・6 の書き込みが失敗した場合は、その先の書き込みを行わずに終了する(観測されない = 猶予経路またはプロセス死亡としてtickが分類する。ラッパーは自前のエラー報告経路を持たない)。
 
-終了コードは**ラッパー自身が責務を果たせたか**を表す(規約は pages `wrapper` の節。エージェントの終了コードは伝播せず、run ディレクトリの `exit` ファイルだけが持つ)。エージェントを実行した場合とマーカーにより起動しなかった場合は 0、同定情報を何も残せずに終えた場合と起動引数が不正な場合は非0。
+終了コードは**ラッパー自身が責務を果たせたか**を表す(規約は pages `wrapper` の節。エージェントの終了コードは伝播せず、run ディレクトリの `exit` ファイルだけが持つ)。エージェントを実行した場合とマーカーにより起動しなかった場合は 0、同定情報一式を残せずに終えた場合と起動引数が不正な場合は非0。
 
 ### トランザクション境界
 
@@ -259,7 +259,7 @@ RemnantsLeft    = NotIdentifiable | Failed { message }
 | 条件 | 扱い |
 |---|---|
 | 引数の不正(直列化の破れ) | 何も書かず**非0**終了(猶予経路が spawn失敗として分類) |
-| starttime / pid の書き込み失敗 | 何も書かず**非0**終了(同上。同定情報を何も残せていない) |
+| starttime / pid の書き込み失敗 | **pid を残さないまま非0**終了(同上。tick は pid の出現をもって同定情報一式が揃ったと見なすため、starttime だけが残った場合も同定情報一式は揃っていない) |
 | 無効化マーカーあり | **0** で終了(エージェント未起動。次tickが「プロセス死亡」として failed に分類 — requirements §4.1) |
 | エージェント起動不能・シグナル死 | exit に符号化(127 / 126 / 128+n)して通常の failed 経路へ。ラッパー自身は **0** で終了する(エージェントの終了コードは伝播しない) |
 | exit の書き込み失敗 | 書けないまま終了(tick が「exitなし・プロセス死亡」として failed に分類)。エージェントは実行できているためラッパーは **0** |

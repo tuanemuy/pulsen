@@ -306,7 +306,7 @@ RegistrationError =
   - `Parse { error: WorkflowParseError, resolved_from: PathBuf }` — 解決先の絶対パスを構造として持つ
   - `Io { message }` — 存在するが読めない(権限不足・I/O障害)
 - 契約:
-  - 解決先の案内は**構造化フィールドに一本化する**。`NotFound { attempted }` と `Parse { resolved_from }` は対象ファイルを構造として持ち、その内側の `WorkflowParseError` 12種はどれもパスを持たない(`location` は論理位置 `statuses.queued.prompt` そのものを指す)。自由形式のメッセージにパスを前置するのは、構造化フィールドを持てない `Io { message }` だけ — `--workflow` を名前で指定した場合、解決先(`<home>/workflows/<n>.yaml`)は利用者が直接書いていないため、案内に出す責務はポート側にある
+  - 解決先の案内は**構造化フィールドに一本化する**。`NotFound { attempted }` と `Parse { resolved_from }` は対象ファイルを構造として持ち、その内側の `WorkflowParseError` 12種はどれもパスを持たない(`location` は論理位置 `statuses.queued.prompt` そのものを指す)。自由形式のメッセージにパスを前置するのは、解決先を構造として持たない `Io { message }` だけ — `--workflow` を名前で指定した場合、解決先(`<home>/workflows/<n>.yaml`)は利用者が直接書いていないため、案内に出す責務はポート側にある
   - 名前解決の規則: `Name(n)` → `<home>/workflows/<n>.yaml`(固定。`.yml` へのフォールバックはしない)。`Path(p)` → そのパス(相対はプロセスのカレントディレクトリから解決)
   - アダプターが YAML テキストを `RawWorkflowDoc` に変換し(構文エラー・スキーマ外キーはここで `YamlSyntax` / `UnknownKey` として検出)、ドメインの `WorkflowAssembler::assemble` で検証する。表示名の決定はしない(呼び出し側が `WorkflowRef::display_name` で行う)
   - 読み取り専用。可視性: 呼び出し時点のファイル内容

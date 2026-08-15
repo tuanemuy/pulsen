@@ -12,19 +12,16 @@
 
 ## 決定
 
-解決先の絶対パスは、意味が固定されていない**自由形式のメッセージ**にだけ前置する。
+解決先の絶対パスは、**構造化フィールドで示せる経路では構造化フィールドが持つ**。示せない経路にかぎり、意味が固定されていない自由形式のメッセージへ前置する。両方で示すと同じパスが1つの案内に2回現れるためである。
 
-- `WorkflowLoadError::Io { message }` — `<絶対パス>: <原因>`
-- `WorkflowParseError::YamlSyntax { message }` — 同上
-- `NotFound { attempted }` は既にパスを持つ
+- `WorkflowLoadError::Parse { error: WorkflowParseError, resolved_from: PathBuf }` — 解決先は `resolved_from` が持つ。`WorkflowParseError` の12種はどれもパスを持たないので、`YamlSyntax { message }` にも前置しない
+- `WorkflowLoadError::NotFound { attempted }` — 解決を試みたパスを構造として持つ
+- `WorkflowLoadError::Io { message }` — 前置が残るのはこの1つだけ(`<絶対パス>: <原因>`)
 
-`location` には載せない。構造の破れ(`NoAction` / `MissingNext` 等)はステータス名で位置を示し、パスは持たせない。
-
-**Issue #9 で改めた。** `Parse` は `resolved_from` を構造として持つ形(`Parse { error: WorkflowParseError, resolved_from: PathBuf }`)になり、`WorkflowParseError` の12種はどれもパスを持たない。したがって `YamlSyntax { message }` への前置は外し(構造化フィールドと二重に表示されるため)、前置に残るのは `Io { message }` だけになった。規則は「変種ごとに前置するか決める」ではなく「**構造化フィールドで示せる経路は自由形式へ前置しない**」に一般化した。`location` に論理位置だけを載せる部分は依然として有効(`.adr/1-schema-error-location-is-logical.md`)。
+`location` には載せない。`location` はポートの契約として論理位置そのもの(`statuses.queued.prompt`)を指し、適合テストが値の一致で固定しているためである(`.adr/1-schema-error-location-is-logical.md`)。構造の破れ(`NoAction` / `MissingNext` 等)はステータス名で位置を示し、対象ファイルは `Parse` の `resolved_from` が受ける。
 
 ## 検討した代替案
 
-- `WorkflowLoadError` にパスのフィールドを足す — spec のポート表と食い違う
 - `location` にパスを前置する — `location` の意味(論理位置)が呼び出し側ごとに揺れる
 
 ## 影響
