@@ -1,0 +1,10 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices"],
+
+  // 未指定だと UTC になり、週次のロックファイル更新が日本時間の月曜昼に届く。
+  "timezone": "Asia/Tokyo"
+
+  // flake.nix / flake.lock は対象外。nix manager は opt-in の beta で、記述先は開発シェルの
+  // 依存であり CI は rustup で toolchain を用意する。
+}
