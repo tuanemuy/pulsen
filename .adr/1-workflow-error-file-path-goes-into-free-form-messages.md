@@ -2,7 +2,7 @@
 
 ## ステータス
 
-置き換え済み(Issue #9)。回避策の前提だった「ポート表を変えられない」が消えたため、解決先は `WorkflowLoadError::Parse { resolved_from }` の構造化フィールドが持つ。自由形式のメッセージへの前置に残るのは `Io { message }` のみ
+置き換え済み(Issue #9) — superseded by `9-resolved-path-only-in-structured-fields.md`。回避策の前提だった「ポート表を変えられない」が消えたため、解決先は `WorkflowLoadError::Parse { resolved_from }` の構造化フィールドが持つ。自由形式のメッセージへの前置に残るのは `Io { message }` のみ
 
 ## コンテキスト
 

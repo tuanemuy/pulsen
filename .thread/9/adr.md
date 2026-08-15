@@ -132,6 +132,8 @@ C5 を本 Issue で反映する（ADR-002）と決めた結果、`NotifyOutcome:
 
 ## ADR-005: 解決先パスは構造化フィールドでのみ示し、自由形式メッセージへの前置は構造化フィールドを持たない変種にだけ残す
 
+→ `.adr/9-resolved-path-only-in-structured-fields.md` に昇格
+
 ### Status
 Proposed
 
@@ -171,6 +173,8 @@ A2 後、`cli/render.rs` の `Parse` アームは `resolved_from` を無条件�
 ---
 
 ## ADR-006: 置き換わった `.adr/` エントリは決定節を決定時点のまま保ち、置き換えは Status と影響節が述べる
+
+→ `.adr/9-superseded-adr-keeps-its-original-decision.md` に昇格
 
 ### Status
 Proposed
