@@ -18,8 +18,8 @@ use std::path::PathBuf;
 
 use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition, TimeoutSpec};
 use pulsen_domain::execution::{
-    CommandRunner, ExclusiveLock, ExitCode, InconsistentRunFiles, LockError, ProcessController,
-    RemnantOutcome, RunFileError, RunStore, WorktreeManager,
+    CommandRunner, ExclusiveLock, ExitCode, InconsistentRunFiles, LockError, NotifyFailureCause,
+    ProcessController, RemnantOutcome, RunFileError, RunStore, WorktreeManager,
 };
 use pulsen_domain::task::{
     AttemptNumber, Clock, ExecutionState, ExecutionStateKind, ReadError, SaveError, StateRoot,
@@ -203,8 +203,8 @@ pub enum TickIssue {
     NotifyFailed {
         /// 対象のタスク。
         task_id: TaskId,
-        /// 原因の説明。
-        message: String,
+        /// 通知が届かなかった原因。
+        cause: NotifyFailureCause,
     },
     /// タスクファイルを保存できない。
     SaveFailed {

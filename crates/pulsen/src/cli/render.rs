@@ -9,7 +9,9 @@ use pulsen_domain::definition::{
     AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, TimeoutSpec,
     WorkflowLoadError, WorkflowParseError, WorkflowStructureError,
 };
-use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
+use pulsen_domain::execution::{
+    InconsistentRunFiles, NotificationService, NotifyFailureCause, RunFileError, TargetError,
+};
 use pulsen_domain::task::{
     AbsolutePathError, AttemptNumber, CreateError, ExecutionStateKind, RunDirPath, SaveError,
     TaskId, TransitionError,
@@ -243,9 +245,10 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: 判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)",
             task_id.as_str()
         ),
-        TickIssue::NotifyFailed { task_id, message } => format!(
-            "{}: 凍結を通知できません({message})。次の tick が再通知します",
-            task_id.as_str()
+        TickIssue::NotifyFailed { task_id, cause } => format!(
+            "{}: 凍結を通知できません({})。次の tick が再通知します",
+            task_id.as_str(),
+            notify_failure_cause(cause)
         ),
         TickIssue::SaveFailed { task_id, error } => format!(
             "{}: タスクファイルを保存できません({})",
@@ -276,6 +279,22 @@ fn run_failure_cause(cause: &RunFailureCause) -> String {
             timeout: TimeoutSpec::Unlimited,
         } => "実行を終了させました".to_owned(),
         RunFailureCause::DiedWithoutExit => "実行が終了コードを残さずに終わりました".to_owned(),
+    }
+}
+
+/// 通知が届かなかった原因。timeout の秒数は組み込み定数から読む。
+fn notify_failure_cause(cause: &NotifyFailureCause) -> String {
+    match cause {
+        NotifyFailureCause::ExitedNonZero { exit } => {
+            format!("通知コマンドが終了コード {} で終了しました", exit.get())
+        }
+        NotifyFailureCause::TimedOut => format!(
+            "通知コマンドが {} 秒のうちに終了しませんでした",
+            NotificationService::NOTIFY_TIMEOUT.seconds()
+        ),
+        NotifyFailureCause::FailedToStart { message } => {
+            format!("通知コマンドを起動できませんでした: {message}")
+        }
     }
 }
 
@@ -532,8 +551,15 @@ fn workflow_load_error(error: &WorkflowLoadError) -> String {
             "ワークフロー定義を読み込めません。",
             &[format!("原因: {message}")],
         ),
-        WorkflowLoadError::Parse(error) => {
-            problem("ワークフロー定義が不正です。", &workflow_parse_error(error))
+        WorkflowLoadError::Parse {
+            error,
+            resolved_from,
+        } => {
+            // 名前で指定した場合、解決先は利用者が直接書いていない。`NotFound` と同じ
+            // 「解決を試みたパス」の見せ方でここだけが案内する。
+            let mut details = vec![format!("解決したパス: {}", resolved_from.display())];
+            details.extend(workflow_parse_error(error));
+            problem("ワークフロー定義が不正です。", &details)
         }
     }
 }

@@ -82,7 +82,16 @@ pub enum WorkflowLoadError {
         attempted: PathBuf,
     },
     /// 読めたが定義として解釈できない。
-    Parse(WorkflowParseError),
+    ///
+    /// 解決先を構造として持つ — `--workflow` を名前で指定した場合、利用者が直接書いて
+    /// いないパスを案内できるのはポート側だけである。内側の `WorkflowParseError` は
+    /// どれもパスを持たず、`location` は論理位置だけを指す。
+    Parse {
+        /// 定義として解釈できなかった原因。
+        error: WorkflowParseError,
+        /// 実際に読み込んだ絶対パス(案内に使う)。
+        resolved_from: PathBuf,
+    },
     /// 存在するが読めない(権限不足・I/O 障害)。
     Io {
         /// 原因の説明。
