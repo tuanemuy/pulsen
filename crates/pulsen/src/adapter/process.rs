@@ -453,6 +453,7 @@ mod inheritance {
 #[allow(unsafe_code)]
 mod inheritance {
     use std::os::windows::io::RawHandle;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
 
     type Bool = i32;
     type Dword = u32;
@@ -482,13 +483,39 @@ mod inheritance {
         !handle.is_null() && handle as isize != INVALID_HANDLE
     }
 
+    /// 区間の独占。
+    ///
+    /// 継承フラグはプロセスに1組しかないため、区間は重ねられない。重なると内側は
+    /// 「もともと落ちていた」と読んで復帰対象を持たず、外側の復帰が内側の区間の中で継承を
+    /// 戻す — 同時に起動しただけで、起動の瞬間だけ止めるという保証が消える。
+    static INTERVAL: Mutex<()> = Mutex::new(());
+
+    /// 区間を独占する。毒は無視する — `Suppressed` の drop は巻き戻しでも走るため、毒は
+    /// 継承が戻っていないことを意味しない。
+    fn enter() -> MutexGuard<'static, ()> {
+        INTERVAL.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// 生存期間が「止めている区間」を表す。drop で元の継承可能性へ戻す。
     pub(super) struct Suppressed {
-        restore: Vec<RawHandle>,
+        cleared: Vec<RawHandle>,
+        /// 復帰してから手放す — フィールドは `Drop::drop` の後に落ちる。
+        _interval: MutexGuard<'static, ()>,
     }
 
     pub(super) fn suppress() -> Suppressed {
-        let mut restore = Vec::new();
+        let interval = enter();
+        Suppressed {
+            cleared: clear(),
+            _interval: interval,
+        }
+    }
+
+    /// 継承の立っている標準ハンドルを落とし、実際に落としたものだけを返す。
+    ///
+    /// 区間の独占は呼び出し側が持つ。
+    fn clear() -> Vec<RawHandle> {
+        let mut cleared = Vec::new();
         for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
             // SAFETY: 引数は Win32 が定める標準ハンドルの識別子。返るのは所有権を伴わな
             // い擬似ハンドルで、閉じてはならない値として扱う。
@@ -508,20 +535,23 @@ mod inheritance {
             if unsafe { set_handle_information(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
                 continue;
             }
-            restore.push(handle);
+            cleared.push(handle);
         }
-        Suppressed { restore }
+        cleared
+    }
+
+    /// 落としたハンドルの継承を戻す。
+    fn restore(handles: &[RawHandle]) {
+        for handle in handles {
+            // SAFETY: 落としたときと同じハンドル。戻せなかった場合に呼び出し側が採れる手
+            // が無いので、結果は捨てる。
+            unsafe { set_handle_information(*handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
+        }
     }
 
     impl Drop for Suppressed {
         fn drop(&mut self) {
-            for handle in &self.restore {
-                // SAFETY: 落としたときと同じハンドル。戻せなかった場合に呼び出し側が採れ
-                // る手が無いので、結果は捨てる。
-                unsafe {
-                    set_handle_information(*handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
-                };
-            }
+            restore(&self.cleared);
         }
     }
 
@@ -557,12 +587,15 @@ mod inheritance {
             drop(suppressed);
         }
 
+        /// 区間の外の値を観測するため、`suppress` ではなく中身を直接動かす。`suppress` の
+        /// 独占はその生存期間に閉じるので、区間の前後の観測が他スレッドの区間と重なりうる。
         #[test]
         fn 区間を抜けると元の継承可能性へ戻る() {
+            let _interval = enter();
             let ids = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE];
             let before: Vec<_> = ids.into_iter().map(flags_of).collect();
 
-            drop(suppress());
+            restore(&clear());
 
             let after: Vec<_> = ids.into_iter().map(flags_of).collect();
             assert_eq!(before, after);
