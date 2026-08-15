@@ -400,7 +400,7 @@ EOF
 - **期待結果:**
   - 手順1〜4: 4つとも緑（手順1 は差分なしで exit 0、手順4 は警告0）。
   - 手順3: 全テストが緑。`crates/pulsen-domain/src/execution/notification.rs` のユニットテスト `通知の失敗の3つの原因は分類として判別できる` が、完成文言の差ではなく `NotifyFailureCause` の変種の判別で通る。A2 / C5 が新たに守るべきにした形を主張する `cli::render::tests::解釈できない定義は読んだパスを一度だけ添えて案内される` と `cli::render::tests::通知できなかった原因は3つが区別できる形で示される` の2件も走っている。
-  - 手順5: `SKIP` 行の集合が変わっていない。`tc_port_workflow_store_017` が新たにスキップされない（解決先に関する主張だけを `expected_path_for_name` の有無で条件化しており、ケース自体は常に `Ran` を返すため。`allowed_skips` の変更も要らない）。
+  - 手順5: `SKIP` 行の集合が変わっていない。`tc_port_workflow_store_017` が新たにスキップされない（期待値との一致だけを `expected_path_for_name` の有無で条件化しており、ケース自体は常に `Ran` を返すため。`allowed_skips` の変更も要らない）。
 - **確認ポイント:** 手順4 の `--all-targets` を省かないこと（テストターゲットもここで初めて lint に掛かる）。ローカルの rustfmt は nixpkgs 同梱で CI の現行 stable と版が違うため、手順1 が緑でも CI の fmt ジョブが赤になりうる。その場合の解消は CI の stable で `cargo fmt --all` を掛け直した差分をコミットすることであり、`rustfmt.toml` での抑止ではない。
 
 ---
