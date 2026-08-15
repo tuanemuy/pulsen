@@ -12,7 +12,7 @@ use pulsen_domain::definition::{
 
 use super::yaml::{self, CommandInput, Yaml};
 
-/// トップレベルに許されるキー(ADR-013)。
+/// トップレベルに許されるキー。
 const TOP_LEVEL_KEYS: &[&str] = &[
     "agents",
     "notify_cmd",
@@ -22,13 +22,13 @@ const TOP_LEVEL_KEYS: &[&str] = &[
     "run_retention",
 ];
 
-/// `agents` のエントリに許されるキー(ADR-013)。
+/// `agents` のエントリに許されるキー。
 const AGENT_KEYS: &[&str] = &["cmd", "skill_input"];
 
 /// config.yaml を読み込むストア。
 ///
 /// 検証は二層で、ここが担うのは構造(YAML 構文・キーの正当性・型・期間の形式)だけ。
-/// テンプレートの内容は参照時の `RawAgentDefinition::parse` が検証する(ADR-013)。
+/// テンプレートの内容は参照時の `RawAgentDefinition::parse` が検証する。
 /// 読み込み結果をキャッシュしないため、`load` は常に呼び出し時点のファイル内容を返す。
 pub struct FsConfigStore {
     config_path: PathBuf,
@@ -37,7 +37,7 @@ pub struct FsConfigStore {
 
 impl FsConfigStore {
     /// 読み込む config.yaml のパスと、未初期化の案内に使う解決後のホームパスを受け取る
-    /// (レイアウトの導出はアプリケーション層。ADR-031)。
+    /// (レイアウトの導出はアプリケーション層)。
     pub fn new(config_path: PathBuf, home: PathBuf) -> Self {
         Self { config_path, home }
     }

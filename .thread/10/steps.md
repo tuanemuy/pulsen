@@ -305,7 +305,7 @@ adr.md ADR-008 の吸収先ディレクトリによる判定が掛かるのは *
 
 ### 9.(条件付き)MSRV 失敗を解消する
 
-- **対象ファイル:** 使用箇所(`crates/pulsen/src/**`。`cli/` や `application/` も対象になりうる)、`Cargo.toml`、`.adr/022-std-file-lock-and-lockguard-marker-trait.md`、`.adr/023-dependency-selection.md`。これは AC-4 の管轄で、AC-5 の「OS 差の吸収先」とは別の理由で入る差分である。
+- **対象ファイル:** 使用箇所(`crates/pulsen/src/**`。`cli/` や `application/` も対象になりうる)、`Cargo.toml`、`.adr/1-std-file-lock-and-lockguard-marker-trait.md`、`.adr/1-dependency-selection.md`。これは AC-4 の管轄で、AC-5 の「OS 差の吸収先」とは別の理由で入る差分である。
 - **変更内容:**
   1. まず「該当 API の使用を見直す」を試す。1.89 で足りる書き方があるならそちらへ寄せる。
   2. 回避できない場合のみ `workspace.package.rust-version` を実際に通る版へ引き上げる。あわせて ADR-022 の「Rust 1.89 で `File::try_lock` が安定化しており…」という MSRV の根拠と、ADR-023 の「宣言している MSRV 1.89(ADR-022)はこれより後なので」という記述を新しい値と整合させる。ワークフローは版数を参照するだけなので変更不要。

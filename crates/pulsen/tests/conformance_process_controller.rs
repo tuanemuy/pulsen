@@ -1,6 +1,6 @@
 //! ProcessController の適合スイートを `SystemProcessController` に適用する。
 //!
-//! テスト用エージェントは `examples/agent_probe` を使う(ADR-082)。見つからない場合は
+//! テスト用エージェントは `examples/agent_probe` を使う。見つからない場合は
 //! フックが `None` を返してスキップになるが、**スキップ許容集合には入れない** —
 //! 「examples を作り忘れた」が緑にならないようにする。
 
@@ -51,7 +51,7 @@ impl SystemProcessControllerHarness {
         let root = tempfile::tempdir().expect("一時ディレクトリを作れる");
         let self_exe = PathBuf::from(env!("CARGO_BIN_EXE_pulsen"));
         // 存在しないパスを取得元として注入すると、どのプラットフォームでも「取得機構
-        // そのものの失敗」に落ちる(ADR-075 の写像表・ADR-076)。本番のインスタンスは
+        // そのものの失敗」に落ちる。本番のインスタンスは
         // イミュータブルなまま保たれる。
         let failing_identity = SystemProcessController::new(
             self_exe.clone(),
@@ -135,7 +135,7 @@ impl SystemProcessControllerHarness {
     /// `<state_root>/runs/<task-id>/attempt-1` を作って返す。
     ///
     /// ラッパーは run ディレクトリから状態のルートを復元するため、パスは
-    /// `RunDirPath::derive` の像でなければならない(ADR-087)。
+    /// `RunDirPath::derive` の像でなければならない。
     fn prepared_run_dir(&self) -> Option<RunDirPath> {
         let state_root = StateRoot::parse(self.dir("state")).ok()?;
         let run_dir = RunDirPath::derive(
@@ -393,7 +393,7 @@ fn terminate_one(_pid: Pid) -> Option<()> {
 
 /// ディレクトリへ書き込めない状態にする。
 ///
-/// 制限が実際に効いたことを確認してから `Some` を返す(ADR-027)。
+/// 制限が実際に効いたことを確認してから `Some` を返す。
 #[cfg(unix)]
 fn deny_dir_write(dir: &Path) -> Option<Restore> {
     let restore = set_mode(dir, 0o555)?;
@@ -459,8 +459,8 @@ const PERMISSION_CASES: [&str; 2] = [
 /// この環境でスキップを許容するケース。
 ///
 /// 取得機構の失敗(TC-005)は取得元の注入で作れるため、権限にも root の可否にも依存せず
-/// 走る(ADR-076)。exit コードを持たない終了(TC-024)が要求するのは `agent_command` の提供
-/// だけで、期待も「非0の符号化値」までなので(ADR-082)、前提を作れない環境が無い。
+/// 走る。exit コードを持たない終了(TC-024)が要求するのは `agent_command` の提供
+/// だけで、期待も「非0の符号化値」までなので、前提を作れない環境が無い。
 /// `agent_probe` の不在は許容しない — 作り忘れを緑にしないため。
 fn allowed_skips() -> Vec<&'static str> {
     if pulsen_conformance::permission_restrictions_effective() {
@@ -477,7 +477,7 @@ pulsen_conformance::process_controller_identity_conformance!(
 
 // `spawn` スイートはどのケースもスキップを許容しない。起動不能(TC-003)は自バイナリの
 // 注入で確定的に走り、デタッチ性(TC-002)は `examples/spawn_probe` を要するが、examples の
-// 不在は許容しない — 作り忘れを緑にしないため(ADR-082 / ADR-083)。
+// 不在は許容しない — 作り忘れを緑にしないため。
 pulsen_conformance::process_controller_spawn_conformance!(
     SystemProcessControllerHarness::new(),
     Vec::new()
@@ -487,7 +487,7 @@ pulsen_conformance::process_controller_spawn_conformance!(
 ///
 /// 取得機構の失敗(TC-010)は取得元の注入だけで作れる。前提を作れない環境が無いため、この
 /// 集合には現れない。終了操作の失敗(TC-013)と同定手段の喪失(TC-015)も注入で確定的に作れる
-/// が、その操作を向ける実行単位そのものは要る(ADR-076)。
+/// が、その操作を向ける実行単位そのものは要る。
 const EXECUTION_UNIT_CASES: [&str; 4] = [
     "tc_port_process_controller_011",
     "tc_port_process_controller_012",
@@ -503,8 +503,8 @@ const PARTIAL_TERMINATION_CASES: [&str; 2] = [
 
 /// 実行単位のフィクスチャをこの環境で組めるか。
 ///
-/// 区別を4つに分ける根拠は ADR-073 の基準 — 許容集合に入れてよいのは、スキップにしたときに
-/// 「なぜ走らなかったか」と「次に何をすればよいか」がその宣言だけから定まる能力に限る。
+/// 区別を4つに分けるのは、許容集合に入れてよいのが、スキップにしたときに
+/// 「なぜ走らなかったか」と「次に何をすればよいか」がその宣言だけから定まる能力に限るため。
 /// 実行ファイルの不在は原因も回避方法も一意(example をビルドする形で実行する)なので、
 /// 能力側には置かない。
 enum ExecutionUnitCapability {
@@ -513,7 +513,7 @@ enum ExecutionUnitCapability {
     /// 実行単位は起こせるが、その一部だけを終了させる手段が無い。
     WholeOnly,
     /// 実行単位そのものを起こせない。この観測は原因を1つに定めず、実行単位を作れない環境と
-    /// フィクスチャ側の退行を区別しない(ADR-073 の `SignalTimedOut` と同じ性質)。
+    /// フィクスチャ側の退行を区別しない(ロック保持フィクスチャの `SignalTimedOut` と同じ性質)。
     Unavailable,
     /// フィクスチャの実行ファイル(`examples/agent_probe` / `examples/spawn_probe`)が無い。
     ProgramMissing,
@@ -522,9 +522,9 @@ enum ExecutionUnitCapability {
 /// 実行単位を1度だけ実際に起こして能力を決める。
 ///
 /// 判定はフィクスチャが本番で踏む手順そのもの(実行単位を起こし、その一部だけを終了させる)で
-/// 行うため、判定と実際のスキップが食い違わない(ADR-055 の `permission_restrictions_effective`
-/// と同じ性質)。フィクスチャの実行ファイルは適用側のテストターゲットからしか解決できないので、
-/// probe はスイートではなくここに置く(ADR-073 の置き場所の基準)。
+/// 行うため、判定と実際のスキップが食い違わない(`permission_restrictions_effective` と
+/// 同じ性質)。フィクスチャの実行ファイルは適用側のテストターゲットからしか解決できないので、
+/// probe はスイートではなくここに置く。
 fn execution_unit_capability() -> &'static ExecutionUnitCapability {
     static CAPABILITY: OnceLock<ExecutionUnitCapability> = OnceLock::new();
 
@@ -556,8 +556,8 @@ fn probe_execution_unit() -> ExecutionUnitCapability {
 
 /// 観測スイートでスキップを許容するケース。
 ///
-/// 宣言はプラットフォームではなく実測した能力から組む(ADR-055)。実行ファイルの不在は許容
-/// しない — 作り忘れを緑にしないため(HOOKS.md / ADR-068 / ADR-073)。
+/// 宣言はプラットフォームではなく実測した能力から組む。実行ファイルの不在は許容
+/// しない — 作り忘れを緑にしないため(HOOKS.md)。
 fn observation_allowed_skips() -> Vec<&'static str> {
     match execution_unit_capability() {
         ExecutionUnitCapability::Partitionable => Vec::new(),

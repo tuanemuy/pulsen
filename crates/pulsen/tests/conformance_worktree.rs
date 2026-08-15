@@ -37,7 +37,7 @@ impl GitCliWorktreeManagerHarness {
     fn new() -> Self {
         let root = tempfile::tempdir().expect("一時ディレクトリを作れる");
         // 存在しないパスを git 実行ファイルとして渡すと、3メソッドとも起動失敗で
-        // `Failed` に落ちる(ADR-024)。本番のインスタンスは触らない。
+        // `Failed` に落ちる。本番のインスタンスは触らない。
         let failing = GitCliWorktreeManager::new(root.path().join("no-such-git"));
         Self {
             root,
@@ -64,7 +64,7 @@ impl GitCliWorktreeManagerHarness {
 
     /// worktree の置き場。**シンボリックリンク経由**のパスとして組む。
     ///
-    /// 同定の鍵は物理パスなので(ADR-085)、置き場が実体そのものだと正規化の分岐が
+    /// 同定の鍵は物理パスなので、置き場が実体そのものだと正規化の分岐が
     /// どのケースからも実行されない。リンクを張れない環境は前提を用意できない環境なので、
     /// 実体へ落として黙って通すのではなく `None` を返してスキップに載せる。
     fn worktree_root(&self) -> Option<PathBuf> {
@@ -224,7 +224,7 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
         let dir = self.dir("plain");
         fs::create_dir_all(&dir).ok()?;
         // TMPDIR 自体がリポジトリ配下だと上位へ遡って成功するため、前提が成立する
-        // ことを確かめてから使う(ADR-033)。
+        // ことを確かめてから使う。
         common::git::is_outside_repository(&dir).then_some(())?;
         repo_path(&dir)
     }
@@ -347,12 +347,12 @@ impl WorktreeManagerHarness for GitCliWorktreeManagerHarness {
 /// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
 ///
 /// `non_repo_dir` は「git リポジトリでない実在のディレクトリ」を前提にするため、TMPDIR が
-/// リポジトリ配下だと上位へ遡って成功し、前提が成立しない(ADR-033)。
+/// リポジトリ配下だと上位へ遡って成功し、前提が成立しない。
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_port_worktree_manager_003"];
 
 /// ディレクトリのシンボリックリンクを張れない環境でのみスキップされるケース。
 ///
-/// `ws.path` の置き場をリンク経由で組む `create` のケース(ADR-085)。置き場が未作成である
+/// `ws.path` の置き場をリンク経由で組む `create` のケース。置き場が未作成である
 /// ことを前提にする TC-011 だけは、リンクを張る対象が無いためここに入らない。
 const SYMLINKED_ROOT_CASES: [&str; 7] = [
     "tc_port_worktree_manager_010",
@@ -368,7 +368,7 @@ const SYMLINKED_ROOT_CASES: [&str; 7] = [
 ///
 /// git 操作の失敗は別ハンドル(`failing_manager`)で組めるため、許容するのは環境が前提を
 /// 作れない上記2組だけ。宣言をプラットフォームではなく実行時の述語で決めることで、同じ
-/// 前提を使う CLI 側の受け入れテスト(TC-task-register-task-036)と扱いが揃う(ADR-055)。
+/// 前提を使う CLI 側の受け入れテスト(TC-task-register-task-036)と扱いが揃う。
 fn allowed_skips() -> Vec<&'static str> {
     let mut allowed = Vec::new();
     if !common::git::tmpdir_outside_repository() {

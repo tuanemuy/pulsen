@@ -279,7 +279,7 @@ crates/
 
 ### 1. ワークスペースと開発環境の初期化
 
-- **対象ファイル:** `Cargo.toml`、`crates/pulsen-domain/Cargo.toml`、`crates/pulsen-conformance/Cargo.toml`、`crates/pulsen/Cargo.toml`、`rustfmt.toml`、`flake.nix`、`.gitignore`、`.adr/019-*.md`〜`.adr/036-*.md`
+- **対象ファイル:** `Cargo.toml`、`crates/pulsen-domain/Cargo.toml`、`crates/pulsen-conformance/Cargo.toml`、`crates/pulsen/Cargo.toml`、`rustfmt.toml`、`flake.nix`、`.gitignore`、`.adr/1-domain-crate-workspace.md`〜`.adr/1-infallible-ports-absorb-failure-at-construction.md`
 - **変更内容:** 3クレートのワークスペースを作る（edition 2024、`resolver = "3"`、`rust-version = "1.89"`）。`pulsen-domain` の `[dependencies]` は空にする。`pulsen` の `[dependencies]` は `clap` / `serde` / `serde_json`（`raw_value`）/ `serde_yaml_ng` / `getrandom` / `tempfile`、`[dev-dependencies]` に `pulsen-conformance`（adr.md ADR-023）。`pulsen` に bin `pulsen`（`src/main.rs`）と lib を置く。lint は workspace に `unsafe_code = "forbid"` 等の共通分のみ、`clippy::wildcard_enum_match_arm` は `pulsen-domain` にのみ設定する（adr.md ADR-029）。`flake.nix` の devShell に `git` を追加する。adr.md の各エントリを `.adr/019`〜`.adr/036` として **Status: Proposed で**起票する（adr.md ADR-035。ADR-019・022・023・029・035 はこのステップで `Accepted` に上げる）。
 - **理由:** クレート境界で依存方向を強制するのがこのプロジェクトのアーキテクチャ方針を守る最も確実な手段であり、以降の全ステップの前提になる。後続10スライスを縛る判断は正本（`.adr/`）に置く。
 

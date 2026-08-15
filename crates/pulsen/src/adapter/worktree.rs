@@ -13,7 +13,7 @@ use crate::util::fsdir::ensure_dir;
 ///
 /// 呼び出し元の環境に残っていると `-C` で指した対象の解決結果を上書きしてしまう
 /// (`GIT_CEILING_DIRECTORIES` は上位探索を打ち切り、正当なリポジトリを
-/// `NotARepository` に落とす)。ADR-024 の判断基準はこの目的であって変数名の列挙ではない。
+/// `NotARepository` に落とす)。取り除くかの判断基準はこの目的であって、変数名の列挙ではない。
 ///
 /// 公開しているのは、テストのフィクスチャが「このディレクトリはリポジトリでない」といった
 /// 前提を判定するとき、アダプターと同じ環境で git を起動する必要があるため。集合が2箇所に
@@ -28,7 +28,7 @@ pub const INHERITED_GIT_ENV: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
 ];
 
-/// git CLI に問い合わせて対象を検証するマネージャー(ADR-024)。
+/// git CLI に問い合わせて対象を検証するマネージャー。
 ///
 /// 分類はコマンドの終了ステータスと起動の可否だけで決め、メッセージ文字列は見ない。
 /// ユーザーのグローバル設定(`safe.directory` 等)は尊重する — 無効化すると所有者の
@@ -42,7 +42,7 @@ impl GitCliWorktreeManager {
     /// 起動する git 実行ファイルのパスを受け取る(合成ルートが既定の `git` を渡す)。
     ///
     /// 注入にしておくと、適合テストが「git を起動できない」状況を別のインスタンスとして
-    /// 作れる(ADR-024・ADR-027)。本番のインスタンスはイミュータブルなまま保たれる。
+    /// 作れる。本番のインスタンスはイミュータブルなまま保たれる。
     pub fn new(git_program: PathBuf) -> Self {
         Self { git_program }
     }
@@ -122,7 +122,7 @@ impl WorktreeManager for GitCliWorktreeManager {
             }
         }
         // メタデータの破損も含め、問い合わせが通らないものはすべて「リポジトリでない」に
-        // 落ちる(ADR-024 の実測)。リポジトリ配下のサブディレクトリ指定は受理する。
+        // 落ちる(実測)。リポジトリ配下のサブディレクトリ指定は受理する。
         let output = self.run(repo, &["rev-parse", "--show-toplevel"])?;
         if output.status.success() {
             return Ok(());
@@ -132,7 +132,7 @@ impl WorktreeManager for GitCliWorktreeManager {
 
     fn head_branch(&self, repo: &RepoPath) -> Result<BranchName, TargetError> {
         // 空リポジトリでも `symbolic-ref` は exit 0 でブランチ名を返すため、コミットの
-        // 有無を `rev-parse` で併せて見ないと空リポジトリを検出できない(ADR-024)。
+        // 有無を `rev-parse` で併せて見ないと空リポジトリを検出できない。
         let symbolic = self.run(repo, &["symbolic-ref", "--short", "HEAD"])?;
         let head = self.run(repo, &["rev-parse", "--verify", "--quiet", "HEAD"])?;
         match (symbolic.status.success(), head.status.success()) {
@@ -339,7 +339,7 @@ fn registered_entry(stdout: &[u8], key: &Path) -> Option<WorktreeEntry> {
 /// `symbolic-ref` の出力をブランチ名にする。
 ///
 /// git 側で有効でもドメインの実用サブセットに乗らない名前は、対象の分類ではなく
-/// 実行環境の制約として扱う(`TargetError` の分類は5種で閉じている。ADR-024)。
+/// 実行環境の制約として扱う(`TargetError` の分類は5種で閉じている)。
 fn branch_name(stdout: &[u8]) -> Result<BranchName, TargetError> {
     let text = String::from_utf8(stdout.to_vec()).map_err(|error| TargetError::Failed {
         message: format!("HEAD のブランチ名が UTF-8 ではない: {error}"),

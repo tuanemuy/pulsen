@@ -56,7 +56,7 @@ impl PidFileContent {
 
 /// 判定の結末。
 ///
-/// `Skipped` は判定コマンドでのみ生じる(ADR-008)。デフォルト判定は 2 値しか返さない。
+/// `Skipped` は判定コマンドでのみ生じる。デフォルト判定は 2 値しか返さない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JudgeOutcome {
     /// 成功。次のステータスへ進める。

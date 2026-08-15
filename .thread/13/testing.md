@@ -304,8 +304,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - **目的:** 「合図タイムアウト＝環境の能力・実行ファイル不在＝失敗」という区別の理由が、作業ログ（`.thread/13/adr.md`）ではなく正本（`.adr/`）に残り、コードから辿れることを確認する。
 - **手順:**
   1. `ls .adr/ | tail -5`
-  2. `grep -n "^## " .adr/073-holder-capability-skip-vs-fail.md`
-  3. `grep -n "ProgramUnusable\|068" .adr/073-holder-capability-skip-vs-fail.md`
+  2. `grep -n "^## " .adr/13-holder-capability-skip-vs-fail.md`
+  3. `grep -n "ProgramUnusable\|068" .adr/13-holder-capability-skip-vs-fail.md`
   4. `grep -n "073" crates/pulsen/tests/common/lock.rs crates/pulsen/tests/conformance_lock.rs`
   5. `grep -n "^### Status" -A 2 .thread/13/adr.md`
 - **期待結果:**
@@ -314,7 +314,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
   3. `## 決定` に、能力側と失敗側を分ける基準（スキップにしたときに「なぜ走らなかったか」と「次に何をすればよいか」が宣言だけから定まるか）が書かれており、そこから `ProgramUnusable` を失敗側に置く理由が読める。`## 影響` に、`.adr/068` が挙げた帰結（単一テストターゲット指定でロック系が「宣言済みスキップ」に化ける）が「4件＋1件が失敗する」へ改まったことが、068 だけを読んだ人が辿れる形で書かれている。
   4. `lock.rs` の `PROGRAM_MISSING` の doc コメントと `conformance_lock.rs` の `allowed_skips()` の doc コメントの両方から 073 が参照されている。068 の参照も残っている。
   5. `.thread/13/adr.md` の各エントリの Status 行から、昇格済み（`→ .adr/073-... に昇格`）か作業ログ限りかが判別できる。ADR-001 / 002 / 003 / 005 / 006 が1本に畳まれて昇格し、ADR-004 / 007 は作業ログ限りである旨と理由が書かれている。
-- **確認ポイント:** `.adr/068` そのものが書き換わっていないこと（`git diff origin/main -- .adr/068-*.md` が空。`.adr/` は判断が下された時点の記録で、現在どの述語が許容集合を決めているかは正本の `HOOKS.md` とコードが持つ）。073 が4本の別立てではなく1本になっていること（Issue コメントが求めているのは区別の理由1本で、別立てにすると正本で理由が分散する）。
+- **確認ポイント:** `.adr/068` そのものが書き換わっていないこと（`git diff origin/main -- .adr/10-skip-judgement-stays-in-skip-budget.md` が空。`.adr/` は判断が下された時点の記録で、現在どの述語が許容集合を決めているかは正本の `HOOKS.md` とコードが持つ）。073 が4本の別立てではなく1本になっていること（Issue コメントが求めているのは区別の理由1本で、別立てにすると正本で理由が分散する）。
 
 ### 15. 3 OS の CI で、`SKIP` 集合が実行前の予測と一致する
 

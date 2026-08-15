@@ -211,7 +211,7 @@ impl Task {
     /// 動作種別の問い合わせ3種は spec が一組で定める読み取り口。真偽だけが要る経路
     /// (`record_launching` の前提検査など)がこれらを使い、判別と同時に定義の中身が要る
     /// 経路は `current_status_def` の網羅 `match` を通る — tick の分岐がこちらで、
-    /// 動作種別ごとに違う値を取り出すため真偽では足りない(ADR-091)。
+    /// 動作種別ごとに違う値を取り出すため真偽では足りない。
     pub fn is_agent_run(&self) -> bool {
         match self.current_status_def() {
             StatusDefinition::AgentRun { .. } => true,
@@ -410,7 +410,7 @@ impl Task {
 
     /// 判定 completed を反映する。
     ///
-    /// 前提: 起動確認済み。実行と判定の連続失敗はここで打ち切る(ADR-009)。タスク
+    /// 前提: 起動確認済み。実行と判定の連続失敗はここで打ち切る。タスク
     /// ステータスは動かさない — 遷移は次の tick の `advance` が行う(1タスク1tick1ステップ)。
     pub fn complete_run(self, now: Timestamp) -> Result<Self, TransitionError> {
         self.ensure_running()?;
@@ -423,7 +423,7 @@ impl Task {
         })
     }
 
-    /// 判定 skipped を反映する(ADR-008)。
+    /// 判定 skipped を反映する。
     ///
     /// 前提: 起動確認済み。タスクステータスを動かさずに起動待ちへ戻し、次の tick が同じ
     /// ステータスを新しい attempt で起動する。カウンタを消費しないので、人間が介入するまで

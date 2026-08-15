@@ -6,8 +6,8 @@
 //! 1タスクの処理失敗は `errors` に記録して残りを続行する。tick 全体を
 //! 失敗させるのは、走査そのものができない場合とロック機構の異常だけ。
 //!
-//! タスクファイルに書き込んだ経路は、必ずサマリーのいずれかのフィールドを埋める
-//! (ADR-092 / ADR-094)。埋めないと、状態を変えた tick が「処理対象なし」と表示される。
+//! タスクファイルに書き込んだ経路は、必ずサマリーのいずれかのフィールドを埋める。
+//! 埋めないと、状態を変えた tick が「処理対象なし」と表示される。
 
 mod confirm_spawn;
 mod launch;
@@ -58,7 +58,7 @@ pub enum TickError {
 
 /// 個別タスクの処理をスキップした理由。
 ///
-/// 文言ではなく分類として持ち、利用者に見せる言葉は `cli::render` が決める(ADR-081)。
+/// 文言ではなく分類として持ち、利用者に見せる言葉は `cli::render` が決める。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TickIssue {
     /// タスクファイル全体を読めない。
@@ -269,7 +269,7 @@ impl RemnantsLeft {
 /// tick パスの結果。
 ///
 /// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` と `judged` を
-/// 足した形(ADR-094)。`archived` / `gc_deleted` / `gc_errors` はまだ値の入る経路を持たない。
+/// 足した形。`archived` / `gc_deleted` / `gc_errors` はまだ値の入る経路を持たない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。
@@ -300,7 +300,7 @@ impl TickSummary {
     /// 記録すべきことが1つも起きなかったか。
     ///
     /// タスクファイルに書き込んだ tick は、書き込みの内容がいずれかのフィールドに
-    /// 現れるため偽になる(ADR-092)。
+    /// 現れるため偽になる。
     pub fn is_empty(&self) -> bool {
         self.launched.is_empty()
             && self.confirmed_running.is_empty()
@@ -319,7 +319,7 @@ impl TickSummary {
 /// 全タスクを走査し、実行状態ごとの手続きへ分岐する。
 ///
 /// ポートはジェネリック引数で受け取り、実アダプターとテストダブルのどちらにも同じ
-/// 制御フローが乗ることを型で示す(ADR-028)。
+/// 制御フローが乗ることを型で示す。
 pub struct Tick<'a, R, L, K, W, S, P, C> {
     config: &'a GlobalConfig,
     state_root: &'a StateRoot,

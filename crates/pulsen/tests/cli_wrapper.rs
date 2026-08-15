@@ -94,7 +94,7 @@ impl Launch {
 
 /// テスト用エージェントの実行ファイル。
 ///
-/// 不在はスキップにしない — 作り忘れが緑にならないようにする(ADR-082 と同じ扱い)。
+/// 不在はスキップにしない — 作り忘れが緑にならないようにする。
 fn probe_program() -> PathBuf {
     agent_probe().expect("examples/agent_probe がビルドされている")
 }
@@ -317,7 +317,7 @@ fn ログを開けなければエージェントを起動せず起動不能と�
     }
 }
 
-/// 実行できない実体にする。実際に起動できないことを確かめてから `Some` を返す(ADR-027)。
+/// 実行できない実体にする。実際に起動できないことを確かめてから `Some` を返す。
 #[cfg(unix)]
 fn deny_execute(path: &Path) -> Option<()> {
     use std::os::unix::fs::PermissionsExt;

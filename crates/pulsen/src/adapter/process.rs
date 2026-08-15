@@ -1,7 +1,7 @@
 //! プラットフォーム依存のプロセス操作による `ProcessController` の実装。
 //!
 //! `unsafe` は Windows のハンドル継承を止める `inheritance` モジュールだけに閉じ、
-//! それ以外は std の安全 API と外部コマンドの起動だけで組む(ADR-075 / ADR-100)。
+//! それ以外は std の安全 API と外部コマンドの起動だけで組む。
 //!
 //! 同定情報(起動時刻・プロセスグループ)の取得は、プラットフォームごとの `identity`
 //! モジュールにある**1つの関数**に閉じる。記録側(`own_identity`)と照合側が同じ表現を
@@ -68,8 +68,7 @@ enum Termination {
 ///
 /// 何を指すかはプラットフォームで違う(POSIX 非 Linux は `ps` の実行ファイル、Linux は
 /// procfs のルート、Windows は powershell の実行ファイル)。構築時に注入することで、
-/// 適合テストが「取得機構そのものが失敗する状況」を別のインスタンスとして作れる
-/// (ADR-076)。
+/// 適合テストが「取得機構そのものが失敗する状況」を別のインスタンスとして作れる。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentitySource(PathBuf);
 
@@ -93,7 +92,7 @@ impl IdentitySource {
 
 /// 実行単位の終了操作の実体。
 ///
-/// 終了は外部コマンドの起動で行う(ADR-002)。取得元と同じく構築時に注入できるようにして、
+/// 終了は外部コマンドの起動で行う。取得元と同じく構築時に注入できるようにして、
 /// 適合テストが「終了操作自体が失敗する状況」を別のインスタンスとして作れるようにする。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminatorSource(PathBuf);
@@ -134,7 +133,7 @@ pub struct SystemProcessController {
 }
 
 impl SystemProcessController {
-    /// 自バイナリのパスと同定情報の取得元を受け取る(ADR-076)。
+    /// 自バイナリのパスと同定情報の取得元を受け取る。
     ///
     /// `std::env::current_exe()` を読むのは合成ルートの1箇所だけにする — 適合テストは
     /// テストバイナリではなく本物の `pulsen` を注入する必要がある。
@@ -166,7 +165,7 @@ impl SystemProcessController {
     ///
     /// この構成の `spawn_wrapper` は構造上必ず `SpawnError` を返すため、`spawn_wrapper` の
     /// 適合契約の対象外である — 適合スイートが検証するのは [`SystemProcessController::new`]
-    /// の構成に限る。ラッパー自身は spawn を行わないので、この経路には到達しない(ADR-076)。
+    /// の構成に限る。ラッパー自身は spawn を行わないので、この経路には到達しない。
     pub fn without_self_exe(identity_source: IdentitySource, clock: SystemClock) -> Self {
         Self {
             self_exe: None,
@@ -301,7 +300,7 @@ impl ProcessController for SystemProcessController {
     fn own_identity(&self) -> Result<WrapperIdentity, Io> {
         let pid = Pid::new(std::process::id());
         // 自プロセスの観測なので「対象が存在しない」はありえない。三値を二値へ畳むのは
-        // 呼び出し側の責務であって、共有する取得関数には持ち込まない(ADR-075)。
+        // 呼び出し側の責務であって、共有する取得関数には持ち込まない。
         let observed =
             identity::observe(&self.identity_source, pid)?.ok_or_else(|| Io::Failed {
                 message: format!("自プロセス (pid {}) を観測できない", pid.get()),
@@ -372,8 +371,7 @@ impl ProcessController for SystemProcessController {
         // **列挙できたときだけ**終了を実行する。これが分離するのは「実行単位が既に消滅して
         // いる」場合で、そこへ終了を投げずに `NotIdentifiable` を返す。ポートの入力が
         // `KillIdent` だけである以上、その識別子が別の実行単位へ再利用されていることは
-        // ここでは検出できない — starttime 照合が PID 再利用に対して持つ強さは無い
-        // (ADR-002)。
+        // ここでは検出できない — starttime 照合が PID 再利用に対して持つ強さは無い。
         let Some(target) = terminate::UnitTarget::parse(ident) else {
             return RemnantOutcome::NotIdentifiable;
         };
@@ -423,7 +421,7 @@ fn detach(command: &mut Command) {
     command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
 }
 
-/// 起動の瞬間だけ、呼び出し側から受け継いだハンドルが子へ渡るのを止める(ADR-100)。
+/// 起動の瞬間だけ、呼び出し側から受け継いだハンドルが子へ渡るのを止める。
 ///
 /// POSIX では std が自前で開いた fd に `CLOEXEC` を立てるため、`Stdio::null()` を渡した
 /// 時点で子へ渡るのは NUL だけになる。何もしない。
@@ -437,7 +435,7 @@ mod inheritance {
     }
 }
 
-/// 起動の瞬間だけ、呼び出し側から受け継いだハンドルが子へ渡るのを止める(ADR-100)。
+/// 起動の瞬間だけ、呼び出し側から受け継いだハンドルが子へ渡るのを止める。
 ///
 /// std の `CreateProcess` は `bInheritHandles = TRUE` 固定で呼ばれる。渡るのは
 /// `STARTUPINFO` に載せたハンドルだけではなく、**継承可能フラグの立った全ハンドル**な
@@ -631,7 +629,7 @@ mod terminate {
     /// 終了操作を向けられる実行単位。
     ///
     /// `KillIdent` は非空しか検査しない永続化された不透明値で、形式を知っているのは
-    /// アダプターだけである(ADR-075)。手で編集された・破損した帳簿からも到達しうるため、
+    /// アダプターだけである。手で編集された・破損した帳簿からも到達しうるため、
     /// 形式の検査は境界で1度だけ行い、満たさない値からはこの型を作らない。
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct UnitTarget(u32);
@@ -852,7 +850,7 @@ mod identity {
             })?;
         // 該当が無いときは終了ステータス非0・stdout 空になる(`observe` と同じ規則)。
         // 出力を伴う異常終了は列挙元そのものの失敗として分ける。呼び出し側の結末は
-        // `Ok(false)` と同じ `NotIdentifiable` になる(ADR-002 の写像)が、`terminate` は
+        // `Ok(false)` と同じ `NotIdentifiable` になるが、`terminate` は
         // 消滅の観測とは別に「観測できなかった」として読み、このモジュールの単体テストは
         // 取得元の異常をこの区別で固定する。
         if !output.status.success() && !output.stdout.is_empty() {
@@ -1349,8 +1347,8 @@ mod identity {
     /// 既定の取得元。
     ///
     /// POSIX 側と違い PATH 解決の名前のままにする。`%SystemRoot%\System32\...` の絶対パスは
-    /// 本環境で実測できず、誤った固定値は取得そのものを不能にする。PATH が tick 間で変わると
-    /// 照合が壊れうる制約は Issue #10 の実機確認に申し送る(ADR-075)。
+    /// 本環境で実測できず、誤った固定値は取得そのものを不能にする。この代償として、記録した
+    /// tick と照合する tick で PATH が違えば別の実体に解決され、照合が壊れうる。
     pub fn default_source() -> PathBuf {
         PathBuf::from("powershell")
     }
@@ -1406,7 +1404,8 @@ mod identity {
             message: format!("起動時刻が空 (pid {})", pid.get()),
         })?;
         // プロセスグループ相当の実行単位を `unsafe` なしで扱う手段が無いため、pid を
-        // そのまま同定子にする。ジョブオブジェクトへの移行は #3 / #10 の申し送り。
+        // そのまま同定子にする。実行単位をラッパーと別に辿るにはジョブオブジェクトが要るが、
+        // そこへは移行していない。
         let kill_ident = KillIdent::parse(pid.get().to_string()).map_err(|_| Io::Failed {
             message: format!("kill 同定子を作れない (pid {})", pid.get()),
         })?;
@@ -1647,7 +1646,7 @@ mod tests {
     }
 
     /// シグナル死の符号化(`128+シグナル番号`)は POSIX の慣例で、適合スイート側は
-    /// 「非0の符号化値」までしか主張しない(ADR-082)。具体値はここで固定する。
+    /// 「非0の符号化値」までしか主張しない。具体値はここで固定する。
     #[cfg(unix)]
     #[test]
     fn シグナルで終了したエージェントは128足すシグナル番号に符号化される() {

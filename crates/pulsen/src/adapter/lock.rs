@@ -18,7 +18,7 @@ pub struct FileExclusiveLock {
 }
 
 impl FileExclusiveLock {
-    /// ロックファイルのパスを受け取る(パスの導出はアプリケーション層。ADR-031)。
+    /// ロックファイルのパスを受け取る(パスの導出はアプリケーション層)。
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }

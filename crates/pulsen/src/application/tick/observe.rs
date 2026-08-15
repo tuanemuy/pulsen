@@ -264,7 +264,7 @@ enum Settled {
 impl Settled {
     /// 判定コマンドを持たないステータスのデフォルト判定。
     ///
-    /// 見送りは判定コマンドの exit 20 だけが生む(ADR-008)。`DefaultJudgement` が2値である
+    /// 見送りは判定コマンドの exit 20 だけが生む。`DefaultJudgement` が2値である
     /// ことで、この経路から `Skipped` が導かれないことは型が述べる。
     fn by_default(exit: ExitCode) -> Self {
         match JudgementService::default_judgement(&exit) {

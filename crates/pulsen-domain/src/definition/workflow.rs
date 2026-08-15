@@ -98,14 +98,14 @@ pub struct WorkflowDefinition {
 }
 
 impl WorkflowDefinition {
-    /// timeout の組み込みデフォルト(ADR-014)。
+    /// timeout の組み込みデフォルト。
     pub const DEFAULT_TIMEOUT: TimeoutSpec =
         TimeoutSpec::Limited(DurationSpec::from_secs_unchecked(60 * 60));
-    /// リトライ上限の組み込みデフォルト(ADR-014)。
+    /// リトライ上限の組み込みデフォルト。
     pub const DEFAULT_RETRY_LIMIT: u32 = 2;
 
     /// 構造不変条件(`initial ∈ statuses`・全 `AgentRun.next ∈ statuses`)を検証して生成する。
-    /// 循環・自己参照・到達不能は許容する(ADR-010)。
+    /// 循環・自己参照・到達不能は許容する。
     pub fn new(
         default_agent: Option<AgentName>,
         default_model: Option<ModelName>,
@@ -209,7 +209,7 @@ impl WorkflowDefinition {
     }
 
     /// 実効リトライ上限。`AgentRun` は `retries` > 組み込みデフォルト、
-    /// `Cleanup` は常に組み込みデフォルト(ADR-014)。
+    /// `Cleanup` は常に組み込みデフォルト。
     ///
     /// `Wait` に対する呼び出しは spec が規定しない(attempt_count を消費する操作が無く
     /// 適用対象がない。呼び出し側が動作種別で分岐してから使う)。この定義に属さない

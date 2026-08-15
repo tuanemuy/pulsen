@@ -507,7 +507,7 @@ Proposed
 
 ### Context
 
-見送り(`Skipped`)は判定コマンドの exit 20 だけが生む(`.adr/008-skipped-judgement-outcome.md`)。`JudgementService::default_judgement` はこの規則により2値しか返さないが、返り値は3値の `JudgeOutcome` のままで、規則の担保が doc コメントにしか無かった。結果、ユースケース側の `Settled::by_default` に到達不能な `JudgeOutcome::Skipped` アームが生きていた。
+見送り(`Skipped`)は判定コマンドの exit 20 だけが生む(`.adr/2026-08-11-skipped-judgement-outcome.md`)。`JudgementService::default_judgement` はこの規則により2値しか返さないが、返り値は3値の `JudgeOutcome` のままで、規則の担保が doc コメントにしか無かった。結果、ユースケース側の `Settled::by_default` に到達不能な `JudgeOutcome::Skipped` アームが生きていた。
 
 ADR-009 が `classify_alive` に当てた手当ての、判定側の残りである。
 
@@ -535,7 +535,7 @@ Proposed
 
 ### Context
 
-`.adr/098-spawn-not-observed-classification-and-error-headings.md` は `errors` を「タスクファイルに何を残したか」で3つの見出し(失敗を記録 / 起動の結果が未確定 / スキップ)に分けた。
+`.adr/2-spawn-not-observed-classification-and-error-headings.md` は `errors` を「タスクファイルに何を残したか」で3つの見出し(失敗を記録 / 起動の結果が未確定 / スキップ)に分けた。
 
 ADR-010 で残存の報告を保存の成否と独立に積むようにした結果、この3分類のどれにも収まらなくなった。実行の失敗を保存できなかった tick でも `RemnantsUnhandled` は積まれるので、`attempt_count` が動いていないのに「失敗を記録」に現れる。「スキップ」(次の tick がそのまま再試行する)も当てはまらない — 残存終了は実行の失敗を確定させる tick でだけ試み、tick はこれを再試行しない。
 

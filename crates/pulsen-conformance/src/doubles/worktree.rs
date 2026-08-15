@@ -40,7 +40,7 @@ pub enum WorktreeManagerCall {
 /// メソッドごとにあらかじめ与えた結果を順に返すマネージャー。
 ///
 /// `TargetError` の5分岐すべてを外から与えられる。実アダプター(git CLI)では
-/// `Failed` の再現に git を起動できない状況が要る(ADR-024)ため、ユースケースの
+/// `Failed` の再現に git を起動できない状況が要るため、ユースケースの
 /// 分岐網羅はここで行う。
 #[derive(Debug, Default)]
 pub struct ScriptedWorktreeManager {

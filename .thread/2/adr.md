@@ -80,7 +80,7 @@ Proposed
 
 Proposed
 
-→ `.adr/075-process-controller-without-unsafe.md` に昇格
+→ `.adr/2-process-controller-without-unsafe.md` に昇格
 
 ### Context
 
@@ -184,7 +184,7 @@ Windows だけ PATH の安定性への依存が残る。この非対称は既知
 
 Proposed
 
-→ `.adr/076-process-controller-injects-self-exe-and-identity-source.md` に昇格
+→ `.adr/2-process-controller-injects-self-exe-and-identity-source.md` に昇格
 
 ### Context
 
@@ -229,7 +229,7 @@ requirements §4.1 はラッパーを「ツール自身のバイナリをラッ�
 
 Proposed
 
-→ `.adr/077-wrapper-is-a-hidden-subcommand.md` に昇格
+→ `.adr/2-wrapper-is-a-hidden-subcommand.md` に昇格
 
 ### Context
 
@@ -257,7 +257,7 @@ pages は `wrapper` を「ツール自身のバイナリをラッパーモード
 
 Proposed
 
-→ `.adr/078-wrapper-restores-state-root-from-run-dir.md` に昇格
+→ `.adr/2-wrapper-restores-state-root-from-run-dir.md` に昇格
 
 ### Context
 
@@ -286,7 +286,7 @@ Proposed
 
 Proposed
 
-→ `.adr/079-command-line-rehydrate-across-process-boundary.md` に昇格
+→ `.adr/2-command-line-rehydrate-across-process-boundary.md` に昇格
 
 ### Context
 
@@ -313,7 +313,7 @@ Proposed
 
 Proposed
 
-→ `.adr/080-run-dir-files-are-json-and-markers-are-empty.md` に昇格
+→ `.adr/2-run-dir-files-are-json-and-markers-are-empty.md` に昇格
 
 ### Context
 
@@ -349,7 +349,7 @@ pid / starttime / exit の内容表現は spec が定めていない(ファイ�
 
 Proposed
 
-→ `.adr/081-tick-errors-are-structured-values.md` に昇格
+→ `.adr/2-tick-errors-are-structured-values.md` に昇格
 
 ### Context
 
@@ -374,7 +374,7 @@ spec の `message: String` は「報告に足る情報が載ること」を要�
 
 Proposed
 
-→ `.adr/082-agent-and-spawn-probes-as-examples.md` に昇格
+→ `.adr/2-agent-and-spawn-probes-as-examples.md` に昇格
 
 ### Context
 
@@ -469,7 +469,7 @@ Proposed
 
 Proposed
 
-→ `.adr/085-worktree-identified-by-physical-path.md` に昇格
+→ `.adr/2-worktree-identified-by-physical-path.md` に昇格
 
 ### Context
 
@@ -520,7 +520,7 @@ Proposed
 
 Proposed
 
-→ `.adr/086-port-mechanism-failure-is-single-io-error.md` に昇格
+→ `.adr/2-port-mechanism-failure-is-single-io-error.md` に昇格
 
 ### Context
 
@@ -595,7 +595,7 @@ Proposed
 
 Proposed
 
-→ `.adr/089-wrapper-exit-code-reports-its-own-duty.md` に昇格
+→ `.adr/2-wrapper-exit-code-reports-its-own-duty.md` に昇格
 
 ### Context
 
@@ -627,7 +627,7 @@ spec は `wrapper` の出力DTOを「なし(結果はすべてrunディレクト
 
 Proposed
 
-→ `.adr/090-persisted-explanations-come-from-domain-describe.md` に昇格
+→ `.adr/2-persisted-explanations-come-from-domain-describe.md` に昇格
 
 ### Context
 
@@ -655,7 +655,7 @@ Proposed
 
 Proposed
 
-→ `.adr/091-tick-branch-decision-as-value.md` に昇格
+→ `.adr/2-tick-branch-decision-as-value.md` に昇格
 
 ### Context
 
@@ -685,7 +685,7 @@ ADR-101 は tick の分岐を全実行状態の網羅 `match` として書くと
 
 Proposed
 
-→ `.adr/092-empty-summary-means-nothing-to-process.md` に昇格
+→ `.adr/2-empty-summary-means-nothing-to-process.md` に昇格
 
 ### Context
 
@@ -715,7 +715,7 @@ pages は「処理対象がなければその旨を表示して 0」と定める
 
 Proposed
 
-→ `.adr/093-usecase-and-acceptance-fixtures-are-separated.md` に昇格
+→ `.adr/2-usecase-and-acceptance-fixtures-are-separated.md` に昇格
 
 ### Context
 
@@ -741,7 +741,7 @@ tick のテストは2種類ある — ポートをテストダブルに差し替
 
 Proposed
 
-→ `.adr/094-confirmed-running-field-and-recorded-failures-in-errors.md` に昇格
+→ `.adr/2-confirmed-running-field-and-recorded-failures-in-errors.md` に昇格
 
 ### Context
 
@@ -781,7 +781,7 @@ launching → running の取込にだけ、フィールド `confirmed_running: V
 
 Proposed
 
-→ `.adr/095-record-tool-failure-takes-tool-failure-kind.md` に昇格
+→ `.adr/2-record-tool-failure-takes-tool-failure-kind.md` に昇格
 
 ### Context
 
@@ -809,7 +809,7 @@ spec の表記から逸脱するが、CLAUDE.md の「不正な状態を型で�
 
 Proposed
 
-→ `.adr/096-transition-error-holds-classification-only.md` に昇格
+→ `.adr/2-transition-error-holds-classification-only.md` に昇格
 
 ### Context
 
@@ -845,7 +845,7 @@ Proposed
 
 Proposed
 
-→ `.adr/097-freeze-is-passed-by-the-caller-of-the-transition.md` に昇格
+→ `.adr/2-freeze-is-passed-by-the-caller-of-the-transition.md` に昇格
 
 ### Context
 
@@ -873,7 +873,7 @@ ADR-074 は「#3 は共通手続き notify の呼び出しをこの関数の中�
 
 Proposed
 
-→ `.adr/098-spawn-not-observed-classification-and-error-headings.md` に昇格
+→ `.adr/2-spawn-not-observed-classification-and-error-headings.md` に昇格
 
 ### Context
 
@@ -905,7 +905,7 @@ Proposed
 
 Proposed
 
-→ `.adr/099-compose-resolves-only-home-and-config.md` に昇格
+→ `.adr/2-compose-resolves-only-home-and-config.md` に昇格
 
 ### Context
 
@@ -940,7 +940,7 @@ ADR-076 と同じ形で切り出す。`compose()` に残すのはホームの解
 
 Proposed
 
-→ `.adr/100-windows-detach-suppresses-handle-inheritance.md` に昇格
+→ `.adr/2-windows-detach-suppresses-handle-inheritance.md` に昇格
 
 ### Context
 
@@ -954,7 +954,7 @@ ADR-075 は「stdin / stdout / stderr を `Stdio::null()` にする」ことで�
 
 ### Decision
 
-Windows のデタッチ起動に限り `unsafe` を許し、`command.spawn()` の瞬間だけ自プロセスの標準ハンドルの継承可能フラグを落とす。詳細は `.adr/100-windows-detach-suppresses-handle-inheritance.md`。
+Windows のデタッチ起動に限り `unsafe` を許し、`command.spawn()` の瞬間だけ自プロセスの標準ハンドルの継承可能フラグを落とす。詳細は `.adr/2-windows-detach-suppresses-handle-inheritance.md`。
 
 `unsafe` を避ける案(`cmd.exe /C start` 経由・テスト側でパイプをやめる・制約として受け入れる)を採らない理由も同ファイルに置く。要点は、シェル経由がトークンをそのまま渡す契約と両立しないこと、残る2案が製品の欠陥を残したまま CI だけ緑にすることである。
 

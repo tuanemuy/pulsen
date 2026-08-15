@@ -1,6 +1,6 @@
 //! リトライ・判定・spawn 失敗のカウンタ。
 
-/// 連続した失敗の数(ADR-009)。リセット規則は遷移関数の事後条件として定義する。
+/// 連続した失敗の数。リセット規則は遷移関数の事後条件として定義する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetryCounters {
     attempt_count: u32,
@@ -74,7 +74,7 @@ impl RetryCounters {
 
     /// 実行と判定の連続失敗をまとめて打ち切る。
     ///
-    /// 判定が completed / skipped で確定したときの事後条件(ADR-009)。`spawn_fail_count`
+    /// 判定が completed / skipped で確定したときの事後条件。`spawn_fail_count`
     /// は触らない — 数えている連続は「起動できないこと」であり、起動確認でリセット済み。
     pub(super) fn reset_run_failures(self) -> Self {
         Self {

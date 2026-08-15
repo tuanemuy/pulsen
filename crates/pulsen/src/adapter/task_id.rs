@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 use pulsen_domain::task::{Clock, TaskId, TaskIdError, TaskIdGenerator};
 
-/// ランダム成分の桁数(ADR-026)。
+/// ランダム成分の桁数。
 ///
 /// 適合テストは1万回の発行で重複しないことを求める。base36 6桁では誕生日問題で
 /// 約2.3%の確率で衝突し、テストがフレーキーになる。8桁(36^8 ≒ 2.8e12)で衝突確率は
@@ -27,12 +27,12 @@ pub enum IdGeneratorInitError {
     InvalidFormat(TaskIdError),
 }
 
-/// `<UTC yyyymmdd>t<hhmmss>-<base36 8桁の乱数>` を発行するジェネレーター(ADR-026)。
+/// `<UTC yyyymmdd>t<hhmmss>-<base36 8桁の乱数>` を発行するジェネレーター。
 ///
 /// 時刻成分は注入した `Clock` の `to_rfc3339()` から導出する — 暦計算はドメインの
 /// 1箇所に留め、アダプターで再実装しない。
 ///
-/// `generate` は無謬(spec)なので、失敗しうる処理は構築時に寄せる(ADR-036)。
+/// `generate` は無謬(spec)なので、失敗しうる処理は構築時に寄せる。
 /// エントロピーの取得は `new` の1回だけで、以降は内部 PRNG が進む。
 #[derive(Debug)]
 pub struct DefaultTaskIdGenerator<C> {
@@ -116,7 +116,7 @@ fn base36_digit(value: u64) -> char {
 
 /// SplitMix64 で内部状態を1つ進める。
 ///
-/// 発行のたびにエントロピー源へ問い合わせない(ADR-036)ための最小の疑似乱数列。
+/// 発行のたびにエントロピー源へ問い合わせないための最小の疑似乱数列。
 fn next_random(state: &Cell<u64>) -> u64 {
     let next = state.get().wrapping_add(0x9E37_79B9_7F4A_7C15);
     state.set(next);

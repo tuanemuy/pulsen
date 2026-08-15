@@ -4,13 +4,13 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-# ドメインは外部クレートに依存しない(CLAUDE.md / ADR-019)。この表は空のまま保つ。
+# ドメインは外部クレートに依存しない(CLAUDE.md)。この表は空のまま保つ。
 [dependencies]
 
 [lints.rust]
 unsafe_code = "forbid"
 
 # `match` のワイルドカードを避ける規約(CLAUDE.md)は、網羅 match を書けるドメイン enum
-# にのみ強制できる。外部の #[non_exhaustive] enum を扱う `pulsen` には掛けない(ADR-029)。
+# にのみ強制できる。外部の #[non_exhaustive] enum を扱う `pulsen` には掛けない。
 [lints.clippy]
 wildcard_enum_match_arm = "warn"

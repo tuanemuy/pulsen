@@ -6,7 +6,7 @@ use pulsen_domain::task::{Clock, Timestamp};
 
 /// システムの壁時計を秒精度の UTC で返すクロック。
 ///
-/// `now` は無謬(spec)なので、`SystemTime` 側の失敗は値へ写して吸収する(ADR-036)。
+/// `now` は無謬(spec)なので、`SystemTime` 側の失敗は値へ写して吸収する。
 /// epoch より前を指す時計は負の Unix 秒になり、表現可能範囲の外は範囲の端に飽和する。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;

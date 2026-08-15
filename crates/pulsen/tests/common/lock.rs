@@ -1,4 +1,4 @@
-//! ロックを別プロセスに保持させるフィクスチャ(ADR-032)。
+//! ロックを別プロセスに保持させるフィクスチャ。
 
 use std::env;
 use std::io::{self, BufRead, BufReader};
@@ -14,12 +14,12 @@ const LOCKED: &str = "locked";
 /// 合図を待つ期限。probe ではこの期限を超えたことが「この環境は合図を期限内に返せない」
 /// という能力の判定になり、probe が成立したあとに超えた場合は、同じ手順が一度は期限内に
 /// 返っている以上その超過を能力の宣言としては読めないので失敗になる(繰り返し起きるなら
-/// 期限そのものの見直しとして扱う。ADR-073)。いずれの場合も待ち続けないのは、
-/// フィクスチャのハングがテストの失敗より診断が難しいため(ADR-060)。
+/// 期限そのものの見直しとして扱う)。いずれの場合も待ち続けないのは、
+/// フィクスチャのハングがテストの失敗より診断が難しいため。
 const SIGNAL_DEADLINE: Duration = Duration::from_secs(10);
 
 /// 実行ファイルが無いときの案内。環境の能力ではなくビルド構成の誤りなので、
-/// スキップにはせず失敗させる(HOOKS.md / ADR-068 / ADR-073)。
+/// スキップにはせず失敗させる(HOOKS.md)。
 const PROGRAM_MISSING: &str = "ロック保持フィクスチャ(examples/lock_holder)の実行ファイルが無い。\
     単一のテストターゲットを指定した実行では example がビルドされないため、\
     `cargo test --workspace` のように example をビルドする形で実行する";
@@ -28,10 +28,10 @@ const PROGRAM_MISSING: &str = "ロック保持フィクスチャ(examples/lock_h
 pub enum HolderCapability {
     /// 保持プロセスを起動でき、合図の期限の超過を観測しなかった。この変種を名乗る根拠は
     /// 経路によって「合図が期限内に返った」と「合図を観測しないまま読み取りが終わった」の
-    /// 2つに分かれる(ADR-073)。
+    /// 2つに分かれる。
     Available(HolderProgram),
     /// 起動はできるが、合図が期限内に返らない。この観測は原因を決めず、環境の遅さと
-    /// 保持プロセス側の退行を区別しない(ADR-073)。
+    /// 保持プロセス側の退行を区別しない。
     SignalTimedOut,
     /// 実行ファイルが無い(example がビルドされていない)。
     ProgramMissing,
@@ -83,8 +83,7 @@ fn holder_program() -> Option<PathBuf> {
 /// 実際に1回保持させてみて能力を決める(1度だけ評価して使い回す)。
 ///
 /// フィクスチャが本番で踏む手順そのもの(起動して合図を待つ)で判定するため、
-/// 判定と実際のスキップが食い違わない(ADR-055 の `permission_restrictions_effective`
-/// と同じ性質)。
+/// 判定と実際のスキップが食い違わない(`permission_restrictions_effective` と同じ性質)。
 pub fn holder_capability() -> &'static HolderCapability {
     static CAPABILITY: OnceLock<HolderCapability> = OnceLock::new();
     CAPABILITY.get_or_init(probe_holder)
@@ -160,7 +159,7 @@ fn start_holder(program: &Path, lock_path: &Path) -> Started {
 /// 実行ファイルが無い場合は原因も回避方法も一意で、起動できない場合は理由が起動時の
 /// エラーにしか無い。合図を読み取れなかった場合と、probe が成立したあとのタイムアウトも
 /// 同じで、いずれもスキップの宣言だけからは次の一手が定まらないため、スキップに
-/// 逃がさず失敗させる(ADR-073)。
+/// 逃がさず失敗させる。
 pub fn spawn_holder(lock_path: &Path) -> Option<(Child, bool)> {
     let program = match holder_capability() {
         HolderCapability::Available(program) => program,
@@ -211,7 +210,7 @@ pub fn release(mut holder: Child) -> Option<()> {
 
 /// 保持プロセスを畳む。正常終了できるかは測っていないので、その正常終了は待たずに
 /// `kill` してから終了を回収する。回収そのものには期限が無いので、`kill` を受けても
-/// 即座には終われない相手に当たればここで止まる(ADR-073)。
+/// 即座には終われない相手に当たればここで止まる。
 fn kill_and_wait(mut holder: Child) {
     let _ = holder.kill();
     let _ = holder.wait();

@@ -14,7 +14,7 @@ pub const WORKFLOW_EXTENSIONS: &[&str] = &[".yaml", ".yml"];
 
 /// 実行中のプラットフォームの区切り文字集合。
 ///
-/// 条件付きコンパイルではなく std の定数から選ぶ(ADR-037)。判定ロジックは
+/// 条件付きコンパイルではなく std の定数から選ぶ。判定ロジックは
 /// 集合を引数に取る純粋関数に閉じており、両方の集合をテストから直接渡せる。
 pub const fn platform_separators() -> &'static [char] {
     if MAIN_SEPARATOR == '\\' {

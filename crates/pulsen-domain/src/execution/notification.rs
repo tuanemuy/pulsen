@@ -27,7 +27,7 @@ pub enum NotifyOutcome {
 pub struct NotificationService;
 
 impl NotificationService {
-    /// notify_cmd に必ず適用する timeout(組み込み。ADR-018)。
+    /// notify_cmd に必ず適用する timeout(組み込み)。
     ///
     /// ハングした通知コマンドが排他ロックを保持したまま tick / CLI を塞ぐことを防ぐ。
     pub const NOTIFY_TIMEOUT: DurationSpec = DurationSpec::from_secs_unchecked(60);

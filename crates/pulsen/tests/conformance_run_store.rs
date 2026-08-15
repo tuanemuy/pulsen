@@ -1,7 +1,7 @@
 //! RunStore の適合スイートを `FsRunStore` に適用する。
 //!
 //! 破損のフィクスチャは「JSON として読めない内容を対象ファイルの位置に置く」形で作る
-//! (ADR-080 — 各ファイルは JSON なので、構文として壊せば分類が構文で決まる)。
+//! (各ファイルは JSON なので、構文として壊せば分類が構文で決まる)。
 
 use std::fs;
 use std::path::Path;
@@ -77,7 +77,7 @@ impl RunStoreHarness for FsRunStoreHarness {
 
 /// ファイルを読み取れない状態にする。
 ///
-/// 制限が実際に効いたことを確認してから `Some` を返す(ADR-027)。
+/// 制限が実際に効いたことを確認してから `Some` を返す。
 #[cfg(unix)]
 fn deny_file_read(path: &Path) -> Option<Restore> {
     let restore = set_mode(path, 0o000)?;

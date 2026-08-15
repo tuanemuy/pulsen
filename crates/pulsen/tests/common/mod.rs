@@ -51,7 +51,7 @@ fn allowed_skips() -> Vec<&'static str> {
         allowed.extend(PERMISSION_CASES);
     }
     // 許容するのは、スキップの宣言だけで「なぜ走らなかったか」と「次に何をすればよいか」が
-    // 定まる能力に限る(ADR-073)。実行ファイルが無い場合と起動できない場合は定まらないので、
+    // 定まる能力に限る。実行ファイルが無い場合と起動できない場合は定まらないので、
     // 緑にせずケースの失敗にする。
     match lock::holder_capability() {
         lock::HolderCapability::SignalTimedOut => allowed.extend(LOCK_HOLDER_CASES),
@@ -69,8 +69,7 @@ fn allowed_skips() -> Vec<&'static str> {
 ///
 /// libtest は成功したテストの標準出力を握り潰すため、`println!` して `return` する形では
 /// スキップと成功を区別できない。適合スイートと同じ宣言(`SkipBudget`)を受け入れテストにも
-/// 使い、宣言していないケースのスキップはそのケース自身の失敗として現れるようにする
-/// (ADR-055)。
+/// 使い、宣言していないケースのスキップはそのケース自身の失敗として現れるようにする。
 pub fn skipped(case: &str, fixture: &'static str) {
     SKIPS.record(case, fixture);
 }
@@ -795,7 +794,7 @@ pub fn run_cli(arguments: &[&str]) -> Run {
 /// `PULSEN_HOME` を落とすだけでは、ホームを指定し忘れたテストが既定の `~/.pulsen/` に
 /// 落ちて開発者の実ホームに登録してしまう。ユーザーのホームも毎回作る一時ディレクトリへ
 /// 向け、3段の優先順位(フラグ・環境変数・既定)のどこを踏んでも一時ディレクトリの外に
-/// 出ないようにする(ADR-062)。戻り値は起動が終わるまで保持する。
+/// 出ないようにする。戻り値は起動が終わるまで保持する。
 fn detached_home(command: &mut Command) -> TempDir {
     let sandbox = tempfile::tempdir().expect("一時ホームを作れる");
     command.env_remove(HOME_ENV);
@@ -858,7 +857,7 @@ impl Run {
 
 /// ファイルを読み取れない状態にする(ファイル専用)。
 ///
-/// 制限が実際に効いたことを確認してから `Some` を返す(ADR-027)。
+/// 制限が実際に効いたことを確認してから `Some` を返す。
 ///
 /// 確認は `fs::read` の成否で行うため、ディレクトリに渡すと制限の有無にかかわらず
 /// `Err`(EISDIR)になり「効いた」と誤判定する。ディレクトリ版は

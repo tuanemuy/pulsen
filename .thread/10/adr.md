@@ -8,7 +8,7 @@
 
 Proposed
 
-→ `.adr/065-ci-on-github-actions-with-runner-rustup.md` に昇格
+→ `.adr/10-ci-on-github-actions-with-runner-rustup.md` に昇格
 
 ### Context
 
@@ -61,7 +61,7 @@ GitHub Actions を使う。toolchain はランナー同梱の `rustup` を直接
 
 Proposed
 
-→ `.adr/066-msrv-read-from-manifest-and-linked-on-three-os.md` に昇格
+→ `.adr/10-msrv-read-from-manifest-and-linked-on-three-os.md` に昇格
 
 ### Context
 
@@ -97,7 +97,7 @@ Proposed
 
 Proposed
 
-→ `.adr/065-ci-on-github-actions-with-runner-rustup.md` に昇格
+→ `.adr/10-ci-on-github-actions-with-runner-rustup.md` に昇格
 
 ### Context
 
@@ -122,7 +122,7 @@ CI で toolchain を明示するなら、リポジトリに `rust-toolchain.toml
 
 Proposed
 
-→ `.adr/067-stable-toolchain-tracks-the-current-release.md` に昇格
+→ `.adr/10-stable-toolchain-tracks-the-current-release.md` に昇格
 
 ### Context
 
@@ -152,7 +152,7 @@ CI で stable をどう指すかに選択肢がある。
 
 Proposed
 
-→ `.adr/068-skip-judgement-stays-in-skip-budget.md` に昇格
+→ `.adr/10-skip-judgement-stays-in-skip-budget.md` に昇格
 
 ### Context
 
@@ -213,7 +213,7 @@ CI 側の扱いの選択肢:
 
 Proposed
 
-→ `.adr/069-no-dependency-cache-locked-dependency-graph.md` に昇格
+→ `.adr/10-no-dependency-cache-locked-dependency-graph.md` に昇格
 
 ### Context
 
@@ -249,7 +249,7 @@ Rust の CI ではキャッシュがほぼ定番になっている。選択肢:
 
 Proposed
 
-→ `.adr/070-job-split-fmt-and-two-os-matrices.md` に昇格
+→ `.adr/10-job-split-fmt-and-two-os-matrices.md` に昇格
 
 ### Context
 
@@ -282,7 +282,7 @@ Issue が求めるのは `build` / `test` / `clippy --all-targets -- -D warnings
 
 Proposed
 
-→ `.adr/071-os-differences-absorbed-by-probe-and-allowed-skips.md` に昇格
+→ `.adr/10-os-differences-absorbed-by-probe-and-allowed-skips.md` に昇格
 
 ### Context
 
@@ -360,7 +360,7 @@ ADR-001 と ADR-005 は「使わないこと」を3つ決めている — `sort`
 
 Accepted
 
-→ `.adr/072-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
+→ `.adr/10-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
 
 ### Context
 
@@ -437,7 +437,7 @@ Windows の stable ジョブで `adapter::task_file::tests` の5件が `NotAbsol
 
 Accepted
 
-→ `.adr/072-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
+→ `.adr/10-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
 
 ADR-010 の最後の項目(`rename_atomic` には同じ再試行を入れない)を置き換える。
 
@@ -483,7 +483,7 @@ ADR-008 の境界では、置換・移動の手順を保ったまま失敗時の
 
 Accepted
 
-→ `.adr/072-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
+→ `.adr/10-atomic-replace-move-read-retry-on-transient-denial.md` に昇格
 
 ### Context
 

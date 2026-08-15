@@ -2,7 +2,7 @@
 //!
 //! `ConfigStore` のダブルは置かない — タスク登録のユースケースは設定を読み込み済みの
 //! `GlobalConfig` として受け取り、`ConfigStore` ポートを引数に取らないため、差し替える
-//! 場所が無い(ADR-028)。
+//! 場所が無い。
 
 use std::cell::RefCell;
 use std::collections::VecDeque;

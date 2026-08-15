@@ -1,7 +1,7 @@
 //! TaskRepository の適合スイートを `FsTaskRepository` に適用する。
 //!
 //! 破損のフィクスチャは「有効な JSON でありながらスナップショットとして解釈できない」
-//! 形で作る(ADR-025)。スナップショットの中身だけを JSON 構文として壊すことはできない —
+//! 形で作る。スナップショットの中身だけを JSON 構文として壊すことはできない —
 //! ファイル全体を1回のパースで読む以上、それはファイル全体の破損になる。
 
 use std::fs;
@@ -155,7 +155,7 @@ impl TaskRepositoryHarness for FsTaskRepositoryHarness {
 
 /// ディレクトリを読み取れない状態にする。
 ///
-/// 制限が実際に効いたことを確認してから `Some` を返す(ADR-027)。
+/// 制限が実際に効いたことを確認してから `Some` を返す。
 #[cfg(unix)]
 fn deny_dir_read(dir: &Path) -> Option<Restore> {
     let restore = set_mode(dir, 0o000)?;

@@ -7,7 +7,7 @@
 ## ADR-019: ドメインを独立クレートに切り出した3クレートのワークスペースにする
 
 ### Status
-Accepted（ステップ1で確定。`.adr/019-domain-crate-workspace.md`）
+Accepted（ステップ1で確定。`.adr/1-domain-crate-workspace.md`）
 
 ### Context
 
@@ -38,7 +38,7 @@ CLAUDE.md は「ドメイン層は外部クレートや I/O に依存しない�
 ## ADR-020: ドメイン型に serde を実装せず、`Timestamp` の RFC3339 変換はドメインに持たせる
 
 ### Status
-Accepted（ステップ5で確定。`.adr/020-no-serde-in-domain-timestamp-conversion-in-domain.md`）
+Accepted（ステップ5で確定。`.adr/1-no-serde-in-domain-timestamp-conversion-in-domain.md`）
 
 ### Context
 
@@ -69,7 +69,7 @@ Accepted（ステップ5で確定。`.adr/020-no-serde-in-domain-timestamp-conve
 ## ADR-021: YAML は Value 化してから手書きでスキーマ走査する（serde の deny_unknown_fields に頼らない）
 
 ### Status
-Accepted（ステップ10で確定。`.adr/021-yaml-value-then-hand-written-schema-walk.md`）
+Accepted（ステップ10で確定。`.adr/1-yaml-value-then-hand-written-schema-walk.md`）
 
 ### Context
 
@@ -95,7 +95,7 @@ ADR-013 はワークフローYAML・config.yaml の未知キーを読み込み�
 ## ADR-022: 排他ロックは標準ライブラリの `File::try_lock` で実装し、`LockGuard` はドメインのマーカートレイトにする
 
 ### Status
-Accepted（ステップ1で確定。`.adr/022-std-file-lock-and-lockguard-marker-trait.md`）
+Accepted（ステップ1で確定。`.adr/1-std-file-lock-and-lockguard-marker-trait.md`）
 
 ### Context
 
@@ -123,7 +123,7 @@ Rust 1.89 で `std::fs::File::try_lock() -> Result<(), std::fs::TryLockError>` �
 ## ADR-023: 依存クレートの選定
 
 ### Status
-Accepted（ステップ1で確定。`.adr/023-dependency-selection.md`）
+Accepted（ステップ1で確定。`.adr/1-dependency-selection.md`）
 
 ### Context
 
@@ -155,7 +155,7 @@ CLI・YAML・JSON・乱数・一時ファイルが必要になる。ドメイン
 ## ADR-024: git 操作は git CLI へのシェルアウトで実装し、対象の分類は専用の問い合わせコマンドの組み合わせで導く
 
 ### Status
-Accepted（ステップ14で確定。`.adr/024-git-cli-shell-out-and-target-classification.md`）
+Accepted（ステップ14で確定。`.adr/1-git-cli-shell-out-and-target-classification.md`）
 
 ### Context
 
@@ -227,7 +227,7 @@ git CLI へシェルアウトする（`git -C <repo> ...`）。`git` を実行�
 ## ADR-025: タスクファイルは JSON 単一ファイルとし、`Corrupt` と `SnapshotUnreadable` は「JSON として有効か」で分ける
 
 ### Status
-Accepted（ステップ12で確定。`.adr/025-task-file-json-and-corrupt-classification.md`）
+Accepted（ステップ12で確定。`.adr/1-task-file-json-and-corrupt-classification.md`）
 
 ### Context
 
@@ -266,7 +266,7 @@ ADR-015 はスナップショットをタスクファイルに正規化構造と
 ## ADR-026: タスクIDは「UTC時刻成分 + ランダム成分」で発行する
 
 ### Status
-Accepted（ステップ13で確定。`.adr/026-task-id-format.md`）
+Accepted（ステップ13で確定。`.adr/1-task-id-format.md`）
 
 ### Context
 
@@ -290,7 +290,7 @@ Accepted（ステップ13で確定。`.adr/026-task-id-format.md`）
 ## ADR-027: ポート適合テストはマクロで1ケース1テストに展開し、ハーネスのフックは意図レベルにする
 
 ### Status
-Accepted（ステップ9で確定。`.adr/027-port-conformance-suite-and-harness-hooks.md`。125行の対応表を埋めた結果の差分は ADR-041）
+Accepted（ステップ9で確定。`.adr/1-port-conformance-suite-and-harness-hooks.md`。125行の対応表を埋めた結果の差分は ADR-041）
 
 ### Context
 
@@ -350,7 +350,7 @@ spec/testcases/ports/*.md は「すべてのアダプター実装が共通で通
 ## ADR-028: ユースケースの異常系はテストダブルで消化し、ダブルは `pulsen-conformance` に置く
 
 ### Status
-Accepted（ステップ15・16で確定。`.adr/028-usecase-error-paths-via-test-doubles.md`）
+Accepted（ステップ15・16で確定。`.adr/1-usecase-error-paths-via-test-doubles.md`）
 
 ### Context
 
@@ -402,7 +402,7 @@ Issue の完了条件は「スタブ・仮実装・部分実装は不可。実�
 ## ADR-029: `clippy::wildcard_enum_match_arm` はドメインクレートにのみ適用する
 
 ### Status
-Accepted（ステップ1で確定。`.adr/029-wildcard-enum-match-arm-lint-domain-only.md`）
+Accepted（ステップ1で確定。`.adr/1-wildcard-enum-match-arm-lint-domain-only.md`）
 
 ### Context
 
@@ -424,7 +424,7 @@ CLAUDE.md は「`match` でワイルドカード（`_`）を避ける」と定�
 ## ADR-030: `FsWorkflowStore` は基準ディレクトリを注入して相対パスを解決する
 
 ### Status
-Accepted（ステップ11で確定。`.adr/030-workflow-store-base-dir-injection.md`）
+Accepted（ステップ11で確定。`.adr/1-workflow-store-base-dir-injection.md`）
 
 ### Context
 
@@ -444,7 +444,7 @@ spec/testcases/ports/workflow-store.md は「相対パスはプロセスのカ�
 ## ADR-031: グローバルホームのレイアウトはアプリケーション層に置く
 
 ### Status
-Accepted（ステップ16で確定。`.adr/031-pulsen-home-layout-in-application-layer.md`）
+Accepted（ステップ16で確定。`.adr/1-pulsen-home-layout-in-application-layer.md`）
 
 ### Context
 
@@ -467,7 +467,7 @@ Accepted（ステップ16で確定。`.adr/031-pulsen-home-layout-in-application
 ## ADR-032: ロックの別プロセスフィクスチャは `examples/lock_holder.rs` で供給する
 
 ### Status
-Accepted（ステップ14で確定。`.adr/032-lock-holder-example-fixture.md`）
+Accepted（ステップ14で確定。`.adr/1-lock-holder-example-fixture.md`）
 
 ### Context
 
@@ -491,7 +491,7 @@ spec/testcases/ports/exclusive-lock.md は「ロックを取得・保持する�
 ## ADR-033: git フィクスチャは環境変数と初期化オプションで再現性を固定する
 
 ### Status
-Accepted（ステップ14で確定。`.adr/033-git-fixture-reproducibility.md`）
+Accepted（ステップ14で確定。`.adr/1-git-fixture-reproducibility.md`）
 
 ### Context
 
@@ -520,7 +520,7 @@ Accepted（ステップ14で確定。`.adr/033-git-fixture-reproducibility.md`�
 ## ADR-034: `WorkflowRef` のパス区切り文字集合を定数として切り出す
 
 ### Status
-Accepted（ステップ3で確定。`.adr/034-workflow-ref-separator-set-as-constant.md`。既定集合の選び方は ADR-037 で改めた）
+Accepted（ステップ3で確定。`.adr/1-workflow-ref-separator-set-as-constant.md`。既定集合の選び方は ADR-037 で改めた）
 
 ### Context
 
@@ -540,7 +540,7 @@ spec/domains/definition.md は `WorkflowRef::parse` の規則を「値がパス�
 ## ADR-035: 本スライスの ADR を `.adr/019` 以降として正本に起票する
 
 ### Status
-Accepted（ステップ1で確定。`.adr/035-file-slice-adrs-from-019.md`）
+Accepted（ステップ1で確定）
 
 ### Context
 
@@ -549,7 +549,7 @@ Accepted（ステップ1で確定。`.adr/035-file-slice-adrs-from-019.md`）
 ### Decision
 
 - 本書の採番を `.adr/` の続き（019 以降）に合わせる。本文中の ADR-001〜018 は既存の正本を指す。
-- 実装ステップ1で `.adr/019-*.md` 〜 `.adr/036-*.md` として起票する。ただし **Status は `Proposed` で起票し、その決定の形が確定するステップの完了時に `Accepted` へ更新する**。実装前に18件すべてを `Accepted` にすると、正本と実装が食い違う期間が最大化する（ADR-025・027 のように実装で形が変わりうる決定を含むため）。
+- 実装ステップ1で `.adr/1-domain-crate-workspace.md` 〜 `.adr/1-infallible-ports-absorb-failure-at-construction.md` として起票する。ただし **Status は `Proposed` で起票し、その決定の形が確定するステップの完了時に `Accepted` へ更新する**。実装前に18件すべてを `Accepted` にすると、正本と実装が食い違う期間が最大化する（ADR-025・027 のように実装で形が変わりうる決定を含むため）。
 - 確定ステップの対応:
 
   | ADR | 確定するステップ |
@@ -577,7 +577,7 @@ Accepted（ステップ1で確定。`.adr/035-file-slice-adrs-from-019.md`）
 ## ADR-036: 無謬なポートの実装が持つ失敗は、構築時か値への写像で吸収する
 
 ### Status
-Accepted（ステップ13で確定。`.adr/036-infallible-ports-absorb-failure-at-construction.md`。実装で確定した「値の口」は ADR-047）
+Accepted（ステップ13で確定。`.adr/1-infallible-ports-absorb-failure-at-construction.md`。実装で確定した「値の口」は ADR-047）
 
 ### Context
 
@@ -607,7 +607,7 @@ spec のポートのうち `TaskIdGenerator::generate(&self) -> TaskId` と `Clo
 ## ADR-037: プラットフォーム既定のパス区切り集合は `#[cfg]` ではなく `MAIN_SEPARATOR` から選ぶ
 
 ### Status
-Accepted（ステップ3で確定。`.adr/037-platform-separator-set-without-cfg.md`）
+Accepted（ステップ3で確定。`.adr/1-platform-separator-set-without-cfg.md`）
 
 ### Context
 
@@ -627,7 +627,7 @@ ADR-034 は「プラットフォーム既定の集合（`PLATFORM_SEPARATORS`）
 ## ADR-038: `.adr/` の起票は正本の既存フォーマットに合わせる
 
 ### Status
-Accepted（ステップ1で確定。`.adr/038-adr-filing-format.md` に昇格）
+Accepted（ステップ1で確定）
 
 ### Context
 
@@ -647,7 +647,7 @@ Accepted（ステップ1で確定。`.adr/038-adr-filing-format.md` に昇格）
 ## ADR-039: 走査系ポートメソッドの読み取りエラーは `ReadError` に統一する
 
 ### Status
-Accepted（ステップ7で確定。`.adr/039-read-error-shared-by-find-and-list.md`）
+Accepted（ステップ7で確定。`.adr/1-read-error-shared-by-find-and-list.md`）
 
 ### Context
 
@@ -670,7 +670,7 @@ spec/domains/task.md のポート表は `find` の失敗を `ReadError`（`Io` �
 ## ADR-040: 永続化からの再構築は「フィールド束の struct」を入力に取る
 
 ### Status
-Accepted（ステップ6で確定。`.adr/040-rehydrate-takes-field-bundle.md`）
+Accepted（ステップ6で確定。`.adr/1-rehydrate-takes-field-bundle.md`）
 
 ### Context
 
@@ -691,7 +691,7 @@ Accepted（ステップ6で確定。`.adr/040-rehydrate-takes-field-bundle.md`�
 ## ADR-041: 125行の対応表を埋めた結果に合わせてハーネスのフックとマクロの置き場を確定する
 
 ### Status
-Accepted（ステップ9で確定。`.adr/027-port-conformance-suite-and-harness-hooks.md` に反映済み）
+Accepted（ステップ9で確定。`.adr/1-port-conformance-suite-and-harness-hooks.md` に反映済み）
 
 ### Context
 
@@ -720,7 +720,7 @@ ADR-027 はフックの一覧を spec の前提条件から導くと定め、そ
 ## ADR-042: 値の書かれていない YAML キーは「省略」と同じに扱い、タグは定義の記法から外す
 
 ### Status
-Accepted（ステップ10・11で確定。`.adr/042-absent-yaml-value-is-omission.md`）
+Accepted（ステップ10・11で確定。`.adr/1-absent-yaml-value-is-omission.md`）
 
 ### Context
 
@@ -749,7 +749,7 @@ ADR-021 は「空ファイル・null ドキュメントは全キー省略とし�
 ## ADR-043: ストアのアダプターはホームのレイアウトを持たず、必要なパスをすべて注入される
 
 ### Status
-Accepted（ステップ10・11で確定。`.adr/043-store-adapters-receive-injected-paths.md` に昇格）
+Accepted（ステップ10・11で確定。`.adr/1-store-adapters-receive-injected-paths.md` に昇格）
 
 ### Context
 
@@ -769,7 +769,7 @@ Accepted（ステップ10・11で確定。`.adr/043-store-adapters-receive-injec
 ## ADR-044: タスクファイルのディレクトリ導出と命名形式の判定も `TaskFilePath` に置く
 
 ### Status
-Accepted（ステップ12で確定。`.adr/044-task-file-layout-in-domain.md`）
+Accepted（ステップ12で確定。`.adr/1-task-file-layout-in-domain.md`）
 
 ### Context
 
@@ -794,7 +794,7 @@ spec/domains/task.md は `TaskFilePath` を「レイアウトの単一の定義�
 ## ADR-045: タスクファイルの DTO はスナップショット表現で型引数化する
 
 ### Status
-Accepted（ステップ12で確定。`.adr/045-task-file-dto-generic-over-snapshot.md` に昇格）
+Accepted（ステップ12で確定。`.adr/1-task-file-dto-generic-over-snapshot.md` に昇格）
 
 ### Context
 
@@ -819,7 +819,7 @@ ADR-025 は「`save_degraded` は `snapshot` の生バイト列をそのまま�
 ## ADR-046: 適合ケースは「操作の後の観測」にスキップ可能なフックを使わない
 
 ### Status
-Accepted（ステップ12で確定。`.adr/046-no-skippable-hooks-for-post-operation-observation.md` に昇格）
+Accepted（ステップ12で確定。`.adr/1-no-skippable-hooks-for-post-operation-observation.md` に昇格）
 
 ### Context
 
@@ -839,7 +839,7 @@ Accepted（ステップ12で確定。`.adr/046-no-skippable-hooks-for-post-opera
 ## ADR-047: 無謬なポートが返す値の生成口は、ドメインの総関数か構築時に検証した値で用意する
 
 ### Status
-Accepted（ステップ13で確定。`.adr/036-infallible-ports-absorb-failure-at-construction.md` に反映済み）
+Accepted（ステップ13で確定。`.adr/1-infallible-ports-absorb-failure-at-construction.md` に反映済み）
 
 ### Context
 
@@ -872,7 +872,7 @@ ID形式は「アダプターに委ねる」と spec が明示している（形
 ## ADR-048: 入力文字列のドメイン型への変換は spec の処理フローの位置で行う
 
 ### Status
-Accepted（ステップ16で確定。`.adr/048-parse-inputs-at-spec-flow-position.md`）
+Accepted（ステップ16で確定。`.adr/1-parse-inputs-at-spec-flow-position.md`）
 
 ### Context
 
@@ -904,7 +904,7 @@ parse は**その値を最初に使う直前**に置く。`WorkflowRef::parse` �
 ## ADR-049: `--base` は `-` で始まる値も値として受け取る
 
 ### Status
-Accepted（ステップ17で確定。`.adr/049-base-flag-allows-hyphen-values.md` に昇格）
+Accepted（ステップ17で確定。`.adr/1-base-flag-allows-hyphen-values.md` に昇格）
 
 ### Context
 
@@ -928,7 +928,7 @@ spec/testcases/task/register-task.md の境界値は「`--base` の先頭が `-`
 ## ADR-050: スキーマ走査で見つかる設定・定義エラーの「位置」は論理位置で示す
 
 ### Status
-Accepted（ステップ19で確定。`.adr/050-schema-error-location-is-logical.md`）
+Accepted（ステップ19で確定。`.adr/1-schema-error-location-is-logical.md`）
 
 ### Context
 
@@ -960,7 +960,7 @@ spec/testcases/task/register-task.md の異常系は「config.yaml がパース�
 ## ADR-051: 表示名を決められないパス指定は、語幹が空白だけになるファイル名で再現する
 
 ### Status
-Accepted（ステップ19で確定。`.adr/051-undisplayable-name-fixture-is-whitespace-stem.md` に昇格）
+Accepted（ステップ19で確定。`.adr/1-undisplayable-name-fixture-is-whitespace-stem.md` に昇格）
 
 ### Context
 
@@ -980,7 +980,7 @@ spec の異常系は「`workflow:` キーがなく、ファイル名由来の表
 ## ADR-052: 受け入れテストの実バイナリ起動と別プロセスのフィクスチャは `tests/common` に集約する
 
 ### Status
-Accepted（ステップ18で確定。`.adr/052-acceptance-test-harness-in-tests-common.md` に昇格）
+Accepted（ステップ18で確定。`.adr/1-acceptance-test-harness-in-tests-common.md` に昇格）
 
 ### Context
 
@@ -1001,7 +1001,7 @@ Accepted（ステップ18で確定。`.adr/052-acceptance-test-harness-in-tests-
 ## ADR-053: ConfigStore / WorkflowStore の適合スイートは YAML ソースを受け取る
 
 ### Status
-Accepted（`.adr/053-conformance-yaml-source-hooks.md` に昇格）
+Accepted（`.adr/1-conformance-yaml-source-hooks.md` に昇格）
 
 ### Context
 
@@ -1021,7 +1021,7 @@ ADR-027 は、ハーネスのフックが「破損・状況の意味だけを受
 ## ADR-054: ワークフロー定義エラーの「どのファイルか」は自由形式のメッセージに載せる
 
 ### Status
-Accepted（`.adr/054-workflow-error-file-path-goes-into-free-form-messages.md` に昇格）
+Accepted（`.adr/1-workflow-error-file-path-goes-into-free-form-messages.md` に昇格）
 
 ### Context
 
@@ -1041,7 +1041,7 @@ ADR-050 はスキーマ違反を「対象ファイルの絶対パスと論理位
 ## ADR-055: 適合スイートの適用側は「スキップを許容するケースの集合」を環境の能力から宣言する
 
 ### Status
-Accepted（`.adr/055-conformance-skip-budget.md` に昇格）
+Accepted（`.adr/1-conformance-skip-budget.md` に昇格）
 
 ### Context
 
@@ -1064,7 +1064,7 @@ Accepted（`.adr/055-conformance-skip-budget.md` に昇格）
 ## ADR-060: 「待たずに返る」ロックのケースは別スレッドで試み、そのケースだけ `Lock: Sync` を要求する
 
 ### Status
-Accepted（`.adr/060-non-blocking-lock-case-observes-from-a-second-thread.md` に昇格）
+Accepted（`.adr/1-non-blocking-lock-case-observes-from-a-second-thread.md` に昇格）
 
 ### Context
 
@@ -1088,7 +1088,7 @@ TC-042 / TC-044 と違ってスキップ可能なフックにはしない。フ�
 ## ADR-061: 呼び出しの無い `pub` はレイアウトの構築時検証に対応するものだけ残す
 
 ### Status
-Accepted（`.adr/061-unused-public-accessors-are-kept-only-for-verified-layout.md` に昇格）
+Accepted（`.adr/1-unused-public-accessors-are-kept-only-for-verified-layout.md` に昇格）
 
 ### Context
 
@@ -1108,7 +1108,7 @@ Accepted（`.adr/061-unused-public-accessors-are-kept-only-for-verified-layout.m
 ## ADR-062: 受け入れテストの起動は既定でユーザーのホームも一時ディレクトリへ向ける
 
 ### Status
-Accepted（`.adr/062-acceptance-tests-detach-the-user-home.md` に昇格）
+Accepted（`.adr/1-acceptance-tests-detach-the-user-home.md` に昇格）
 
 ### Context
 
@@ -1133,7 +1133,7 @@ ADR-052 は実バイナリの起動を `tests/common` のビルダーに閉じ�
 ## ADR-063: 並行観測のケースは読み手の停止フラグを `Drop` に載せる
 
 ### Status
-Accepted（`.adr/063-concurrent-observation-stops-the-reader-on-unwind.md` に昇格）
+Accepted（`.adr/1-concurrent-observation-stops-the-reader-on-unwind.md` に昇格）
 
 ### Context
 
@@ -1160,7 +1160,7 @@ TC-port-task-repository-042 / 044 は、読み手のスレッドを `AtomicBool`
 ## ADR-064: 内容へ到達できないエントリは検索でも破損として扱い、作成では使用済みとみなす
 
 ### Status
-Accepted（`.adr/064-unreachable-entry-is-corrupt-in-find-and-create.md` に昇格）
+Accepted（`.adr/1-unreachable-entry-is-corrupt-in-find-and-create.md` に昇格）
 
 ### Context
 

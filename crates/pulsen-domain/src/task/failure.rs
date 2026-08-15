@@ -80,7 +80,7 @@ impl FailureNote {
     /// 遷移関数が失敗を記録するための総関数。空の説明は既定文言に畳む。
     ///
     /// 説明はポートが返す不透明な文字列で、非空を型で保証できない。空文字列のために
-    /// 遷移関数へ失敗経路を増やすより、既定文言を与えて記録を必ず残す(ADR-036)。
+    /// 遷移関数へ失敗経路を増やすより、既定文言を与えて記録を必ず残す。
     pub(super) fn record(kind: FailureKind, message: String, at: Timestamp) -> Self {
         let message = if message.is_empty() {
             Self::UNSPECIFIED_MESSAGE.to_owned()
