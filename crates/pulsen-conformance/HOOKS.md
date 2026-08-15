@@ -137,7 +137,7 @@ ConfigStore / WorkflowStore の入力系フック（`put_config` / `put_named` /
 | TC-port-workflow-store-014 | 到達不能ステータス | B | `put_named` |
 | TC-port-workflow-store-015 | `judge` のトークンに波括弧 | B | `put_named` |
 | TC-port-workflow-store-016 | 未定義のエージェント名を参照 | B | `put_named` |
-| TC-port-workflow-store-017 | YAML 構文エラー・重複キー | B | `put_named`（`resolved_from` が期待値と一致することと、`message` に前置されないことは `expected_path_for_name` があればそこも観測する。無ければその2つの主張だけを飛ばす。行の主張である `YamlSyntax` の分類と位置は常に観測する） |
+| TC-port-workflow-store-017 | YAML 構文エラー・重複キー | B | `put_named`（`resolved_from` が期待値と一致することは `expected_path_for_name` があればそこも観測する。無ければその主張1つだけを飛ばす。行の主張である `YamlSyntax` の分類と位置に加え、`message` に解決先を前置しないことと `resolved_from` が絶対パスであることは、ポートが返した `resolved_from` だけで書けるので常に観測する） |
 | TC-port-workflow-store-018 | トップレベルの許容外キー | B | `put_named` |
 | TC-port-workflow-store-019 | ステータス内のスキーマ外キー | B | `put_named` |
 | TC-port-workflow-store-020 | `wait` / `cleanup` にエージェント実行系キーを併記 | B | `put_named` |

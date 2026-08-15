@@ -285,7 +285,7 @@ EOF
   - 手順2: `at()` の doc から `WorkflowParseError::YamlSyntax` の記述が外れ、利用者が `Io` だけであることが読める。
   - 手順3: 構築側が `Parse { error, resolved_from }` の形になっており、タプル記法 `Parse(...)` が残っていない。
   - 手順4: `render.rs` の `Parse` アームが `resolved_from` を案内に出している。
-  - 手順5: `HOOKS.md` の `TC-port-workflow-store-017` の「組み立て手段」欄に `expected_path_for_name` が現れ、「そのフックがあれば `resolved_from` の一致と `message` に前置しないことも観測し、無ければその2主張だけを飛ばす。行の主張である `YamlSyntax` の分類と位置は常に観測する」と読める。`tc_port_workflow_store_017` は `harness.expected_path_for_name("wf")` をケース先頭で取り、**解決先に関する主張だけを `if let Some(..)` で条件化**している（ケース全体を `require!` で落とすと、フックを持たないハーネスでは `YamlSyntax` の適合確認まで一緒に消える）。
+  - 手順5: `HOOKS.md` の `TC-port-workflow-store-017` の「組み立て手段」欄に `expected_path_for_name` が現れ、「そのフックがあれば `resolved_from` が期待値と一致することも観測し、無ければその1主張だけを飛ばす。`YamlSyntax` の分類と位置、`message` に解決先を前置しないこと、`resolved_from` が絶対パスであることは常に観測する」と読める。`tc_port_workflow_store_017` は `harness.expected_path_for_name("wf")` をケース先頭で取り、**期待値との一致だけを `if let Some(..)` で条件化**している（ケース全体を `require!` で落とすと、フックを持たないハーネスでは `YamlSyntax` の適合確認まで一緒に消える）。前置しないことはポートが返した `resolved_from` と突き合わせれば書けるので、フックを要さず無条件に走る。
 - **確認ポイント:** 手順1 が1箇所であることが、確認項目4・5 の「1回だけ」を構造として保証する条件。`Io { message }` の前置を**外さない**こと — `Io` は解決先を構造として持たず、CLI 側も解決先を知らないため、前置以外に案内する場所が無い（変種ごとの個別判断ではなく「構造化フィールドで示せるなら前置しない」という規則の帰結）。`HOOKS.md` の件数（冒頭の196行・`## WorkflowStore（31行 …）`）が動いていないこと — 変わるのは組み立て手段のセル1つだけ。
 
 ### 7. C5 — 通知コマンドの3つの失敗原因が、区別できるメッセージとして出る
@@ -497,7 +497,7 @@ EOF
 
 - **`pulsen add` のエラー表示に依存した受け入れテスト:** `crates/pulsen/tests/cli_add_error.rs` の TC-022 は変更前 `["YAML 構文エラー", "位置:", "行"]` の3語しか見ておらず、前置を外しても壊れない。A2 ではそこへ解決先パスを4語目として足す（`assert_reports` は `stderr.contains` の部分一致なので、出現**回数**はここでは見ない — 回数は `cli/render.rs` のユニットテストが固定する）。`tc_task_register_task_021`（読み取り不可）は `definition.display()` を期待に含むが、これは `Io` の経路で前置が残る側なので影響しない。確認項目10 手順3 で見る。
 
-- **`WorkflowStore` の適合スイートとスキップ予算:** 変更前の `crates/pulsen-conformance/src/workflow_store.rs` は `message` の非空と `location` の存在しか主張しておらず、前置された絶対パスを見ている主張は1つも無い。`tc_port_workflow_store_017` に `resolved_from` の一致・絶対性と「`message` に前置しない」の主張を足すが、これらは `expected_path_for_name` の有無で条件化してケース内に閉じるため、ケースの結末は常に `Ran` のままでスキップは発生せず、`allowed_skips` の変更も要らない。確認項目10 手順5 で `SKIP` 集合が変わっていないことを見る。
+- **`WorkflowStore` の適合スイートとスキップ予算:** 変更前の `crates/pulsen-conformance/src/workflow_store.rs` は `message` の非空と `location` の存在しか主張しておらず、前置された絶対パスを見ている主張は1つも無い。`tc_port_workflow_store_017` に `resolved_from` の一致・絶対性と「`message` に前置しない」の主張を足すが、フックを要する一致だけを `if let Some(..)` で条件化してケース内に閉じ、`require!` は使わないため、ケースの結末は常に `Ran` のままでスキップは発生せず、`allowed_skips` の変更も要らない。確認項目10 手順5 で `SKIP` 集合が変わっていないことを見る。
 
 - **`UnknownKey` / `InvalidValue` の `location`:** 適合スイートが値の一致で固定している論理位置（`agents.claude.cmd` 等）は変えない。A2 が変えるのは「対象ファイルをどこが持つか」だけで、`.adr/1-schema-error-location-is-logical.md` の決定本体（`location` は論理位置に限る）は有効なまま。確認項目3 手順5 と確認項目5 の確認ポイントで見る。
 
