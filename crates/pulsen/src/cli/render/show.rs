@@ -373,6 +373,18 @@ mod tests {
 
     use super::*;
 
+    /// 失敗しうる5つの操作と、それぞれの表示。
+    ///
+    /// `failure_kind` の網羅 `match` と対になる表で、種別の取り違えは語の重複として現れる。
+    /// アームが増えたらこの表の長さも合わなくなる。
+    const FAILURE_KINDS: [(FailureKind, &str); 5] = [
+        (FailureKind::WorktreeCreate, "worktree の作成"),
+        (FailureKind::WorktreeRemove, "worktree の削除"),
+        (FailureKind::ArchiveMove, "アーカイブへの移動"),
+        (FailureKind::SpawnFail, "エージェントの起動"),
+        (FailureKind::JudgeFail, "判定の実行"),
+    ];
+
     fn absolute(segments: &[&str]) -> PathBuf {
         let mut path = if std::path::MAIN_SEPARATOR == '\\' {
             PathBuf::from("C:\\")
@@ -705,6 +717,46 @@ mod tests {
             text.contains("直近の失敗要因: エージェントの起動(2026-08-12T10:00:00Z): "),
             "{text}"
         );
+    }
+
+    #[test]
+    fn 通知済みの凍結は通知時刻を更新日時と同じ形式で示す() {
+        let text = task_detail(&TaskDetail {
+            execution: ExecutionState::Stopped {
+                reason: StopReason::Aborted,
+                notified_at: Some(
+                    Timestamp::parse_rfc3339("2026-08-12T10:00:00Z").expect("受理される"),
+                ),
+            },
+            ..detail()
+        });
+
+        assert!(text.contains("通知: 2026-08-12T10:00:00Z"), "{text}");
+        assert!(text.contains("更新日時: 2026-08-12T10:11:12Z"), "{text}");
+    }
+
+    #[test]
+    fn 直近の失敗要因は失敗した操作ごとに書き分けられる() {
+        for (kind, word) in FAILURE_KINDS {
+            let text = task_detail(&TaskDetail {
+                last_failure: Some(
+                    FailureNote::parse(
+                        kind,
+                        "権限がありません".to_owned(),
+                        Timestamp::parse_rfc3339("2026-08-12T10:00:00Z").expect("受理される"),
+                    )
+                    .expect("受理される"),
+                ),
+                ..detail()
+            });
+
+            assert!(
+                text.contains(&format!(
+                    "直近の失敗要因: {word}(2026-08-12T10:00:00Z): 権限がありません"
+                )),
+                "{kind:?}: {text}"
+            );
+        }
     }
 
     #[test]

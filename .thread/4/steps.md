@@ -224,5 +224,7 @@ CLI が「画面」。`crates/pulsen/src/cli/` の既存構成に乗る。
 ### 13. 記帳する — チェックリストの確定と spec 差分の提起
 
 - **対象:** Issue #4 のコメント、チェックリストのチェック
-- **変更内容:** 台帳の PASS 要件を満たしてテストが通った行にのみチェックを付ける。部分消化(`PAGE-ls-004` / `PAGE-show-008` / `TC-task-show-task-031`)は plan.md の表のとおり消化範囲と引き取り先を、実行しなかった手順書のケース(`monitoring.md` TC-05 / TC-06 / TC-09 手順4 / TC-10 / TC-15、`cleanup.md` TC-13〜15 / 17 / 23)は理由(#5 / #6 待ち)を残す。plan.md の「spec との差分として提起するもの」4点も同じコメントで提起する。
+- **変更内容:** 台帳の PASS 要件を満たしてテストが通った行にのみチェックを付ける。部分消化(`PAGE-ls-004` / `PAGE-show-008` / `TC-task-show-task-031`)は plan.md の表のとおり消化範囲と引き取り先を、実行しなかった手順書のケース(`monitoring.md` TC-05 / TC-06 / TC-09 手順4 / TC-10 / TC-15、`cleanup.md` TC-13〜15 / 17 / 23)は理由(#5 / #6 待ち)を残す。plan.md の「spec との差分として提起するもの」4点に加えて、レビューで確定した spec 追従も同じコメントで提起する。
+  - 出力DTO の持ち方が spec の表と離れる3件(`SnapshotInfo` / `RunDirPresence` / `execution`。`.thread/4/adr.md` の ADR-004 Consequences が正本)。
+  - `RunStore::attempt_exists` の述語(`spec/domains/execution.md` が定める「attempt ディレクトリ自体の存在確認」)に対応する台帳行が `spec/testcases/ports/run-store.md` に無い穴(`crates/pulsen-conformance/HOOKS.md` に注記済み)。
 - **理由:** 完了条件が「実装をレビューで確認できた行にのみチェックを付ける。見送る行は理由をコメントに残す」と定めている。

@@ -160,6 +160,10 @@ pub struct TaskDetail {
     /// スナップショット由来の項目。
     pub snapshot: SnapshotInfo,
     /// スナップショットの保存先(タスクファイル自身。ADR-015)。
+    ///
+    /// 在籍(`archived`)に従属して決まるが `archived` へは畳まない。`archived` は
+    /// 在籍行の正本で、畳むと在籍の表示が保存先フィールドの内部形を読むことになる
+    /// (`limits.retry` と同じ理由)。基準は `.thread/4/adr.md` の ADR-004。
     pub task_file_path: PathBuf,
     /// アーカイブ側で見つかったか。
     pub archived: bool,
