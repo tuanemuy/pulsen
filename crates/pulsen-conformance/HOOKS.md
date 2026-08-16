@@ -58,7 +58,7 @@
 
 この表は**スキップを許容する条件**の一覧である。フィクスチャの実行ファイルが無い場合（保持プロセス・テスト用エージェント・テスト用コマンド・デタッチ性のフィクスチャ）と、実行ファイルはあるが起動できない場合は、ここでいう「前提を作れない環境」には当たらない。前者は原因も回避方法も一意で、後者は理由が起動時のエラーにしか無く、いずれもスキップの宣言だけからは次の一手が定まらない。どちらもスキップにせずケースの失敗にする（`.adr/10-skip-judgement-stays-in-skip-budget.md` / `.adr/13-holder-capability-skip-vs-fail.md`）。
 
-条件のうち、適合行ではなく CLI 側の受け入れケースだけに効くものは表に行を持たない（表は TC-port-* の適合行の台帳であるため）。`git::tmpdir_outside_repository`（一時ディレクトリの置き場自体がリポジトリ配下だと「git リポジトリでないパス」を作れない。TC-task-register-task-036）と `lookup_under_regular_file_fails`（通常ファイルの配下の問い合わせが不在に写ると「有無を確認できない run ディレクトリ」を作れない。TC-task-show-task-022）の2つ。`git::tmpdir_outside_repository` は run 31698858400 で3 OS すべてで走った（`TC-task-register-task-036` は `SKIP` 行に現れない）。この run の後に足した `lookup_under_regular_file_fails` は、まだ測っていない（`未測定`）。
+条件のうち、適合行ではなく CLI 側の受け入れケースだけに効くものは表に行を持たない（表は TC-port-* の適合行の台帳であるため）。該当するのは `lookup_under_regular_file_fails`（通常ファイルの配下の問い合わせが不在に写ると「有無を確認できない run ディレクトリ」を作れない。TC-task-show-task-022）の1つで、対応する台帳行が無いのは `spec/testcases/ports/run-store.md` の「対象外」が `attempt_exists` の `Io` を代表ケース（`read_pid_file` の `Io`）に委ねて行にしていないためである。この述語は run 31698858400 の後に足したので、まだ測っていない（`未測定`）。一方、CLI 側の TC-task-register-task-036 が要する「一時ディレクトリの置き場がリポジトリ配下でない」は同じ条件を持つ適合行 TC-port-worktree-manager-003 が表にあるため、`lock::hold` と同じく成立しなかった条件はその行で読む（`SKIP` 行は `ハーネスが git::is_outside_repository を提供しないため…` と出る）。この条件は run 31698858400 で3 OS すべてで成立し、TC-task-register-task-036 は `SKIP` 行に現れない。
 
 ログの `SKIP` 行はスイートが書くため、文言もフック水準（`ハーネスが … を提供しない`）になる。適用先で実際に成立しなかった条件を「判定」列の括弧に持つ行は、その括弧で読む（この表では TC-port-exclusive-lock-002 / 003 / 004 / 005 と、実行単位を要する TC-port-process-controller の2行）。
 
