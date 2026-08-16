@@ -1,4 +1,4 @@
-//! tick のユースケーステストが共有するフィクスチャ。
+//! ユースケーステストが共有するフィクスチャ。
 //!
 //! ポートはすべてテストダブルに差し替える。実プロセス・実ファイルシステムは
 //! 使わない — ここで作るのは「実アダプターでは外から作れない状況」(入出力エラーの注入・
@@ -22,9 +22,10 @@ use pulsen_domain::definition::{
 };
 use pulsen_domain::task::{
     AttemptNumber, AttemptRef, BranchName, DegradedTask, DegradedTaskFields, ExecutionState,
-    KillIdent, Pid, ProcessIdent, ProcessStartTime, RepoPath, RetryCounters, RunDirPath, SaveError,
-    StartTimeRecord, StateRoot, StopReason, Target, Task, TaskEntry, TaskFields, TaskId,
-    TaskRecord, Timestamp, WorkspacePlanner, WorktreeRoot,
+    FailureKind, FailureNote, KillIdent, Pid, ProcessIdent, ProcessStartTime, RepoPath,
+    RetryCounters, RunDirPath, SaveError, StartTimeRecord, StateRoot, StopReason, Target, Task,
+    TaskEntry, TaskFields, TaskId, TaskLookup, TaskRecord, Timestamp, WorkspacePlanner,
+    WorktreeRoot,
 };
 
 /// 既定のタスクID。
@@ -315,6 +316,21 @@ impl TaskBuilder {
         self
     }
 
+    pub fn workflow(mut self, name: &str) -> Self {
+        self.fields.workflow_name = WorkflowName::parse(name.to_owned()).expect("受理される");
+        self
+    }
+
+    pub fn last_failure(mut self, note: FailureNote) -> Self {
+        self.fields.last_failure = Some(note);
+        self
+    }
+
+    pub fn updated_at(mut self, at: Timestamp) -> Self {
+        self.fields.updated_at = at;
+        self
+    }
+
     pub fn status(mut self, name: &str) -> Self {
         self.fields.task_status = status(name);
         self
@@ -392,11 +408,94 @@ impl TaskBuilder {
     pub fn entry(self) -> TaskEntry {
         TaskEntry::Record(TaskRecord::Intact(self.build()))
     }
+
+    /// 現役側で見つかった解決結果として返す。
+    pub fn found(self) -> TaskLookup {
+        TaskLookup::Active(TaskRecord::Intact(self.build()))
+    }
+
+    /// アーカイブ側で見つかった解決結果として返す。
+    pub fn found_archived(self) -> TaskLookup {
+        TaskLookup::Archived(TaskRecord::Intact(self.build()))
+    }
+}
+
+/// 失敗要因1件。
+pub fn failure(kind: FailureKind, message: &str, occurred: Timestamp) -> FailureNote {
+    FailureNote::parse(kind, message.to_owned(), occurred).expect("非空の説明である")
+}
+
+/// スナップショットだけが読めないタスクを組み立てる。
+pub struct DegradedBuilder {
+    fields: DegradedTaskFields,
+}
+
+pub fn degraded(raw: &str, snapshot_error: &str) -> DegradedBuilder {
+    DegradedBuilder {
+        fields: DegradedTaskFields {
+            id: task_id(raw),
+            workflow_name: workflow_name(),
+            target: target(),
+            task_status: status("queued"),
+            execution: ExecutionState::Pending,
+            workspace: None,
+            current_attempt: None,
+            counters: RetryCounters::initial(),
+            last_failure: None,
+            updated_at: at(NOW),
+            snapshot_error: snapshot_error.to_owned(),
+        },
+    }
+}
+
+impl DegradedBuilder {
+    pub fn status(mut self, name: &str) -> Self {
+        self.fields.task_status = status(name);
+        self
+    }
+
+    pub fn execution(mut self, execution: ExecutionState) -> Self {
+        self.fields.execution = execution;
+        self
+    }
+
+    /// タスクIDから導出したワークスペースを確定済みにする。
+    pub fn workspace(mut self) -> Self {
+        self.fields.workspace = Some(WorkspacePlanner::derive(&worktree_root(), &self.fields.id));
+        self
+    }
+
+    /// 現在 attempt を与える。
+    pub fn attempt(mut self, number: u32) -> Self {
+        let raw = self.fields.id.as_str().to_owned();
+        self.fields.current_attempt = Some(attempt(&raw, number));
+        self
+    }
+
+    /// カウンタを `(attempt_count, judge_attempt_count, spawn_fail_count)` で与える。
+    pub fn counters(mut self, attempt_count: u32, judge: u32, spawn_fail: u32) -> Self {
+        self.fields.counters = RetryCounters::rehydrate(attempt_count, judge, spawn_fail);
+        self
+    }
+
+    pub fn build(self) -> DegradedTask {
+        DegradedTask::rehydrate(self.fields)
+    }
+
+    /// 走査結果1件として返す。
+    pub fn entry(self) -> TaskEntry {
+        TaskEntry::Record(TaskRecord::SnapshotUnreadable(self.build()))
+    }
+
+    /// 現役側で見つかった解決結果として返す。
+    pub fn found(self) -> TaskLookup {
+        TaskLookup::Active(TaskRecord::SnapshotUnreadable(self.build()))
+    }
 }
 
 /// スナップショットだけが読めないタスクの走査結果。
 pub fn degraded_entry(raw: &str, snapshot_error: &str) -> TaskEntry {
-    degraded_entry_with(raw, snapshot_error, ExecutionState::Pending)
+    degraded(raw, snapshot_error).entry()
 }
 
 /// 実行状態を指定した、スナップショットだけが読めないタスクの走査結果。
@@ -405,21 +504,7 @@ pub fn degraded_entry_with(
     snapshot_error: &str,
     execution: ExecutionState,
 ) -> TaskEntry {
-    TaskEntry::Record(TaskRecord::SnapshotUnreadable(DegradedTask::rehydrate(
-        DegradedTaskFields {
-            id: task_id(raw),
-            workflow_name: workflow_name(),
-            target: target(),
-            task_status: status("queued"),
-            execution,
-            workspace: None,
-            current_attempt: None,
-            counters: RetryCounters::initial(),
-            last_failure: None,
-            updated_at: at(NOW),
-            snapshot_error: snapshot_error.to_owned(),
-        },
-    )))
+    degraded(raw, snapshot_error).execution(execution).entry()
 }
 
 /// ファイル全体が読めないタスクの走査結果。

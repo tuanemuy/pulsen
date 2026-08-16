@@ -264,16 +264,16 @@ TC-002〜005 は別プロセスにロックを保持させるフィクスチャ�
 | TC-port-worktree-manager-016 | base に指定したブランチが存在しない | B | `absent_branch_name` + `unused_workspace` + `worktree_present` + `branch_exists` |
 | （追加ケース・`.adr/2-worktree-identified-by-physical-path.md`） | 自タスクの登録は残るが実体が消えている（`prunable`） | B | `workspace_with_prunable_registration` + `branch_tip` + `worktree_marker`。復旧の2分岐（`prunable` からの `add -f` と、登録なし・ブランチのみからの `add`）を**どちらも**実行させるための追加。TC-013 を `prunable` 側に寄せると、`add`（`-f` なし）の分岐がどのケースからも実行されない |
 
-## RunStore（本スライス該当の21行 / A 10・B 9・C 2、+ 追加ケース1件）
+## RunStore（本スライス該当の23行 / A 11・B 10・C 2、+ 追加ケース1件）
 
-`attempt_exists` / `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の22行は、それらをポートにメソッドとして足すスライスで扱う。
+`list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の20行は、それらをポートにメソッドとして足すスライスで扱う。
 
 run ディレクトリのファイルの位置はケース側が契約の語彙（`RunDirPath` の導出関数）で指し、フックは対象の**種別**（`RunFileKind`）だけを受け取る。
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
 | TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-084） |
-| TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（`attempt_exists` は宣言しないため、内容の不変で観測する。ADR-084） |
+| TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（内容の不変で観測する。`attempt_exists` はディレクトリの有無しか答えず、既存の書き込みが保たれたことを主張できない。ADR-084） |
 | TC-port-run-store-003 | 準備済み・pid 未書き込み | A | `prepare_attempt` → `read_pid_file` |
 | TC-port-run-store-004 | attempt ディレクトリ自体が不在 | B | `expected_run_dir`（準備しないまま読む） |
 | TC-port-run-store-005 | `write_pid_file` 済み | A | `write_pid_file` → `read_pid_file` |
@@ -293,6 +293,8 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 | TC-port-run-store-019 | マーカー書き込み済み | A | `write_invalidation_marker` 2回 |
 | TC-port-run-store-020 | 準備済み・マーカー未書き込み | A | `marker_exists` |
 | TC-port-run-store-021 | マーカー書き込み済み | A | `write_invalidation_marker` → `marker_exists` |
+| TC-port-run-store-022 | 準備済み・ファイルを1つも書いていない | A | `prepare_attempt` → `read_pid_file`（`Ok(None)` であること）→ `attempt_exists` |
+| TC-port-run-store-023 | attempt ディレクトリ自体が不在 | B | `expected_run_dir`（準備しないまま問う） |
 | （追加ケース・write 系の置き場作成） | 準備を経ていない attempt ディレクトリが不在 | B | `expected_run_dir` → `write_starttime` / `write_pid_file` / `write_exit` → 各 read 系（`attempt_dir_present` があれば書き込み前の不在もそこで観測する）。台帳行がディレクトリ作成を主張するのはマーカー（TC-018）だけで、`prepare_attempt` の失敗後も起動を続ける経路が残る3つの write 系の同じ契約に乗っている |
 
 ## ProcessController（27行 / A 3・B 16・C 8）

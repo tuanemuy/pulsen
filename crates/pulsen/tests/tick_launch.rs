@@ -6,7 +6,7 @@
 //! 「launching を記録した後の失敗では状態を変更しない」は、状態を戻した実装でも
 //! 単体では緑になりうる。保存されたタスクの実行状態と attempt 番号で主張する。
 
-mod tick_fixture;
+mod usecase_fixture;
 
 use pulsen::application::tick::TickIssue;
 use pulsen_conformance::doubles::{
@@ -19,7 +19,7 @@ use pulsen_domain::task::{
     AttemptRef, ExecutionState, FailureKind, FailureNote, StopReason, WorkspacePlanner,
 };
 
-use tick_fixture::{
+use usecase_fixture::{
     AgentRunSpec, Harness, NOW, TASK, agent_run, at, attempt_number, branch, config_with, prompt,
     repo, repository, repository_failing_save, run_dir, skill, snapshot_with, task, task_id,
     worktree_root,

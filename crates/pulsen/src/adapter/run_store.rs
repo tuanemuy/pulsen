@@ -119,6 +119,18 @@ impl RunStore for FsRunStore {
         })
     }
 
+    fn attempt_exists(&self, run_dir: &RunDirPath) -> Result<bool, Io> {
+        let path = run_dir.as_path();
+        // 対象はファイルではなく attempt ディレクトリ自身。`marker_exists` と同じく
+        // `try_exists()` を使い、機構の失敗を「無い」に丸めない。
+        path.try_exists().map_err(|error| Io::Failed {
+            message: format!(
+                "{}: attempt ディレクトリの有無を確認できない: {error}",
+                path.display()
+            ),
+        })
+    }
+
     fn write_starttime(&self, run_dir: &RunDirPath, record: &StartTimeRecord) -> Result<(), Io> {
         let dto = StartTimeDto {
             ident: record.ident().as_str().to_owned(),

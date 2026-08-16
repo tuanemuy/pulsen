@@ -6,7 +6,9 @@
 pub mod add;
 pub mod args;
 pub mod exit;
+pub mod ls;
 pub mod render;
+pub mod show;
 pub mod tick;
 pub mod wire;
 pub mod wrapper;
@@ -51,6 +53,26 @@ pub fn run() -> ExitCode {
             }
             Err(error) => {
                 eprintln!("{}", render::tick_error(&error));
+                exit::FAILURE
+            }
+        },
+        Command::Ls(args) => match ls::execute(cli.home, args) {
+            Ok(list) => {
+                println!("{}", render::task_list(&list));
+                exit::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{}", render::ls_error(&error));
+                exit::FAILURE
+            }
+        },
+        Command::Show(args) => match show::execute(cli.home, args) {
+            Ok(detail) => {
+                println!("{}", render::task_detail(&detail));
+                exit::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{}", render::show_error(&error));
                 exit::FAILURE
             }
         },

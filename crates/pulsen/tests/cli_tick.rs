@@ -163,7 +163,7 @@ fn アーカイブ済みのタスクは走査対象に含まれない() {
     let home = probe_home(&PRINT_INPUT);
     let repo = Repo::with_commit();
     let id = register(&home, &repo);
-    home.move_task_to_archive(&id);
+    home.archive_task(&id);
 
     let run = run_tick(&home);
 

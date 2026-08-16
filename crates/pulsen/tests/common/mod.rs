@@ -11,7 +11,9 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use pulsen::adapter::process;
+use pulsen::adapter::task_repository::FsTaskRepository;
 use pulsen_conformance::{Restore, SkipBudget};
+use pulsen_domain::task::{StateRoot, TaskId, TaskRepository};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -243,12 +245,19 @@ impl Home {
         path
     }
 
-    /// タスクファイルをアーカイブへ直接移す(走査対象から外れることの観測に使う)。
-    pub fn move_task_to_archive(&self, id: &str) -> PathBuf {
-        fs::create_dir_all(self.archive_dir()).expect("アーカイブの置き場を作れる");
-        let to = self.archive_dir().join(format!("{id}.json"));
-        fs::rename(self.task_path(id), &to).expect("アーカイブへ移せる");
-        to
+    /// タスクをアーカイブへ移し、移動先のパスを返す。
+    ///
+    /// 本スライスの CLI にはタスクをアーカイブへ移す経路が無い(終端処理は Issue #6)。
+    /// 直接ファイルを置き換えるのではなくリポジトリの `archive` を呼ぶ — アーカイブ側の
+    /// ファイル名・配置・内容の形式をテストが自前で持つと、形式が変わったときに
+    /// テストだけが古い形式で緑になる。**#6 が終端処理を実装したら、この前提は
+    /// `pulsen tick` でアーカイブへ到達させる形に置き換えられる。**
+    pub fn archive_task(&self, id: &str) -> PathBuf {
+        let state_root = StateRoot::parse(self.state_dir()).expect("絶対パスになる");
+        FsTaskRepository::new(state_root)
+            .archive(&TaskId::parse(id.to_owned()).expect("受理される"))
+            .expect("アーカイブへ移せる");
+        self.archive_dir().join(format!("{id}.json"))
     }
 
     /// 排他ロックのパス。
@@ -586,6 +595,109 @@ impl Tick {
     }
 }
 
+/// `pulsen ls` の1回の実行。
+pub struct Ls {
+    home_flag: Option<OsString>,
+    status: Option<OsString>,
+    state: Option<OsString>,
+    all: bool,
+}
+
+/// `pulsen ls` を組み立てる。
+pub fn ls() -> Ls {
+    Ls {
+        home_flag: None,
+        status: None,
+        state: None,
+        all: false,
+    }
+}
+
+impl Ls {
+    /// `--home` フラグを付ける。
+    pub fn home(mut self, path: &Path) -> Self {
+        self.home_flag = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// `--status` を付ける。
+    pub fn status(mut self, value: impl AsRef<OsStr>) -> Self {
+        self.status = Some(value.as_ref().to_owned());
+        self
+    }
+
+    /// `--state` を付ける。
+    pub fn state(mut self, value: impl AsRef<OsStr>) -> Self {
+        self.state = Some(value.as_ref().to_owned());
+        self
+    }
+
+    /// `--all` を付ける。
+    pub fn all(mut self) -> Self {
+        self.all = true;
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        let sandbox = detached_home(&mut command);
+        if let Some(home) = self.home_flag {
+            command.arg("--home").arg(home);
+        }
+        command.arg("ls");
+        if let Some(status) = self.status {
+            command.arg("--status").arg(status);
+        }
+        if let Some(state) = self.state {
+            command.arg("--state").arg(state);
+        }
+        if self.all {
+            command.arg("--all");
+        }
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run::of(&output)
+    }
+}
+
+/// `pulsen show <task-id>` の1回の実行。
+pub struct Show {
+    home_flag: Option<OsString>,
+    task_id: OsString,
+}
+
+/// `pulsen show <task-id>` を組み立てる。
+pub fn show(task_id: impl AsRef<OsStr>) -> Show {
+    Show {
+        home_flag: None,
+        task_id: task_id.as_ref().to_owned(),
+    }
+}
+
+impl Show {
+    /// `--home` フラグを付ける。
+    pub fn home(mut self, path: &Path) -> Self {
+        self.home_flag = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        let sandbox = detached_home(&mut command);
+        if let Some(home) = self.home_flag {
+            command.arg("--home").arg(home);
+        }
+        command.arg("show").arg(self.task_id);
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run::of(&output)
+    }
+}
+
 /// テスト用エージェントを `probe` として定義したグローバル設定。
 ///
 /// 実在するエージェント(`claude` 等)に依存せずに起動経路を通すためのフィクスチャ。
@@ -815,6 +927,27 @@ pub struct Run {
 }
 
 impl Run {
+    /// 起動の出力から結果を組む。
+    fn of(output: &std::process::Output) -> Self {
+        Self {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+
+    /// 標準出力に現れるべき語がすべて出ていることを確かめる。
+    pub fn assert_shows(&self, expected: &[&str]) -> &Self {
+        for text in expected {
+            assert!(
+                self.stdout.contains(text),
+                "表示に `{text}` が含まれる: {}",
+                self.stdout
+            );
+        }
+        self
+    }
+
     /// 0 で終了したか。
     pub fn succeeded(&self) -> bool {
         self.code == Some(0)

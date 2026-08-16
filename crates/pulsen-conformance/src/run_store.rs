@@ -1,8 +1,8 @@
 //! RunStore の適合ケース(`spec/testcases/ports/run-store.md` のうち、本スライスで
-//! 使う9メソッド分の21行)と、write 系のディレクトリ作成の追加1件。
+//! 使う10メソッド分の23行)と、write 系のディレクトリ作成の追加1件。
 //!
-//! `attempt_exists` / `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の
-//! 22行は、それらをポートに足すスライスで扱う。
+//! `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の20行は、それらを
+//! ポートに足すスライスで扱う。
 //!
 //! 1行 = 1ケース関数 = 1 `#[test]`。run ディレクトリのファイル配置は契約の語彙
 //! (`RunDirPath` の導出関数)で指し、置き場の実体はハーネスのフックに委ねる。
@@ -373,6 +373,27 @@ pub fn tc_port_run_store_021_マーカー書き込み済みは真になる(
     CaseOutcome::Ran
 }
 
+pub fn tc_port_run_store_022_ファイルのない準備済みattemptは存在する(
+    harness: &impl RunStoreHarness,
+) -> CaseOutcome {
+    // ファイルを1つも書かない。read 系はいずれも `Ok(None)` を返す状態で、
+    // 「空ディレクトリ」と「ディレクトリごと不在」の区別がここでしか付かない。
+    let run_dir = prepare(harness, &task_id("task-a"));
+
+    assert_eq!(harness.store().read_pid_file(&run_dir), Ok(None));
+    assert_eq!(harness.store().attempt_exists(&run_dir), Ok(true));
+    CaseOutcome::Ran
+}
+
+pub fn tc_port_run_store_023_attemptディレクトリ不在は存在しない(
+    harness: &impl RunStoreHarness,
+) -> CaseOutcome {
+    let run_dir = require!(harness.expected_run_dir(&task_id("task-a"), AttemptNumber::FIRST));
+
+    assert_eq!(harness.store().attempt_exists(&run_dir), Ok(false));
+    CaseOutcome::Ran
+}
+
 /// 台帳行に対応しない追加ケース。
 ///
 /// 「write 系はいずれも書き込み先のディレクトリを必要に応じて作る」はポートの契約で、
@@ -587,6 +608,8 @@ macro_rules! run_store_conformance {
                 tc_port_run_store_019_マーカーの書き込みは冪等,
                 tc_port_run_store_020_マーカー未書き込みは偽になる,
                 tc_port_run_store_021_マーカー書き込み済みは真になる,
+                tc_port_run_store_022_ファイルのない準備済みattemptは存在する,
+                tc_port_run_store_023_attemptディレクトリ不在は存在しない,
                 write_準備を経ない書き込みも置き場ごと作って残る,
             ]
         );

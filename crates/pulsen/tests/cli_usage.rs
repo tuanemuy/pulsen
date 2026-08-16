@@ -50,13 +50,13 @@ fn helpの表示は0で終わり標準出力に出る() {
 }
 
 #[test]
-fn 利用者向けに提供するサブコマンドはタスク登録とtickだけである() {
+fn 利用者向けに提供するサブコマンドは登録と実行と状態の確認だけである() {
     let run = run_cli(&["--help"]);
     run.assert_succeeded();
 
     assert_eq!(
         subcommands(&run.stdout),
-        vec!["add", "tick", BUILTIN_SUBCOMMAND]
+        vec!["add", "tick", "ls", "show", BUILTIN_SUBCOMMAND]
     );
 }
 
@@ -84,15 +84,19 @@ fn 内部のラッパーはヘルプに現れないが実行はできる() {
 
 #[test]
 fn 機械可読な出力形式のフラグは提供されない() {
-    let run = run_cli(&["add", "--help"]);
-    run.assert_succeeded();
+    // 出力を持つコマンドすべてで確かめる — 提供しないことは1つのコマンドの不在では
+    // 主張しきれない。
+    for command in ["add", "tick", "ls", "show"] {
+        let run = run_cli(&[command, "--help"]);
+        run.assert_succeeded();
 
-    for flag in ["--json", "--format", "--output"] {
-        assert!(
-            !run.stdout.contains(flag),
-            "{flag} は提供しない: {}",
-            run.stdout
-        );
+        for flag in ["--json", "--format", "--output"] {
+            assert!(
+                !run.stdout.contains(flag),
+                "{command} は {flag} を提供しない: {}",
+                run.stdout
+            );
+        }
     }
 }
 

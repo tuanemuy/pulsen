@@ -4,7 +4,7 @@
 //! — `read_exit` の破損・`starttime_of` の機構失敗・`kill` の失敗・残存終了の3値・判定
 //! コマンドの timeout と起動不能・timeout の境界 — はここでしか主張できない。
 
-mod tick_fixture;
+mod usecase_fixture;
 
 use pulsen::application::tick::{RemnantsLeft, RunFailureCause, TickIssue, TickSummary};
 use pulsen_conformance::doubles::{
@@ -20,7 +20,7 @@ use pulsen_domain::task::{
     TaskEntry, TaskFields, TaskRecord, WorkspacePlanner,
 };
 
-use tick_fixture::{
+use usecase_fixture::{
     AgentRunSpec, Harness, NOW, TASK, after, agent_run, at, attempt_number, command,
     config_judging, kill_ident, observed_starttime, process_ident, repository,
     repository_failing_save, reused_starttime, run_dir, snapshot_with, status, target, task,

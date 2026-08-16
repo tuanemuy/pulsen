@@ -7,7 +7,7 @@
 //! `tick_notify` にある。ここで扱うのは走査レベルの性質 — 分岐の選択・1件の失敗が
 //! 残りを止めないこと・「1タスク1tick1ステップ」・書き込みを起こさない tick の冪等性。
 
-mod tick_fixture;
+mod usecase_fixture;
 
 use std::collections::BTreeMap;
 
@@ -20,7 +20,7 @@ use pulsen_domain::definition::{GlobalConfig, GlobalConfigInput, RawAgentDefinit
 use pulsen_domain::execution::{CommandCompletion, ExitCode, RunFileError};
 use pulsen_domain::task::{ExecutionState, ExecutionStateKind, ReadError, StopReason};
 
-use tick_fixture::{
+use usecase_fixture::{
     Harness, NOW, TASK, absolute, after, agent_name, at, command, config_notifying, corrupt_entry,
     degraded_entry, degraded_entry_with, observed_starttime, pid_content, repository, run_dir,
     starttime, task, task_id,

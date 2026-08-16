@@ -4,6 +4,8 @@
 //! (`crate::cli::wire`)が行う。
 
 pub mod home;
+pub mod list_tasks;
 pub mod register_task;
 pub mod run_wrapper;
+pub mod show_task;
 pub mod tick;
