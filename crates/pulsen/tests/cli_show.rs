@@ -17,6 +17,14 @@ const PRINT_INPUT: [&str; 3] = ["print", "{input}", ""];
 /// tick と同時に読み取る周回で回す tick の回数。
 const TICK_ROUNDS: usize = 3;
 
+/// 凍結に至る4つの経路と、それぞれの表示。タスクファイルの綴りと文言の対応を固定する。
+const STOP_REASONS: [(&str, &str); 4] = [
+    ("retry_limit_exceeded", "リトライ上限の超過"),
+    ("judge_limit_exceeded", "判定失敗の上限の超過"),
+    ("spawn_fail_limit_exceeded", "spawn 失敗の上限の超過"),
+    ("aborted", "利用者による中断"),
+];
+
 /// 有効な設定と `implement` ワークフローを備えたホーム。
 fn home_with_workflow() -> Home {
     let home = Home::new();
@@ -44,6 +52,15 @@ fn register(home: &Home, repo: &Repo) -> String {
 
 fn run_show(home: &Home, id: &str) -> Run {
     show(id).home(home.path()).run()
+}
+
+/// 表示から項目行を1つ取り出す(現在attempt配下の項目は字下げされる)。
+fn sub_line<'a>(stdout: &'a str, label: &str) -> &'a str {
+    let prefix = format!("{label}: ");
+    stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with(&prefix))
+        .unwrap_or_else(|| panic!("{label} の項目行がある: {stdout}"))
 }
 
 /// 起動 → 完走 → running への取り込みまで進める。
@@ -332,11 +349,7 @@ fn 読めないexitは注記して0で終わり対象のパスを重ねて出さ
     let run = run_show(&home, &id);
 
     run.assert_succeeded();
-    let line = run
-        .stdout
-        .lines()
-        .find(|line| line.trim_start().starts_with("exit: "))
-        .expect("exit の項目行がある");
+    let line = sub_line(&run.stdout, "exit");
     assert!(line.contains("読み取れません: "), "{line}");
     assert_eq!(
         line.matches(&exit_file.display().to_string()).count(),
@@ -367,4 +380,79 @@ fn runディレクトリが無い現在attemptは存在しないと注記して0
         &format!("{}(存在しません)", run_dir.display()),
         "同定情報: 未取得",
     ]);
+}
+
+#[test]
+fn runディレクトリの有無を確認できない現在attemptはパスを添えて注記し0で終わる() {
+    if !common::lookup_under_regular_file_fails() {
+        common::skipped(
+            "runディレクトリの有無を確認できない現在attemptはパスを添えて注記し0で終わる",
+            "lookup_under_regular_file_fails",
+        );
+        return;
+    }
+    let home = home_with_workflow();
+    let repo = Repo::with_commit();
+    let id = register(&home, &repo);
+    let run_dir = home.run_dir(&id, 1);
+    // タスクの run ディレクトリの置き場を通常ファイルにすると、その配下にある attempt の
+    // 有無は不在ではなく機構の失敗として返る。権限を操作せずに確認失敗を作れる。
+    fs::create_dir_all(home.runs_dir()).expect("run ディレクトリのルートを作れる");
+    fs::write(home.runs_dir().join(&id), b"").expect("通常ファイルを置ける");
+    home.patch_task(&id, |task| {
+        task["current_attempt"] = json!({
+            "number": 1,
+            "run_dir": run_dir,
+            "process": null,
+        });
+    });
+
+    let run = run_show(&home, &id);
+
+    run.assert_succeeded();
+    let line = sub_line(&run.stdout, "runディレクトリ");
+    assert!(line.contains("存在を確認できません: "), "{line}");
+    assert_eq!(
+        line.matches(&run_dir.display().to_string()).count(),
+        1,
+        "確認できなかった対象のパスがちょうど1度現れる: {line}"
+    );
+    assert!(
+        sub_line(&run.stdout, "exit").contains("読んでいません"),
+        "{}",
+        run.stdout
+    );
+}
+
+#[test]
+fn 凍結したタスクは要因と通知の有無と上限つきのカウンタで原因を辿れる() {
+    let home = home_with_workflow();
+    let repo = Repo::with_commit();
+    let id = register(&home, &repo);
+
+    for (reason, described) in STOP_REASONS {
+        home.patch_task(&id, |task| {
+            task["execution"] = json!({
+                "state": "stopped",
+                "reason": reason,
+                "notified_at": null,
+            });
+            task["last_failure"] = json!({
+                "kind": "spawn_fail",
+                "message": "エージェントを起動できません",
+                "at": "2026-08-12T10:00:00Z",
+            });
+            task["counters"]["spawn_fail_count"] = json!(4);
+        });
+
+        let run = run_show(&home, &id);
+
+        run.assert_succeeded().assert_shows(&[
+            "実行状態: stopped",
+            &format!("凍結要因: {described}"),
+            "通知: 未記録",
+            "直近の失敗要因: エージェントの起動(2026-08-12T10:00:00Z): エージェントを起動できません",
+            "spawn_fail_count: 4(上限 3)",
+        ]);
+    }
 }

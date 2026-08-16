@@ -55,34 +55,40 @@ pub struct Limits {
     pub spawn: u32,
 }
 
-/// attempt の run ディレクトリの有無。
+/// attempt の run ディレクトリの有無と、在るときの exit。
 ///
 /// 「不在」と「確認できなかった」を同じ値に潰さない — 前者は gc 済み・未作成という
 /// 正常な状態、後者は観測の失敗であり、次に取る行動が違う。
+///
+/// exit を入れ子で持つのは、それが run ディレクトリの有無から**決まる**従属軸だから
+/// である。読みに行けるのは在るときだけで、ディレクトリごと無ければ記録も無く、有無を
+/// 確かめられていなければ記録の不在も主張できない。並べて持つと、成立しない組み合わせ
+/// (不在なのに終了コードが在る、など)が型で書けてしまう。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunDirPresence {
-    /// 存在する。
-    Present,
-    /// 存在しない(未作成・gc 済み)。
+    /// 存在する。exit はその中身の読み取り結果。
+    Present {
+        /// exit ファイルの読み取り結果。
+        exit: ExitOutcome,
+    },
+    /// 存在しない(未作成・gc 済み)。exit ファイルも無い。
     Absent,
-    /// 存在確認自体が失敗した。
+    /// 存在確認自体が失敗した。exit は読みに行っていない。
     Unknown {
         /// 原因の説明。
         message: String,
     },
 }
 
-/// exit ファイルの読み取り結果。
+/// run ディレクトリが在るときの exit ファイルの読み取り結果。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExitInfo {
+pub enum ExitOutcome {
     /// 記録された終了コード。
     Recorded(ExitCode),
     /// 記録がない。
     Absent,
     /// 読み取りが失敗した。ポートの分類(内容の破損 / 機構の失敗)をそのまま渡す。
     Unreadable(RunFileError),
-    /// run ディレクトリの有無を確かめられず、読みに行っていない。
-    Unread,
 }
 
 /// 現在 attempt の実行メタデータ。
@@ -100,10 +106,8 @@ pub struct AttemptSummary {
     pub run_dir: RunDirPath,
     /// プロセス同定情報。起動確認前は `None`(「未取得」)。
     pub process: Option<ProcessIdent>,
-    /// exit の読み取り結果。
-    pub exit: ExitInfo,
-    /// run ディレクトリ自体の有無。
-    pub run_dir_exists: RunDirPresence,
+    /// run ディレクトリの有無と、在るときの exit。
+    pub run_dir_presence: RunDirPresence,
 }
 
 /// スナップショット由来の項目。
@@ -317,29 +321,28 @@ where
         let run_dir = attempt.run_dir();
 
         let presence = match self.runs.attempt_exists(run_dir) {
-            Ok(true) => RunDirPresence::Present,
+            Ok(true) => RunDirPresence::Present {
+                exit: self.exit(run_dir),
+            },
             Ok(false) => RunDirPresence::Absent,
             Err(Io::Failed { message }) => RunDirPresence::Unknown { message },
-        };
-        let exit = match presence {
-            RunDirPresence::Present => match self.runs.read_exit(run_dir) {
-                Ok(Some(code)) => ExitInfo::Recorded(code),
-                Ok(None) => ExitInfo::Absent,
-                Err(error) => ExitInfo::Unreadable(error),
-            },
-            // ディレクトリごと無いなら exit ファイルも無い。
-            RunDirPresence::Absent => ExitInfo::Absent,
-            // 有無を確かめられていない以上、記録の不在も主張できない。
-            RunDirPresence::Unknown { .. } => ExitInfo::Unread,
         };
 
         Some(AttemptSummary {
             number: attempt.number(),
             run_dir: run_dir.clone(),
             process: attempt.process().cloned(),
-            exit,
-            run_dir_exists: presence,
+            run_dir_presence: presence,
         })
+    }
+
+    /// exit を読む。run ディレクトリが在ると分かったときにだけ呼ぶ。
+    fn exit(&self, run_dir: &RunDirPath) -> ExitOutcome {
+        match self.runs.read_exit(run_dir) {
+            Ok(Some(code)) => ExitOutcome::Recorded(code),
+            Ok(None) => ExitOutcome::Absent,
+            Err(error) => ExitOutcome::Unreadable(error),
+        }
     }
 }
 

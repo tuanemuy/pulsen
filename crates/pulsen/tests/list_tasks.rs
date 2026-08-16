@@ -14,7 +14,7 @@ use pulsen_domain::task::{
     ExecutionState, ExecutionStateKind, ReadError, StateKindError, StopReason, TaskEntry,
 };
 
-use usecase_fixture::{corrupt_entry, degraded_entry_with, status, task};
+use usecase_fixture::{corrupt_entry, degraded, degraded_entry_with, status, task};
 
 /// 現役のみを与えるリポジトリ。
 fn active(entries: Vec<TaskEntry>) -> ScriptedTaskRepository {
@@ -453,4 +453,31 @@ fn 一覧の各行は表示に要る項目をすべて持つ() {
     assert_eq!(row.execution_state, ExecutionStateKind::Running);
     assert_eq!(row.attempt_count, 2);
     assert_eq!(row.updated_at, usecase_fixture::at(usecase_fixture::NOW));
+}
+
+/// スナップショットが読めなくても、行に出る列は通常の行と同じ値で埋まる
+/// (印が1つ立つだけ、という解釈を派生値まで含めて固定する)。
+#[test]
+fn スナップショットだけが読めない行も表示に要る項目をすべて持つ() {
+    let tasks = active(vec![
+        degraded("20260812t090000-aaaa0002", "statuses が空")
+            .status("done")
+            .execution(ExecutionState::Running)
+            .workspace()
+            .counters(2, 0, 0)
+            .entry(),
+    ]);
+
+    let list = list(&tasks, plain());
+    let row = &list.rows[0];
+
+    assert_eq!(row.task_id.as_str(), "20260812t090000-aaaa0002");
+    assert_eq!(row.workflow_name, usecase_fixture::workflow_name());
+    assert_eq!(row.repo, usecase_fixture::repo());
+    assert!(row.branch.is_some());
+    assert_eq!(row.task_status, status("done"));
+    assert_eq!(row.execution_state, ExecutionStateKind::Running);
+    assert_eq!(row.attempt_count, 2);
+    assert_eq!(row.updated_at, usecase_fixture::at(usecase_fixture::NOW));
+    assert!(row.snapshot_unreadable);
 }

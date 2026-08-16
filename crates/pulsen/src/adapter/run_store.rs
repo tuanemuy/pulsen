@@ -268,6 +268,29 @@ mod tests {
     }
 
     #[test]
+    fn 読み取り機構の失敗は対象のパスを添えて返る() {
+        let (_home, store) = store();
+        let run_dir = store
+            .prepare_attempt(&task_id(), AttemptNumber::FIRST)
+            .expect("用意できる");
+        // ファイルの位置にディレクトリを置くと、読み取りは不在ではなく機構の失敗になる。
+        std::fs::create_dir(run_dir.exit_file()).expect("置ける");
+
+        let error = store.read_exit(&run_dir).expect_err("機構の失敗として返る");
+
+        // 表示層はこのメッセージにパスが含まれることを前提に前置をやめている。
+        match error {
+            RunFileError::Io { message } => assert!(
+                message.contains(&run_dir.exit_file().display().to_string()),
+                "{message}"
+            ),
+            RunFileError::Corrupt { path, message } => {
+                panic!("機構の失敗は破損に写らない: {} / {message}", path.display())
+            }
+        }
+    }
+
+    #[test]
     fn 値制約を破る内容は破損として返る() {
         let (_home, store) = store();
         let run_dir = store

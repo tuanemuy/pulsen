@@ -17,8 +17,8 @@ use pulsen_domain::task::{
 };
 
 use crate::application::show_task::{
-    AttemptSummary, ExitInfo, Limits, RetryLimitInfo, RunDirPresence, ShowTaskError, SnapshotInfo,
-    StopInfo, TaskDetail,
+    AttemptSummary, ExitOutcome, Limits, RetryLimitInfo, RunDirPresence, ShowTaskError,
+    SnapshotInfo, StopInfo, TaskDetail,
 };
 use crate::cli::show::ShowError;
 
@@ -191,7 +191,7 @@ fn push_attempt(out: &mut String, attempt: Option<&AttemptSummary>) {
     push_sub(
         out,
         "runディレクトリ",
-        &run_dir(attempt.run_dir.as_path(), &attempt.run_dir_exists),
+        &run_dir(attempt.run_dir.as_path(), &attempt.run_dir_presence),
     );
     push_process(out, attempt.process.as_ref());
     // run ディレクトリ配下のパスはすべて `run_dir` から導出する(派生値を DTO に持たない)。
@@ -208,14 +208,16 @@ fn push_attempt(out: &mut String, attempt: Option<&AttemptSummary>) {
     push_sub(
         out,
         "exit",
-        &exit(&attempt.run_dir.exit_file(), &attempt.exit),
+        &exit(&attempt.run_dir.exit_file(), &attempt.run_dir_presence),
     );
 }
 
 /// run ディレクトリのパスと、その有無。
+///
+/// exit は同じ値から別の項目行として出すため、ここでは読まない。
 fn run_dir(path: &Path, presence: &RunDirPresence) -> String {
     match presence {
-        RunDirPresence::Present => path.display().to_string(),
+        RunDirPresence::Present { exit: _ } => path.display().to_string(),
         RunDirPresence::Absent => format!("{}(存在しません)", path.display()),
         // 機構の失敗のメッセージは対象のパスを既に含む。
         RunDirPresence::Unknown { message } => format!("存在を確認できません: {message}"),
@@ -223,12 +225,23 @@ fn run_dir(path: &Path, presence: &RunDirPresence) -> String {
 }
 
 /// exit ファイルのパスと、読み取った値。
-fn exit(path: &Path, exit: &ExitInfo) -> String {
-    match exit {
-        ExitInfo::Recorded(code) => format!("{}(値 {})", path.display(), code.get()),
-        ExitInfo::Absent => format!("{}(記録なし)", path.display()),
-        ExitInfo::Unreadable(error) => unreadable(error),
-        ExitInfo::Unread => format!(
+///
+/// run ディレクトリの有無が exit の読めなさを決めるため、同じ値から言葉を当てる。
+/// 「記録なし」と「読んでいません」を書き分ける — 後者は観測の失敗であって観測結果ではない。
+fn exit(path: &Path, presence: &RunDirPresence) -> String {
+    match presence {
+        RunDirPresence::Present {
+            exit: ExitOutcome::Recorded(code),
+        } => format!("{}(値 {})", path.display(), code.get()),
+        // ディレクトリごと無いなら exit ファイルも無い。記録の不在として同じ言葉を当てる。
+        RunDirPresence::Present {
+            exit: ExitOutcome::Absent,
+        }
+        | RunDirPresence::Absent => format!("{}(記録なし)", path.display()),
+        RunDirPresence::Present {
+            exit: ExitOutcome::Unreadable(error),
+        } => unreadable(error),
+        RunDirPresence::Unknown { message: _ } => format!(
             "{}(runディレクトリの有無を確認できないため読んでいません)",
             path.display()
         ),
@@ -401,8 +414,9 @@ mod tests {
             number: AttemptNumber::FIRST,
             run_dir: RunDirPath::derive(&state_root(), &task_id(), AttemptNumber::FIRST),
             process: None,
-            exit: ExitInfo::Absent,
-            run_dir_exists: RunDirPresence::Present,
+            run_dir_presence: RunDirPresence::Present {
+                exit: ExitOutcome::Absent,
+            },
         }
     }
 
@@ -493,7 +507,9 @@ mod tests {
                         Timestamp::parse_rfc3339("2026-08-12T09:15:30Z").expect("受理される"),
                     ),
                 )),
-                exit: ExitInfo::Recorded(ExitCode::new(0)),
+                run_dir_presence: RunDirPresence::Present {
+                    exit: ExitOutcome::Recorded(ExitCode::new(0)),
+                },
                 ..attempt()
             }),
             ..detail()
@@ -510,17 +526,16 @@ mod tests {
         let path = attempt().run_dir.as_path().display().to_string();
         let absent = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
-                run_dir_exists: RunDirPresence::Absent,
+                run_dir_presence: RunDirPresence::Absent,
                 ..attempt()
             }),
             ..detail()
         });
         let unknown = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
-                run_dir_exists: RunDirPresence::Unknown {
+                run_dir_presence: RunDirPresence::Unknown {
                     message: format!("{path}: 有無を確認できない: 権限がありません"),
                 },
-                exit: ExitInfo::Unread,
                 ..attempt()
             }),
             ..detail()
@@ -534,14 +549,46 @@ mod tests {
     }
 
     #[test]
+    fn runディレクトリの有無から決まるexitは記録なしと未読を書き分ける() {
+        let path = attempt().run_dir.as_path().display().to_string();
+        let absent = task_detail(&TaskDetail {
+            attempt: Some(AttemptSummary {
+                run_dir_presence: RunDirPresence::Absent,
+                ..attempt()
+            }),
+            ..detail()
+        });
+        let unknown = task_detail(&TaskDetail {
+            attempt: Some(AttemptSummary {
+                run_dir_presence: RunDirPresence::Unknown {
+                    message: format!("{path}: 有無を確認できない: 権限がありません"),
+                },
+                ..attempt()
+            }),
+            ..detail()
+        });
+
+        let exit_file = attempt().run_dir.exit_file().display().to_string();
+        assert_eq!(
+            sub_line(&absent, "exit"),
+            format!("    exit: {exit_file}(記録なし)"),
+            "{absent}"
+        );
+        assert_eq!(
+            sub_line(&unknown, "exit"),
+            format!("    exit: {exit_file}(runディレクトリの有無を確認できないため読んでいません)"),
+            "{unknown}"
+        );
+    }
+
+    #[test]
     fn 存在を確認できないrunディレクトリのパスは1度しか現れない() {
         let path = attempt().run_dir.as_path().display().to_string();
         let text = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
-                run_dir_exists: RunDirPresence::Unknown {
+                run_dir_presence: RunDirPresence::Unknown {
                     message: format!("{path}: 有無を確認できない: 権限がありません"),
                 },
-                exit: ExitInfo::Unread,
                 ..attempt()
             }),
             ..detail()
@@ -561,19 +608,23 @@ mod tests {
         let exit_file = attempt().run_dir.exit_file();
         let corrupt = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
-                exit: ExitInfo::Unreadable(RunFileError::Corrupt {
-                    path: exit_file.clone(),
-                    message: "内容を解釈できない".to_owned(),
-                }),
+                run_dir_presence: RunDirPresence::Present {
+                    exit: ExitOutcome::Unreadable(RunFileError::Corrupt {
+                        path: exit_file.clone(),
+                        message: "内容を解釈できない".to_owned(),
+                    }),
+                },
                 ..attempt()
             }),
             ..detail()
         });
         let io = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
-                exit: ExitInfo::Unreadable(RunFileError::Io {
-                    message: format!("{}: 読み取れない: 権限がありません", exit_file.display()),
-                }),
+                run_dir_presence: RunDirPresence::Present {
+                    exit: ExitOutcome::Unreadable(RunFileError::Io {
+                        message: format!("{}: 読み取れない: 権限がありません", exit_file.display()),
+                    }),
+                },
                 ..attempt()
             }),
             ..detail()
@@ -592,17 +643,17 @@ mod tests {
         let path = exit_file.display().to_string();
 
         for exit in [
-            ExitInfo::Unreadable(RunFileError::Corrupt {
+            ExitOutcome::Unreadable(RunFileError::Corrupt {
                 path: exit_file.clone(),
                 message: "内容を解釈できない".to_owned(),
             }),
-            ExitInfo::Unreadable(RunFileError::Io {
+            ExitOutcome::Unreadable(RunFileError::Io {
                 message: format!("{path}: 読み取れない: 権限がありません"),
             }),
         ] {
             let text = task_detail(&TaskDetail {
                 attempt: Some(AttemptSummary {
-                    exit: exit.clone(),
+                    run_dir_presence: RunDirPresence::Present { exit: exit.clone() },
                     ..attempt()
                 }),
                 ..detail()

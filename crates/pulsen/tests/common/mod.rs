@@ -5,9 +5,10 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
 use pulsen::adapter::process;
@@ -38,10 +39,18 @@ const PERMISSION_CASES: [&str; 4] = [
 ];
 
 /// 保持プロセスの合図が期限内に返らない環境でのみスキップされるケース。
-const LOCK_HOLDER_CASES: [&str; 1] = ["tc_task_register_task_017"];
+const LOCK_HOLDER_CASES: [&str; 3] = [
+    "tc_task_register_task_017",
+    "tc_task_list_tasks_025",
+    "tc_task_show_task_035",
+];
 
 /// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_task_register_task_036"];
+
+/// 通常ファイルの配下の問い合わせが不在に写る環境でのみスキップされるケース。
+const NOT_A_DIRECTORY_CASES: [&str; 1] =
+    ["runディレクトリの有無を確認できない現在attemptはパスを添えて注記し0で終わる"];
 
 /// この環境でスキップを許容するケース。
 static SKIPS: LazyLock<SkipBudget> = LazyLock::new(|| SkipBudget::new(allowed_skips()));
@@ -64,7 +73,35 @@ fn allowed_skips() -> Vec<&'static str> {
     if !git::tmpdir_outside_repository() {
         allowed.extend(OUTSIDE_REPOSITORY_CASES);
     }
+    if !lookup_under_regular_file_fails() {
+        allowed.extend(NOT_A_DIRECTORY_CASES);
+    }
     allowed
+}
+
+/// 通常ファイルの配下にあるパスの問い合わせが、不在ではなく失敗として返るか
+/// (1度だけ調べて使い回す)。
+///
+/// 「有無を確認できない run ディレクトリ」の前提は、この位置に通常ファイルを置いて作る。
+/// 問い合わせが `NotFound` に写る環境ではそのまま「存在しない」に落ちて前提が成立しない
+/// ため、スキップの宣言をこの述語で決める。判定は観測する側(アダプター)と同じ
+/// `metadata` の呼び出しで行う。
+pub fn lookup_under_regular_file_fails() -> bool {
+    static FAILS: OnceLock<bool> = OnceLock::new();
+
+    *FAILS.get_or_init(|| {
+        let Ok(dir) = tempfile::tempdir() else {
+            return false;
+        };
+        let file = dir.path().join("regular");
+        if fs::write(&file, b"").is_err() {
+            return false;
+        }
+        match fs::metadata(file.join("child")) {
+            Ok(_) => false,
+            Err(error) => error.kind() != io::ErrorKind::NotFound,
+        }
+    })
 }
 
 /// フィクスチャが前提を用意できなかったことを記録する。

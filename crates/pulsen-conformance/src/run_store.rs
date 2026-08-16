@@ -1,7 +1,7 @@
 //! RunStore の適合ケース(`spec/testcases/ports/run-store.md` のうち、本スライスで
 //! 使う10メソッド分の23行)と、write 系のディレクトリ作成の追加1件。
 //!
-//! `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の20行は、それらを
+//! `list_runs` / `delete_attempt` / `remove_task_dir_if_empty` の11行は、それらを
 //! ポートに足すスライスで扱う。
 //!
 //! 1行 = 1ケース関数 = 1 `#[test]`。run ディレクトリのファイル配置は契約の語彙

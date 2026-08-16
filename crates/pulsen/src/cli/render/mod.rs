@@ -135,6 +135,11 @@ fn display_width(text: &str) -> usize {
 }
 
 /// 1文字が消費する桁数。
+///
+/// 2桁と数えるのは `WIDE` の11範囲だけで、East Asian Wide であってもここに入らない文字は
+/// 1桁になる — BMP 内の記号・絵文字(`U+231A` など)、Hangul Jamo Extended-A(`U+A960`〜)、
+/// BMP 外の絵文字が該当する。ゼロ幅の結合文字・異体字セレクタも1桁、Ambiguous 幅も1桁へ倒す。
+/// 範囲表を手で育てず、この近似の限界を受け入れる理由は `.thread/4/adr.md` の ADR-001 に置く。
 fn char_width(character: char) -> usize {
     /// 2桁を占める符号位置の範囲。
     const WIDE: [(char, char); 11] = [
@@ -298,5 +303,46 @@ mod tests {
             "エラー: タスクIDを発行できません。\n  \
              原因: 乱数を取得できない: entropy source unavailable"
         );
+    }
+
+    /// 2桁と数える符号位置の範囲。実装の表を借りずに書き下す — 借りると範囲が消えても
+    /// 期待まで一緒に消えて緑のままになる。
+    const EXPECTED_WIDE: [(char, char); 11] = [
+        ('\u{1100}', '\u{115F}'),
+        ('\u{2E80}', '\u{303E}'),
+        ('\u{3041}', '\u{33FF}'),
+        ('\u{3400}', '\u{4DBF}'),
+        ('\u{4E00}', '\u{9FFF}'),
+        ('\u{A000}', '\u{A4CF}'),
+        ('\u{AC00}', '\u{D7A3}'),
+        ('\u{F900}', '\u{FAFF}'),
+        ('\u{FE30}', '\u{FE6F}'),
+        ('\u{FF00}', '\u{FF60}'),
+        ('\u{FFE0}', '\u{FFE6}'),
+    ];
+
+    fn expected_width(character: char) -> usize {
+        if EXPECTED_WIDE
+            .iter()
+            .any(|(first, last)| (*first..=*last).contains(&character))
+        {
+            2
+        } else {
+            1
+        }
+    }
+
+    #[test]
+    fn 全角として数える範囲は先頭と末尾が2桁で範囲の外は1桁になる() {
+        for (first, last) in EXPECTED_WIDE {
+            for code in [first as u32 - 1, first as u32, last as u32, last as u32 + 1] {
+                let boundary = char::from_u32(code).expect("境界は符号位置として妥当");
+                assert_eq!(
+                    char_width(boundary),
+                    expected_width(boundary),
+                    "U+{code:04X}"
+                );
+            }
+        }
     }
 }

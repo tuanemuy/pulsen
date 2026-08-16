@@ -11,8 +11,8 @@ mod usecase_fixture;
 use std::collections::BTreeMap;
 
 use pulsen::application::show_task::{
-    ExitInfo, RetryLimitInfo, RunDirPresence, ShowTask, ShowTaskError, ShowTaskInput, SnapshotInfo,
-    TaskDetail,
+    ExitOutcome, RetryLimitInfo, RunDirPresence, ShowTask, ShowTaskError, ShowTaskInput,
+    SnapshotInfo, TaskDetail,
 };
 use pulsen_conformance::doubles::{ScriptedRunStore, ScriptedTaskRepository};
 use pulsen_domain::definition::{GlobalConfig, GlobalConfigInput, StatusDefinition};
@@ -121,7 +121,12 @@ fn 起動記録済みで同定情報が未取り込みのattemptは未取得と�
         attempt.process.is_none(),
         "PID・kill同定子・starttime は一組で未取得になる"
     );
-    assert_eq!(attempt.run_dir_exists, RunDirPresence::Present);
+    assert_eq!(
+        attempt.run_dir_presence,
+        RunDirPresence::Present {
+            exit: ExitOutcome::Absent
+        }
+    );
 }
 
 #[test]
@@ -147,8 +152,10 @@ fn 記録されたexitは値として読み取られる() {
     let detail = show(&tasks, &runs, TASK);
 
     assert_eq!(
-        attempt_of(&detail).exit,
-        ExitInfo::Recorded(ExitCode::new(0))
+        attempt_of(&detail).run_dir_presence,
+        RunDirPresence::Present {
+            exit: ExitOutcome::Recorded(ExitCode::new(0))
+        }
     );
 }
 
@@ -194,7 +201,12 @@ fn エージェント実行の失敗で凍結したタスクは直前実行へ�
         detail.stop_info.expect("凍結している").reason,
         StopReason::RetryLimitExceeded
     );
-    assert_eq!(attempt.exit, ExitInfo::Recorded(ExitCode::new(1)));
+    assert_eq!(
+        attempt.run_dir_presence,
+        RunDirPresence::Present {
+            exit: ExitOutcome::Recorded(ExitCode::new(1))
+        }
+    );
     assert_eq!(attempt.run_dir, run_dir(TASK, 1));
     assert!(
         detail.last_failure.is_none(),
@@ -415,15 +427,11 @@ fn runディレクトリの存在確認の失敗は表示を止めない() {
     let attempt = attempt_of(&detail);
 
     assert_eq!(
-        attempt.run_dir_exists,
+        attempt.run_dir_presence,
         RunDirPresence::Unknown {
             message: "権限がありません".to_owned(),
-        }
-    );
-    assert_eq!(
-        attempt.exit,
-        ExitInfo::Unread,
-        "有無を確かめられていないので記録の不在も主張しない"
+        },
+        "有無を確かめられていない以上、exit は読みに行かず記録の不在も主張しない"
     );
     assert_eq!(
         attempt.run_dir,
@@ -451,8 +459,10 @@ fn exitの読み取りの失敗は表示を止めず原因の分類のまま渡�
         let detail = show(&tasks, &runs, TASK);
 
         assert_eq!(
-            attempt_of(&detail).exit,
-            ExitInfo::Unreadable(error.clone()),
+            attempt_of(&detail).run_dir_presence,
+            RunDirPresence::Present {
+                exit: ExitOutcome::Unreadable(error.clone())
+            },
             "文言の組み立ては表示層に委ねる: {error:?}"
         );
         assert_eq!(
@@ -571,10 +581,9 @@ fn 削除済みのrunディレクトリは存在しないこととして表示�
         let detail = show(&tasks, &runs, TASK);
         let attempt = attempt_of(&detail);
 
-        assert_eq!(attempt.run_dir_exists, RunDirPresence::Absent);
         assert_eq!(
-            attempt.exit,
-            ExitInfo::Absent,
+            attempt.run_dir_presence,
+            RunDirPresence::Absent,
             "ディレクトリごと無いので exit の記録も無い"
         );
         assert_eq!(attempt.run_dir, run_dir(TASK, 1), "パスは示され続ける");
@@ -604,7 +613,12 @@ fn 無効化マーカーだけが残るattemptもタスクファイルが指す�
 
     assert_eq!(attempt.number.get(), 2);
     assert_eq!(attempt.run_dir, run_dir(TASK, 2));
-    assert_eq!(attempt.exit, ExitInfo::Absent);
+    assert_eq!(
+        attempt.run_dir_presence,
+        RunDirPresence::Present {
+            exit: ExitOutcome::Absent
+        }
+    );
 }
 
 #[test]
