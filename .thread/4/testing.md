@@ -93,13 +93,14 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 
 ### 検証用のフィクスチャ準備
 
-`spec/manual-tests/monitoring.md` の「事前準備」を、上記の読み替えを織り込んだ形で書き下ろす。パスは手順書の記載どおりに保つ。
+`spec/manual-tests/monitoring.md` の「事前準備」を、上記の読み替えを織り込んだ形で書き下ろす。`PULSEN_HOME` 配下のパスは手順書の記載どおりに保ち、手順書が `$HOME` 直下に置くテスト領域だけを `$MT_BASE` 配下へ移す。
 
-1. 分離ホームとテスト領域を初期化し、設定を作成する（手順書 事前準備1 のまま）。
+1. 分離ホームとテスト領域を初期化し、設定を作成する（手順書 事前準備1 の `$HOME` 直下を `$MT_BASE` 配下に置き換えたもの）。`MT_BASE` には任意の一時ディレクトリを指定してよい（以降の手順はこのシェルの `MT_BASE` / `PULSEN_HOME` を使い続ける）。
 
     ```sh
-    export PULSEN_HOME=$HOME/pulsen-manual-test
-    rm -rf $PULSEN_HOME $HOME/pulsen-test-repo $HOME/pulsen-manual-test-empty /tmp/pulsen-notify.log
+    export MT_BASE=${MT_BASE:-$(mktemp -d)}
+    export PULSEN_HOME=$MT_BASE/pulsen-manual-test
+    rm -rf $PULSEN_HOME $MT_BASE/pulsen-test-repo $MT_BASE/pulsen-manual-test-empty /tmp/pulsen-notify.log
     mkdir -p $PULSEN_HOME/workflows
     cat > $PULSEN_HOME/config.yaml <<'EOF'
     agents:
@@ -160,19 +161,19 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 3. 対象リポジトリを作成する（identity はリポジトリローカルに設定する）。
 
     ```sh
-    git init $HOME/pulsen-test-repo
-    git -C $HOME/pulsen-test-repo config user.name pulsen-test
-    git -C $HOME/pulsen-test-repo config user.email pulsen-test@example.com
-    git -C $HOME/pulsen-test-repo commit --allow-empty -m init
+    git init $MT_BASE/pulsen-test-repo
+    git -C $MT_BASE/pulsen-test-repo config user.name pulsen-test
+    git -C $MT_BASE/pulsen-test-repo config user.email pulsen-test@example.com
+    git -C $MT_BASE/pulsen-test-repo commit --allow-empty -m init
     ```
 
 4. tick の影響を受けないタスク（wf-wait）を4つ登録し、IDを控える。
 
     ```sh
-    pulsen add --workflow wf-wait --repo $HOME/pulsen-test-repo   # → export TASK_A=<task-id>
-    pulsen add --workflow wf-wait --repo $HOME/pulsen-test-repo   # → export TASK_E=<task-id>
-    pulsen add --workflow wf-wait --repo $HOME/pulsen-test-repo   # → export TASK_F=<task-id>
-    pulsen add --workflow wf-wait --repo $HOME/pulsen-test-repo   # → export TASK_G=<task-id>
+    pulsen add --workflow wf-wait --repo $MT_BASE/pulsen-test-repo   # → export TASK_A=<task-id>
+    pulsen add --workflow wf-wait --repo $MT_BASE/pulsen-test-repo   # → export TASK_E=<task-id>
+    pulsen add --workflow wf-wait --repo $MT_BASE/pulsen-test-repo   # → export TASK_F=<task-id>
+    pulsen add --workflow wf-wait --repo $MT_BASE/pulsen-test-repo   # → export TASK_G=<task-id>
     ```
 
     手順書 事前準備5 の `pulsen abort $TASK_G` はここでは実行しない（#5）。`TASK_G` は手順7 の後で作る。
@@ -180,9 +181,9 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 5. 実行系のタスクを3つ登録し、IDを控える（手順書 事前準備6 のまま）。
 
     ```sh
-    pulsen add --workflow wf-sleep --repo $HOME/pulsen-test-repo  # → export TASK_B=<task-id>
-    pulsen add --workflow wf-fail  --repo $HOME/pulsen-test-repo  # → export TASK_C=<task-id>
-    pulsen add --workflow wf-echo  --repo $HOME/pulsen-test-repo  # → export TASK_D=<task-id>
+    pulsen add --workflow wf-sleep --repo $MT_BASE/pulsen-test-repo  # → export TASK_B=<task-id>
+    pulsen add --workflow wf-fail  --repo $MT_BASE/pulsen-test-repo  # → export TASK_C=<task-id>
+    pulsen add --workflow wf-echo  --repo $MT_BASE/pulsen-test-repo  # → export TASK_D=<task-id>
     ```
 
 6. tick を繰り返し実行し、各タスクを目標状態へ進める。
@@ -208,11 +209,11 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 8. `TASK_D` をアーカイブ済みにする（手順書 TC-34 手順2〜3 と同じ手動移動。`state/archive/` は書き込み系が必要になったときに作られる領域なので、先に作る）。
 
     ```sh
-    git -C $HOME/pulsen-test-repo worktree remove $PULSEN_HOME/worktrees/$TASK_D
+    git -C $MT_BASE/pulsen-test-repo worktree remove $PULSEN_HOME/worktrees/$TASK_D
     mkdir -p $PULSEN_HOME/state/archive
     mv $PULSEN_HOME/state/tasks/$TASK_D.json $PULSEN_HOME/state/archive/$TASK_D.json
     ls $PULSEN_HOME/state/archive/
-    git -C $HOME/pulsen-test-repo branch --list "pulsen/*"
+    git -C $MT_BASE/pulsen-test-repo branch --list "pulsen/*"
     ```
 
     worktree を先に消すのは、`show` の「worktree は削除済み」注記が**アーカイブ済みという事実から導かれる**（ファイルシステムには問わない。pages ※4 / ※9）ため、実体を残すと表示と実体が食い違うから。ブランチ `pulsen/<TASK_D>` は残す（成果の回収に使う）。
@@ -288,13 +289,13 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 - **目的:** `show` が1タスクの全属性・カウンタと適用上限・現在attemptの実行メタデータ・定義済みステータス一覧・スナップショット保存先を表示すること、未実行タスクでは workspace が「未作成」・attempt が「なし」になること、launching で同定情報が未取り込みなら「未取得」になることを確認する。
 - **手順:**
   1. `pulsen show $TASK_B; echo $?`
-  2. 基本属性（ワークフロー名 `wf-sleep` / リポジトリ `$HOME/pulsen-test-repo` / ベースブランチ / タスクステータス `work` / 実行状態 `running` / 更新日時）を確認する
+  2. 基本属性（ワークフロー名 `wf-sleep` / リポジトリ `$MT_BASE/pulsen-test-repo` / ベースブランチ / タスクステータス `work` / 実行状態 `running` / 更新日時）を確認する
   3. workspace_path（`$PULSEN_HOME/worktrees/$TASK_B`）とブランチ（`pulsen/$TASK_B`）を確認し、`ls "$PULSEN_HOME/worktrees/$TASK_B"` で実在を確認する
   4. 3つのカウンタと上限の併記を確認する
   5. 定義済みステータス一覧とスナップショット保存先パスを確認する
   6. 現在attemptの番号・runディレクトリ・PID・kill同定子・starttime を確認する
   7. `pulsen show $TASK_A; echo $?`（未実行タスク）→ workspace / attempt の表示と、`ls $PULSEN_HOME/state/runs/$TASK_A; echo $?`
-  8. `pulsen add --workflow wf-sleep --repo $HOME/pulsen-test-repo` → `export TASK_H=<task-id>` → `pulsen tick && pulsen show $TASK_H; echo $?`
+  8. `pulsen add --workflow wf-sleep --repo $MT_BASE/pulsen-test-repo` → `export TASK_H=<task-id>` → `pulsen tick && pulsen show $TASK_H; echo $?`
 - **期待結果:**
   - 手順1・2: 詳細が表示され exit code 0。
   - 手順4: attempt_count 0 / judge_attempt_count 0 / spawn_fail_count 0 が、それぞれリトライ上限 2・judge 上限 3・spawn 上限 3 を**併記して**表示される（カウンタは連続失敗の数なので、attempt 番号が 1 でも attempt_count は 0）。
@@ -314,7 +315,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   1. `pulsen show $TASK_D; echo $?`
   2. アーカイブ済みの注記・workspace の「削除済み」表示・ブランチ `pulsen/$TASK_D` を確認する
   3. タスクファイルパスの表示を確認する
-  4. `git -C $HOME/pulsen-test-repo branch --list "pulsen/*"`
+  4. `git -C $MT_BASE/pulsen-test-repo branch --list "pulsen/*"`
   5. `pulsen show $TASK_G` で workspace を確認する（TC-34 手順2）
   6. `mkdir -p $PULSEN_HOME/state/archive && mv $PULSEN_HOME/state/tasks/$TASK_G.json $PULSEN_HOME/state/archive/$TASK_G.json`
   7. `pulsen ls; echo $?` と `pulsen tick; echo $?`
@@ -355,7 +356,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   - 手順7: `stdout.log` / `stderr.log` は存在するが `exit` が無い（実行は未終了）。show の exit も「なし」として表示される。
   - 手順8: エラーなく追跡できる（`sleep` のため出力は増えない）。
   - 手順9: exit code **0**。attempt の runディレクトリが「存在しない」と明示され、他の項目は通常どおり表示される。
-- **確認ポイント:** show が指すのが**タスクファイルの現在attempt**であること（手順5 の `attempt-3`）— 過去の試行や、spawn 失敗で pending に戻った痕跡と取り違えない。手順9 で `exit` の項目が「存在しない」に吸収され、エラー扱い（非0）に昇格しないこと。手順9 は gc 相当の状態をディレクトリの直接削除で作っており、**gc がディレクトリを消す経路そのものは #6**（`TC-task-show-task-031` は部分消化）。
+- **確認ポイント:** show が指すのが**タスクファイルの現在attempt**であること（手順5 の `attempt-3`）— 過去の試行や、spawn 失敗で pending に戻った痕跡と取り違えない。手順9 で不在を述べるのは runディレクトリの項目（「存在しません」）であり、`exit` の項目は未終了時と同じ「記録なし」のままで、エラー扱い（非0）に昇格しないこと。手順9 は gc 相当の状態をディレクトリの直接削除で作っており、**gc がディレクトリを消す経路そのものは #6**（`TC-task-show-task-031` は部分消化）。
 
 ### 6. stopped タスクの原因調査 — 3経路の判別
 
@@ -385,9 +386,9 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
       EOF
       ```
 
-  6. `pulsen add --workflow wf-judge --repo $HOME/pulsen-test-repo` → `export TASK_J=<task-id>` → `for i in $(seq 1 10); do pulsen tick; sleep 2; done` → `pulsen ls --state stopped`
+  6. `pulsen add --workflow wf-judge --repo $MT_BASE/pulsen-test-repo` → `export TASK_J=<task-id>` → `for i in $(seq 1 10); do pulsen tick; sleep 2; done` → `pulsen ls --state stopped`
   7. `pulsen show $TASK_J; echo $?` → カウンタと上限、スナップショット保存先を確認 → 保存先のタスクファイルで `work` の `judge` 定義を確認する → 現在attemptの `exit` を確認する
-  8. 連続spawn失敗の経路（TC-17）: `pulsen add --workflow wf-echo --repo $HOME/pulsen-test-repo` → `export TASK_I=<task-id>`
+  8. 連続spawn失敗の経路（TC-17）: `pulsen add --workflow wf-echo --repo $MT_BASE/pulsen-test-repo` → `export TASK_I=<task-id>`
   9. `cp $PULSEN_HOME/config.yaml $PULSEN_HOME/config.yaml.bak` → `config.yaml` の `sh` の `cmd` を `["sh", "-c", "{input}", "{bogus}"]` に書き換える
   10. `pulsen tick` を `TASK_I` が stopped になるまで繰り返す（4回程度。`pulsen ls --state stopped` で確認）
   11. `pulsen show $TASK_I; echo $?` → `ls $PULSEN_HOME/state/runs/$TASK_I; echo $?` → `grep "$TASK_I" /tmp/pulsen-notify.log`
@@ -428,7 +429,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   12. `cp $PULSEN_HOME/backup-taskF.json $PULSEN_HOME/state/tasks/$TASK_F.json` → `pulsen show $TASK_F; echo $?`
 - **期待結果:**
   - 手順1・2: 人間可読な JSON が読め、show は変わらず 0。
-  - 手順5: exit code **0**。`TASK_E` の**ファイルパス**と読み取り不能である旨が報告され、残り（`TASK_A` / `TASK_B` / `TASK_C` / `TASK_F` / `TASK_G` と TC-16・TC-17 で追加した `TASK_H` / `TASK_I` / `TASK_J`）は通常どおり表示される。
+  - 手順5: exit code **0**。`TASK_E` の**ファイルパス**と読み取り不能である旨が報告され、残り（`TASK_A` / `TASK_B` / `TASK_C` / `TASK_F` と TC-16・TC-17 で追加した `TASK_H` / `TASK_I` / `TASK_J`）は通常どおり表示される。`TASK_G` は確認項目4 手順6 でアーカイブ側へ移してあるので、`--all` なしのこの一覧には現れない。
   - 手順6: パースエラーの内容と対象ファイルパス（`state/tasks/<TASK_E>.json`）が表示され、**非0**で終わる。書き込みは起きない。
   - 手順7: 修復後は show が 0 で詳細を表示し、`ls` から読み取り不能の報告が消えて `TASK_E` が通常の行に戻る。
   - 手順9: `task_status` と `execution` は読めるまま、`snapshot.initial` が空文字になっている（`crates/pulsen/src/adapter/task_file.rs` は `initial` の値制約の破れをスナップショット側の破損として扱い、タスク側フィールドは読める `SnapshotUnreadable` に分類する）。
@@ -465,8 +466,8 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   8. 型としての担保を grep で補う:
 
       ```sh
-      grep -rn 'lock()' crates/pulsen/src/cli/
-      grep -rn 'exists\|try_exists' crates/pulsen/src/application/show_task.rs crates/pulsen/src/cli/render/show.rs
+      grep -rn 'runtime\.lock()' crates/pulsen/src/cli/
+      grep -rnE '\.(exists|try_exists)\(\)' crates/pulsen/src/application/show_task.rs crates/pulsen/src/cli/render/show.rs
       ```
 
 - **期待結果:**
@@ -475,7 +476,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   - 手順5: tick はロック競合として何もせずスキップする（exit code 0）。`ls` / `show` との扱いの差がここで見える。
   - 手順6: 手順4 と同じ結果。
   - 手順7: `ls` が毎回 0 で、行が欠けたり途中まで書かれた JSON に由来する破損報告が出たりしない（タスクファイルはアトミック置換で更新される）。
-  - 手順8: 1つ目のヒットが `cli/wire.rs` の定義と `cli/tick.rs` の呼び出しだけで、`cli/ls.rs` / `cli/show.rs` に現れないこと。2つ目のヒットが0件であること。
+  - 手順8: 1つ目のヒットが4件で、呼び出しは `cli/add.rs` と `cli/tick.rs` の2件だけ（`add` は書き込み系なのでロックを取る）、残る `cli/ls.rs` / `cli/show.rs` の2件は「`runtime.lock()` を渡さない」と明言したドキュメントコメントであり、両ファイルに呼び出しは無いこと。2つ目のヒットが0件であること（`exists` を部分文字列で引くと `attempt_exists` の呼び出しに当たるため、`.exists()` / `.try_exists()` の形で引く）。
 - **確認ポイント:** 手順4 で「ロックを取れなかったのでスキップした」旨のメッセージが**出ないこと** — 出るならロックを取りに行っている。手順1 の worktree 削除後も表示が変わらないこと（`Path::exists()` を呼んでいない証拠。pages ※9）。
 
 ## エッジケース・異常系
@@ -525,7 +526,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   4. `printf 'agents: [\n' > $PULSEN_HOME/config.yaml`
   5. `pulsen ls; echo $?`
   6. 復元（必ず実行する）: `mv $PULSEN_HOME/config.yaml.bak $PULSEN_HOME/config.yaml` → `pulsen ls; echo $?`
-- **期待結果:** 手順2・3 は非0で、グローバルホームが未初期化である旨・解決後のホームパス（`$HOME/pulsen-manual-test`）・作成が必要であることが表示される。手順5 も非0でパースエラーの位置が示される。手順6 で通常の一覧に戻り 0。
+- **期待結果:** 手順2・3 は非0で、グローバルホームが未初期化である旨・解決後のホームパス（`$MT_BASE/pulsen-manual-test`）・作成が必要であることが表示される。手順5 も非0でパースエラーの位置が示される。手順6 で通常の一覧に戻り 0。
 - **確認ポイント:** ホームの解決自体は成功しており、拒否されるのが config の読み込みであること（表示されるパスが `--home` / `PULSEN_HOME` / 既定の解決順の結果になっていること）。拒否の過程でタスクファイルに触れないこと。
 
 ### 4. 状態ディレクトリの走査不能（権限エラー）
@@ -553,9 +554,9 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   2. `printf 'abc' > $PULSEN_HOME/state/runs/$TASK_C/attempt-3/exit`
   3. `pulsen show $TASK_C; echo $?`
   4. `cp /tmp/pulsen-exit.bak $PULSEN_HOME/state/runs/$TASK_C/attempt-3/exit`（復元）
-  5. `chmod 000 $PULSEN_HOME/state/runs/$TASK_C/attempt-3` → `pulsen show $TASK_C; echo $?`
-  6. `chmod 755 $PULSEN_HOME/state/runs/$TASK_C/attempt-3`（復元）→ `pulsen show $TASK_C; echo $?`
-- **期待結果:** 手順3 は exit code **0** で、exit の項目にのみ読めない旨の注記が付き、他の項目（カウンタ・凍結要因・パス）は通常どおり表示される。手順5 も exit code 0 で、runディレクトリの存在確認が失敗した旨の注記付きで表示が続く。手順6 で exit の値 1 を含む通常表示に戻る。
+  5. `chmod 000 $PULSEN_HOME/state/runs/$TASK_C` → `pulsen show $TASK_C; echo $?`（権限を落とすのは attempt-3 の**親**。attempt-3 自身を 000 にしても、その存在確認（stat）は親ディレクトリの権限で成功してしまい、`attempt_exists` の失敗を作れない）
+  6. `chmod 755 $PULSEN_HOME/state/runs/$TASK_C`（復元）→ `pulsen show $TASK_C; echo $?`
+- **期待結果:** 手順3 は exit code **0** で、exit の項目にのみ読めない旨の注記が付き、他の項目（カウンタ・凍結要因・パス）は通常どおり表示される。手順5 も exit code 0 で、runディレクトリの項目に存在を確認できない旨、exit の項目に runディレクトリの有無を確認できないため読んでいない旨が付いて表示が続く。手順6 で exit の値 1 を含む通常表示に戻る。
 - **確認ポイント:** 手順3 の注記が「exit が無い（未終了）」と**区別できる**こと — 同じ表示なら、実行中と読み取り失敗が見分けられない。手順5 の注記が「runディレクトリが存在しない」と区別できること（不在と確認失敗は別の結末）。読めなかったファイルを書き換え・削除しないこと。
 
 ### 6. タスク0件・`state/` 不在
@@ -565,13 +566,13 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 - **前提:** エッジケース5 の直後。別のホームを使うのでここまでの状態には影響しない。
 - **目的:** 一覧の「空」と単一照会の「不在」が**別の扱い**であること、`state/` が存在しなくてもエラーにしないことを確認する。
 - **手順:**
-  1. `mkdir -p $HOME/pulsen-manual-test-empty && printf 'agents: {}\n' > $HOME/pulsen-manual-test-empty/config.yaml`
-  2. `PULSEN_HOME=$HOME/pulsen-manual-test-empty pulsen ls; echo $?`
-  3. `PULSEN_HOME=$HOME/pulsen-manual-test-empty pulsen ls --all; echo $?`
-  4. `PULSEN_HOME=$HOME/pulsen-manual-test-empty pulsen show $TASK_A; echo $?`
+  1. `mkdir -p $MT_BASE/pulsen-manual-test-empty && printf 'agents: {}\n' > $MT_BASE/pulsen-manual-test-empty/config.yaml`
+  2. `PULSEN_HOME=$MT_BASE/pulsen-manual-test-empty pulsen ls; echo $?`
+  3. `PULSEN_HOME=$MT_BASE/pulsen-manual-test-empty pulsen ls --all; echo $?`
+  4. `PULSEN_HOME=$MT_BASE/pulsen-manual-test-empty pulsen show $TASK_A; echo $?`
   5. `pulsen ls --status no-such-status; echo $?`（元のホーム。該当0件）
 - **期待結果:** 手順2・3 は空である旨を表示して exit code 0（`state/` も `state/archive/` も不在だが失敗しない）。手順4 は**非0**（タスク不在）。手順5 は 0 で空表示。
-- **確認ポイント:** 手順2 と手順4 の差 — 一覧は「0件」という答えを返せるが、単一照会は答えを返せないので拒否する。読み取りが `state/` を**作らない**こと（手順2・3 の後に `ls $HOME/pulsen-manual-test-empty` で `state` が生えていないこと）。
+- **確認ポイント:** 手順2 と手順4 の差 — 一覧は「0件」という答えを返せるが、単一照会は答えを返せないので拒否する。読み取りが `state/` を**作らない**こと（手順2・3 の後に `ls $MT_BASE/pulsen-manual-test-empty` で `state` が生えていないこと）。
 
 ## 既存機能への影響確認
 
@@ -583,15 +584,15 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
 
 - **時刻の表示形式:** `ls` の更新日時、`show` の更新日時・`notified_at`・starttime の wall が、タスクファイルの直列化（RFC3339 UTC）と同じ形式で読めること。形式が揃っていないと、通知の at-least-once をタスクファイルと突き合わせて検証できない。
 
-- **実運用ホームの非汚染:** 全項目の実行後に `ls -a "$HOME/.pulsen" 2>/dev/null` が実行前と変わらないこと。本書が触るのは `$HOME/pulsen-manual-test`（`PULSEN_HOME`）・`$HOME/pulsen-manual-test-empty`・`$HOME/pulsen-test-repo`・`/tmp/pulsen-notify.log`・`/tmp/pulsen-exit.bak`・`/tmp/pulsen-taskG.json` / `/tmp/pulsen-taskF.json` に限られる。
+- **実運用ホームの非汚染:** 全項目の実行後に `ls -a "$HOME/.pulsen" 2>/dev/null` が実行前と変わらないこと。本書が触るのは `$MT_BASE/pulsen-manual-test`（`PULSEN_HOME`）・`$MT_BASE/pulsen-manual-test-empty`・`$MT_BASE/pulsen-test-repo`・`/tmp/pulsen-notify.log`・`/tmp/pulsen-exit.bak`・`/tmp/pulsen-taskG.json` / `/tmp/pulsen-taskF.json` に限られる。
 
 - **後片付け:**
 
     ```sh
     ps -ef | grep -E 'pulsen wrapper|sleep 3000' | grep -v grep   # 残留プロセスが無いこと
     pkill -f 'sleep 3000'                                        # 残っていれば(TASK_B / TASK_H)
-    git -C $HOME/pulsen-test-repo worktree list
-    rm -rf $PULSEN_HOME $HOME/pulsen-manual-test-empty $HOME/pulsen-test-repo \
+    git -C $MT_BASE/pulsen-test-repo worktree list
+    rm -rf $PULSEN_HOME $MT_BASE/pulsen-manual-test-empty $MT_BASE/pulsen-test-repo \
            /tmp/pulsen-notify.log /tmp/pulsen-exit.bak
     ```
 
