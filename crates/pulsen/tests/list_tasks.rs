@@ -148,7 +148,13 @@ fn 既定ではアーカイブ済みのタスクは一覧に現れない() {
 fn 全件指定ではアーカイブ済みのタスクも印つきで現れる() {
     let tasks = both(
         vec![task("20260812t090000-aaaa0001").entry()],
-        vec![task("20260812t090000-aaaa0002").running(1).entry()],
+        vec![
+            task("20260812t090000-aaaa0002").running(1).entry(),
+            degraded("20260812t090000-aaaa0003", "statuses が空")
+                .execution(ExecutionState::Running)
+                .workspace()
+                .entry(),
+        ],
     );
 
     let list = list(
@@ -161,13 +167,25 @@ fn 全件指定ではアーカイブ済みのタスクも印つきで現れる()
 
     assert_eq!(
         ids(&list),
-        vec!["20260812t090000-aaaa0001", "20260812t090000-aaaa0002"]
+        vec![
+            "20260812t090000-aaaa0001",
+            "20260812t090000-aaaa0002",
+            "20260812t090000-aaaa0003"
+        ]
     );
     assert!(!list.rows[0].archived);
     assert!(list.rows[1].archived);
     assert!(
         list.rows[1].branch.is_some(),
         "成果の回収に使うブランチはアーカイブ済みでも載る"
+    );
+    assert!(
+        list.rows[2].archived,
+        "アーカイブ済みの印はスナップショットが読めない行にも立つ"
+    );
+    assert!(
+        list.rows[2].snapshot_unreadable,
+        "2つの印は同じ行で両立する"
     );
 }
 

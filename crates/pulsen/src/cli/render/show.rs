@@ -13,12 +13,13 @@ use std::path::Path;
 use pulsen_domain::definition::StatusName;
 use pulsen_domain::execution::RunFileError;
 use pulsen_domain::task::{
-    FailureKind, FailureNote, ProcessIdent, ReadError, StopReason, Workspace,
+    ExecutionState, FailureKind, FailureNote, ProcessIdent, ReadError, StopReason, Timestamp,
+    Workspace,
 };
 
 use crate::application::show_task::{
     AttemptSummary, ExitOutcome, Limits, RetryLimitInfo, RunDirPresence, ShowTaskError,
-    SnapshotInfo, StopInfo, TaskDetail,
+    SnapshotInfo, TaskDetail,
 };
 use crate::cli::show::ShowError;
 
@@ -43,13 +44,10 @@ pub fn task_detail(detail: &TaskDetail) -> String {
         detail.target.base_branch().as_str(),
     );
     push_field(&mut out, "タスクステータス", detail.task_status.as_str());
-    push_field(&mut out, "実行状態", detail.execution_state.as_str());
+    push_field(&mut out, "実行状態", detail.execution.kind().as_str());
     push_field(&mut out, "在籍", &residence(detail.archived));
 
-    if let Some(stop) = detail.stop_info {
-        push_field(&mut out, "凍結要因", stop_reason(stop.reason));
-        push_field(&mut out, "通知", &notified(&stop));
-    }
+    push_stop(&mut out, &detail.execution);
 
     // workspace のパスは表示するだけで、実体の有無は問わない(pages ※9)。
     // アーカイブ済みの「削除済み」も、アーカイブ済みであるという事実から導く(※4)。
@@ -281,6 +279,24 @@ fn push_process(out: &mut String, process: Option<&ProcessIdent>) {
     );
 }
 
+/// 凍結の要因と通知。凍結していない実行状態は付随データを持たないため項目も出ない。
+fn push_stop(out: &mut String, execution: &ExecutionState) {
+    match execution {
+        ExecutionState::Stopped {
+            reason,
+            notified_at,
+        } => {
+            push_field(out, "凍結要因", stop_reason(*reason));
+            push_field(out, "通知", &notified(*notified_at));
+        }
+        ExecutionState::Pending
+        | ExecutionState::Launching { .. }
+        | ExecutionState::Running
+        | ExecutionState::Completed
+        | ExecutionState::Failed => {}
+    }
+}
+
 /// 凍結に至った経路。
 fn stop_reason(reason: StopReason) -> &'static str {
     match reason {
@@ -292,8 +308,8 @@ fn stop_reason(reason: StopReason) -> &'static str {
 }
 
 /// 凍結の通知。未通知は次の tick が再通知する(at-least-once)。
-fn notified(stop: &StopInfo) -> String {
-    match stop.notified_at {
+fn notified(notified_at: Option<Timestamp>) -> String {
+    match notified_at {
         Some(at) => at.to_rfc3339(),
         None => "未記録".to_owned(),
     }
@@ -351,9 +367,8 @@ mod tests {
     use pulsen_domain::definition::WorkflowName;
     use pulsen_domain::execution::ExitCode;
     use pulsen_domain::task::{
-        AttemptNumber, BranchName, ExecutionStateKind, KillIdent, Pid, ProcessStartTime, RepoPath,
-        RetryCounters, RunDirPath, StartTimeRecord, StateRoot, Target, TaskFilePath, TaskId,
-        Timestamp, WorktreePath,
+        AttemptNumber, BranchName, KillIdent, Pid, ProcessStartTime, RepoPath, RetryCounters,
+        RunDirPath, StartTimeRecord, StateRoot, Target, TaskFilePath, TaskId, WorktreePath,
     };
 
     use super::*;
@@ -391,7 +406,7 @@ mod tests {
                 BranchName::parse("main".to_owned()).expect("受理される"),
             ),
             task_status: status("queued"),
-            execution_state: ExecutionStateKind::Pending,
+            execution: ExecutionState::Pending,
             workspace: None,
             counters: RetryCounters::initial(),
             limits: Limits {
@@ -401,7 +416,6 @@ mod tests {
             },
             attempt: None,
             last_failure: None,
-            stop_info: None,
             snapshot: SnapshotInfo::Readable(vec![status("done"), status("queued")]),
             task_file_path: TaskFilePath::active(&state_root(), &task_id()),
             archived: false,
@@ -670,11 +684,10 @@ mod tests {
     #[test]
     fn 凍結したタスクは要因と通知の有無を示す() {
         let text = task_detail(&TaskDetail {
-            execution_state: ExecutionStateKind::Stopped,
-            stop_info: Some(StopInfo {
+            execution: ExecutionState::Stopped {
                 reason: StopReason::SpawnFailLimitExceeded,
                 notified_at: None,
-            }),
+            },
             last_failure: Some(
                 FailureNote::parse(
                     FailureKind::SpawnFail,
@@ -692,6 +705,27 @@ mod tests {
             text.contains("直近の失敗要因: エージェントの起動(2026-08-12T10:00:00Z): "),
             "{text}"
         );
+    }
+
+    #[test]
+    fn 凍結していない実行状態は凍結要因も通知も出さない() {
+        for execution in [
+            ExecutionState::Pending,
+            ExecutionState::Launching {
+                recorded_at: Timestamp::parse_rfc3339("2026-08-12T10:00:00Z").expect("受理される"),
+            },
+            ExecutionState::Running,
+            ExecutionState::Completed,
+            ExecutionState::Failed,
+        ] {
+            let text = task_detail(&TaskDetail {
+                execution: execution.clone(),
+                ..detail()
+            });
+
+            assert!(!text.contains("凍結要因"), "{execution:?}: {text}");
+            assert!(!text.contains("通知"), "{execution:?}: {text}");
+        }
     }
 
     #[test]

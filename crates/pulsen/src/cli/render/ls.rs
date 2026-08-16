@@ -19,7 +19,7 @@ const HEADERS: [&str; COLUMNS] = [
     "ブランチ",
     "ステータス",
     "実行状態",
-    "attempt",
+    "attempt_count",
     "更新日時",
     "備考",
 ];
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "タスクID                  ワークフロー  リポジトリ{repo_pad}  ブランチ  ステータス  実行状態  attempt  更新日時              備考\n20260812t101112-abcd1234  implement     {repo}  (未作成)  実装中      pending   0        2026-08-12T10:11:12Z  スナップショット読み取り不能"
+                "タスクID                  ワークフロー  リポジトリ{repo_pad}  ブランチ  ステータス  実行状態  attempt_count  更新日時              備考\n20260812t101112-abcd1234  implement     {repo}  (未作成)  実装中      pending   0              2026-08-12T10:11:12Z  スナップショット読み取り不能"
             )
         );
     }

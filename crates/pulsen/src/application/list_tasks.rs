@@ -108,6 +108,9 @@ where
 
     /// spec の処理フローの順に実行する。
     pub fn execute(&self, input: ListTasksInput) -> Result<TaskList, ListTasksError> {
+        // ロックを取らない読み取りで、`state` の可否は走査結果に依存しない。入力の誤りを
+        // 走査の成否に従属させないため入力境界で先に弾く
+        // (`.adr/1-parse-inputs-at-spec-flow-position.md` の適用範囲外)。
         let state = match input.state {
             Some(given) => {
                 Some(ExecutionStateKind::parse(&given).map_err(ListTasksError::InvalidState)?)

@@ -96,7 +96,7 @@ fn 一度も実行されていないタスクはワークスペースもattempt�
     assert_eq!(detail.workflow_name.as_str(), "implement");
     assert_eq!(detail.target.repo(), &usecase_fixture::repo());
     assert_eq!(detail.task_status, status("queued"));
-    assert_eq!(detail.execution_state, ExecutionStateKind::Pending);
+    assert_eq!(detail.execution, ExecutionState::Pending);
     assert!(detail.workspace.is_none(), "ワークスペースは未作成");
     assert!(detail.attempt.is_none(), "attempt は無い");
     assert_eq!(detail.counters.attempt_count(), 0);
@@ -173,10 +173,14 @@ fn ツール操作の失敗で凍結したタスクは要因と直近の失敗�
     );
 
     let detail = show(&tasks, &untouched(), TASK);
-    let stop = detail.stop_info.expect("凍結している");
 
-    assert_eq!(stop.reason, StopReason::RetryLimitExceeded);
-    assert_eq!(stop.notified_at, Some(at("2026-08-12T10:00:00Z")));
+    assert_eq!(
+        detail.execution,
+        ExecutionState::Stopped {
+            reason: StopReason::RetryLimitExceeded,
+            notified_at: Some(at("2026-08-12T10:00:00Z")),
+        }
+    );
     let note = detail.last_failure.expect("失敗要因がある");
     assert_eq!(note.kind(), FailureKind::WorktreeCreate);
     assert_eq!(note.message(), "git worktree add に失敗");
@@ -198,8 +202,11 @@ fn エージェント実行の失敗で凍結したタスクは直前実行へ�
     let attempt = attempt_of(&detail);
 
     assert_eq!(
-        detail.stop_info.expect("凍結している").reason,
-        StopReason::RetryLimitExceeded
+        detail.execution,
+        ExecutionState::Stopped {
+            reason: StopReason::RetryLimitExceeded,
+            notified_at: None,
+        }
     );
     assert_eq!(
         attempt.run_dir_presence,
@@ -220,7 +227,13 @@ fn 未通知の凍結は通知時刻が未記録であることを示す() {
 
     let detail = show(&tasks, &untouched(), TASK);
 
-    assert_eq!(detail.stop_info.expect("凍結している").notified_at, None);
+    assert_eq!(
+        detail.execution,
+        ExecutionState::Stopped {
+            reason: StopReason::JudgeLimitExceeded,
+            notified_at: None,
+        }
+    );
 }
 
 #[test]
@@ -229,7 +242,7 @@ fn 凍結していないタスクは凍結要因を持たない() {
 
     let detail = show(&tasks, &untouched(), TASK);
 
-    assert!(detail.stop_info.is_none());
+    assert_ne!(detail.execution.kind(), ExecutionStateKind::Stopped);
 }
 
 #[test]
@@ -325,6 +338,24 @@ fn アーカイブ済みのタスクはアーカイブ側の保存先ととも�
     assert_eq!(
         detail.task_file_path,
         TaskFilePath::archived(&state_root(), &task_id(TASK))
+    );
+}
+
+#[test]
+fn アーカイブ側で見つかった縮退タスクはアーカイブ側の保存先を指す() {
+    let tasks = repository(degraded(TASK, "statuses が空").found_archived());
+
+    let detail = show(&tasks, &untouched(), TASK);
+
+    assert!(detail.archived, "縮退していてもアーカイブ済みだと分かる");
+    assert_eq!(
+        detail.task_file_path,
+        TaskFilePath::archived(&state_root(), &task_id(TASK)),
+        "保存先の振り分けはスナップショットの可読性に依らない"
+    );
+    assert_eq!(
+        detail.snapshot,
+        SnapshotInfo::Unreadable("statuses が空".to_owned())
     );
 }
 
@@ -527,7 +558,7 @@ fn スナップショットだけが読めないタスクは読める項目を�
     let detail = show(&tasks, &untouched(), TASK);
 
     assert_eq!(detail.task_status, status("queued"));
-    assert_eq!(detail.execution_state, ExecutionStateKind::Failed);
+    assert_eq!(detail.execution, ExecutionState::Failed);
     assert!(detail.workspace.is_some(), "タスクファイル由来の項目は残る");
     assert_eq!(detail.counters.attempt_count(), 2);
     assert_eq!(
@@ -638,8 +669,11 @@ fn 同期spawn失敗で凍結したタスクはattemptを持たない() {
     let detail = show(&tasks, &untouched(), TASK);
 
     assert_eq!(
-        detail.stop_info.expect("凍結している").reason,
-        StopReason::SpawnFailLimitExceeded
+        detail.execution,
+        ExecutionState::Stopped {
+            reason: StopReason::SpawnFailLimitExceeded,
+            notified_at: None,
+        }
     );
     assert_eq!(
         detail.last_failure.expect("失敗要因がある").kind(),

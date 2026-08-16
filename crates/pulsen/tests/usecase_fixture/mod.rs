@@ -491,6 +491,11 @@ impl DegradedBuilder {
     pub fn found(self) -> TaskLookup {
         TaskLookup::Active(TaskRecord::SnapshotUnreadable(self.build()))
     }
+
+    /// アーカイブ側で見つかった解決結果として返す。
+    pub fn found_archived(self) -> TaskLookup {
+        TaskLookup::Archived(TaskRecord::SnapshotUnreadable(self.build()))
+    }
 }
 
 /// スナップショットだけが読めないタスクの走査結果。

@@ -97,6 +97,8 @@ crates/pulsen/tests/
 | `AttemptSummary` | `{ number, run_dir, process: Option<ProcessIdent>, exit, stdout_log, stderr_log, run_dir_exists }` | attempt「なし」と「あり・同定情報未取得」を区別する |
 | runディレクトリ / exit の読み取り結果 | 「不在 / 値 / 読めなかった(理由)」の3値 | `attempt_exists` / `read_exit` の失敗を**エラーに昇格させず**注記に落とす(pages 縮退表 show 行・TC-task-show-task-021 / 022) |
 
+出力DTO の畳み込み(`RunDirPresence` / `SnapshotInfo` / `execution`)は `adr.md` の ADR-004 が正本。この表は着手時点の設計。
+
 `ShowTask` の解決順は `TaskRepository::find` の契約(現役 → アーカイブ)に委ねる。`TaskLookup` の4値(`Active` / `Archived` / `NotFound` / `Corrupt`)と `TaskRecord` の2値(`Intact` / `SnapshotUnreadable`)を網羅 `match` で捌く。
 
 ### UI / プレゼンテーション

@@ -383,12 +383,9 @@ fn runディレクトリが無い現在attemptは存在しないと注記して0
 }
 
 #[test]
-fn runディレクトリの有無を確認できない現在attemptはパスを添えて注記し0で終わる() {
+fn tc_task_show_task_022_runディレクトリの有無を確認できないときはパスを注記して0で終わる() {
     if !common::lookup_under_regular_file_fails() {
-        common::skipped(
-            "runディレクトリの有無を確認できない現在attemptはパスを添えて注記し0で終わる",
-            "lookup_under_regular_file_fails",
-        );
+        common::skipped("tc_task_show_task_022", "lookup_under_regular_file_fails");
         return;
     }
     let home = home_with_workflow();

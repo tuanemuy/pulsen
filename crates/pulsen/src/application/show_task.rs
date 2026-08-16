@@ -15,10 +15,9 @@ use std::path::PathBuf;
 use pulsen_domain::definition::{GlobalConfig, StatusName, WorkflowName};
 use pulsen_domain::execution::{ExitCode, Io, RunFileError, RunStore};
 use pulsen_domain::task::{
-    AttemptNumber, AttemptRef, DegradedTask, ExecutionState, ExecutionStateKind, FailureNote,
-    ProcessIdent, ReadError, RetryCounters, RunDirPath, StateRoot, StopReason, Target, Task,
-    TaskFilePath, TaskId, TaskIdError, TaskLookup, TaskRecord, TaskRepository, Timestamp,
-    Workspace,
+    AttemptNumber, AttemptRef, DegradedTask, ExecutionState, FailureNote, ProcessIdent, ReadError,
+    RetryCounters, RunDirPath, StateRoot, Target, Task, TaskFilePath, TaskId, TaskIdError,
+    TaskLookup, TaskRecord, TaskRepository, Timestamp, Workspace,
 };
 
 /// 詳細の入力。
@@ -32,6 +31,11 @@ pub struct ShowTaskInput {
 ///
 /// 「適用対象がない」(Wait)と「導出できない」(スナップショット破損)を
 /// `Option<u32>` に潰さない — 前者は併記なし、後者は導出不能である旨の注記になる。
+///
+/// `Unknown` は `SnapshotInfo::Unreadable` と共変する従属軸だが `SnapshotInfo` へは
+/// 畳まない。`limits.retry` はカウンタ行(attempt_count)の併記の正本で、畳むと
+/// 表示が定義済みステータス項目の内部形を読むことになる。基準は
+/// `.thread/4/adr.md` の ADR-004。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryLimitInfo {
     /// 適用される上限。
@@ -48,6 +52,9 @@ pub enum RetryLimitInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// リトライ上限。
+    ///
+    /// スナップショットの可読性に従属するが `snapshot` へは畳まない
+    /// (理由は `RetryLimitInfo`)。
     pub retry: RetryLimitInfo,
     /// 判定失敗の上限。
     pub judge: u32,
@@ -122,15 +129,6 @@ pub enum SnapshotInfo {
     Unreadable(String),
 }
 
-/// 凍結の要因と通知。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StopInfo {
-    /// 凍結に至った経路。
-    pub reason: StopReason,
-    /// 通知済みの時刻。未通知は `None`。
-    pub notified_at: Option<Timestamp>,
-}
-
 /// タスク1件の詳細。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDetail {
@@ -142,8 +140,13 @@ pub struct TaskDetail {
     pub target: Target,
     /// タスクステータス。
     pub task_status: StatusName,
-    /// 実行状態。
-    pub execution_state: ExecutionStateKind,
+    /// 実行状態。凍結の要因と通知は `Stopped` の付随データとして入る。
+    ///
+    /// ドメインの直和型をそのまま通す — 判別子と付随データに割ると、凍結して
+    /// いないのに要因がある/凍結しているのに要因がない組み合わせが型で書ける。
+    /// `Target` / `Workspace` / `RetryCounters` / `FailureNote` と同じ扱いで、
+    /// 実行状態だけが分解されている理由はない。
+    pub execution: ExecutionState,
     /// 確定済みワークスペース。`None` は「未作成」。
     pub workspace: Option<Workspace>,
     /// 3つのカウンタ。
@@ -154,8 +157,6 @@ pub struct TaskDetail {
     pub attempt: Option<AttemptSummary>,
     /// 直近のツール操作・判定の失敗。
     pub last_failure: Option<FailureNote>,
-    /// 凍結の要因と通知。stopped のときだけ `Some`。
-    pub stop_info: Option<StopInfo>,
     /// スナップショット由来の項目。
     pub snapshot: SnapshotInfo,
     /// スナップショットの保存先(タスクファイル自身。ADR-015)。
@@ -256,13 +257,12 @@ where
             workflow_name: task.workflow_name().clone(),
             target: task.target().clone(),
             task_status: task.task_status().clone(),
-            execution_state: task.execution_kind(),
+            execution: task.execution().clone(),
             workspace: task.workspace().cloned(),
             counters: task.counters(),
             limits: self.limits(retry),
             attempt: self.attempt(task.current_attempt()),
             last_failure: task.last_failure().cloned(),
-            stop_info: stop_info(task.execution()),
             snapshot: SnapshotInfo::Readable(defined_statuses),
             task_file_path: self.task_file_path(task.id(), archived),
             archived,
@@ -280,13 +280,12 @@ where
             workflow_name: task.workflow_name().clone(),
             target: task.target().clone(),
             task_status: task.task_status().clone(),
-            execution_state: task.execution_kind(),
+            execution: task.execution().clone(),
             workspace: task.workspace().cloned(),
             counters: task.counters(),
             limits: self.limits(RetryLimitInfo::Unknown),
             attempt: self.attempt(task.current_attempt()),
             last_failure: task.last_failure().cloned(),
-            stop_info: stop_info(task.execution()),
             snapshot: SnapshotInfo::Unreadable(task.snapshot_error().to_owned()),
             task_file_path: self.task_file_path(task.id(), archived),
             archived,
@@ -343,23 +342,5 @@ where
             Ok(None) => ExitOutcome::Absent,
             Err(error) => ExitOutcome::Unreadable(error),
         }
-    }
-}
-
-/// 凍結の要因と通知。凍結していないタスクは持たない。
-fn stop_info(execution: &ExecutionState) -> Option<StopInfo> {
-    match execution {
-        ExecutionState::Stopped {
-            reason,
-            notified_at,
-        } => Some(StopInfo {
-            reason: *reason,
-            notified_at: *notified_at,
-        }),
-        ExecutionState::Pending
-        | ExecutionState::Launching { .. }
-        | ExecutionState::Running
-        | ExecutionState::Completed
-        | ExecutionState::Failed => None,
     }
 }

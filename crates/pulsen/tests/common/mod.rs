@@ -49,8 +49,7 @@ const LOCK_HOLDER_CASES: [&str; 3] = [
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_task_register_task_036"];
 
 /// 通常ファイルの配下の問い合わせが不在に写る環境でのみスキップされるケース。
-const NOT_A_DIRECTORY_CASES: [&str; 1] =
-    ["runディレクトリの有無を確認できない現在attemptはパスを添えて注記し0で終わる"];
+const NOT_A_DIRECTORY_CASES: [&str; 1] = ["tc_task_show_task_022"];
 
 /// この環境でスキップを許容するケース。
 static SKIPS: LazyLock<SkipBudget> = LazyLock::new(|| SkipBudget::new(allowed_skips()));
