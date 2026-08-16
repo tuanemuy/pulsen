@@ -92,6 +92,8 @@ Proposed
 
 Proposed
 
+→ `.adr/4-exit-nested-in-run-dir-presence.md` に昇格
+
 ### Context
 
 `ShowTask` は `RunStore::attempt_exists` で run ディレクトリの有無を確かめ、**存在すれば** `read_exit` で exit を補う(`spec/usecases/task.md#showtaskshow` の処理フロー3)。存在確認は3値(在る / 無い / 確認できなかった)になるため、`read_exit` を呼ばない経路が2つ生まれる。
@@ -178,6 +180,8 @@ Proposed
 
 Proposed
 
+→ `.adr/4-conformance-observation-by-hook-and-method.md` に昇格
+
 ### Context
 
 `TC-port-run-store-001` の台帳の期待文(`spec/testcases/ports/run-store.md`)は「親を含めて attempt ディレクトリが作成され、`attempt_exists` が true になる」である。`.thread/2/adr.md` の ADR-084 はこの観測を、選択肢 (a)「`attempt_exists` を宣言して #4 の行を先取りする」を退けて (c)「ハーネスのフック(`attempt_dir_present`)と既存の read 系に置き換える」で満たすと決めた。(a) を退けた理由は Issue #2 の AC-6(未実装メソッドの宣言・スタブが1つも無い)というスライス限定の制約で、ADR-084 自身が Consequences に「#4 が `attempt_exists` を足すときに `TC-022 / 023` とあわせてフックの要否を見直す」と書いている。
@@ -204,6 +208,8 @@ Proposed
 ### Status
 
 Proposed
+
+→ `.adr/4-spec-wording-is-canonical-for-display.md` に昇格
 
 ### Context
 

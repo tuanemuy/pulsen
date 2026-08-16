@@ -276,7 +276,7 @@ attempt の位置に非ディレクトリを置いた木での振る舞いは台
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
-| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present` + `attempt_exists`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-084。後の観測は `require!` ではなく `Some(true)` / `Ok(true)` との等値比較で書く。`.adr/1-no-skippable-hooks-for-post-operation-observation.md`。フックに `attempt_exists` を併用するのは、ADR-084 の観測手段を #4 で見直した結果。`.thread/4/adr.md` の ADR-007） |
+| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present` + `attempt_exists`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-084。後の観測は `require!` ではなく `Some(true)` / `Ok(true)` との等値比較で書く。`.adr/1-no-skippable-hooks-for-post-operation-observation.md`。フックと `attempt_exists` を併用するのは、台帳の期待文が名指しするメソッドがポートに在るときの規約。`.adr/4-conformance-observation-by-hook-and-method.md`） |
 | TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（内容の不変で観測する。`attempt_exists` はディレクトリの有無しか答えず、既存の書き込みが保たれたことを主張できない。ADR-084） |
 | TC-port-run-store-003 | 準備済み・pid 未書き込み | A | `prepare_attempt` → `read_pid_file` |
 | TC-port-run-store-004 | attempt ディレクトリ自体が不在 | B | `expected_run_dir`（準備しないまま読む） |
