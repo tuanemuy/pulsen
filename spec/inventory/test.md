@@ -1,6 +1,6 @@
 # Inventory — test
 
-生成元: spec/testcases/（最終同期: 2026-08-11）
+生成元: spec/testcases/（最終同期: 2026-08-16）
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
@@ -44,14 +44,14 @@
 | TC-task-register-task-012 | RegisterTask 正常系: 登録する(ID発行が既存タスクと衝突する) | spec/testcases/task/register-task.md#正常系 | IDが再発行されて1回だけ再試行され、登録が成功して 0 で終了する |
 | TC-task-register-task-013 | RegisterTask 正常系: 同じ指定でもう一度登録する(同一リポジトリ・同一ワークフローのタスクが既に登録済み) | spec/testcases/task/register-task.md#正常系 | 重複排除されず、独立した別IDのタスクとして登録される |
 | TC-task-register-task-014 | RegisterTask 異常系: 登録する(config.yaml が存在しない) | spec/testcases/task/register-task.md#異常系 | 「グローバルホームが未初期化」である旨と解決後のホームパス・作成が必要であることを表示して非0で終了する |
-| TC-task-register-task-015 | RegisterTask 異常系: 登録する(config.yaml がパース不能(構文エラー・未知キー)) | spec/testcases/task/register-task.md#異常系 | エラー位置を表示して非0で終了する |
+| TC-task-register-task-015 | RegisterTask 異常系: 登録する(config.yaml がパース不能(構文エラー・未知キー)) | spec/testcases/task/register-task.md#異常系 | 構文エラー・重複キーは行・列を、スキーマ違反(未知キー・型不一致)は問題のキーのパスを表示して非0で終了する |
 | TC-task-register-task-016 | RegisterTask 異常系: 登録する(config.yaml が存在するが読めない(権限不足等)) | spec/testcases/task/register-task.md#異常系 | 実行環境エラーとして非0で終了する |
 | TC-task-register-task-017 | RegisterTask 異常系: 登録する(別の操作が排他ロックを保持している) | spec/testcases/task/register-task.md#異常系 | 「別の操作が実行中」として非0で終了する(登録前のためタスクは作られない) |
 | TC-task-register-task-018 | RegisterTask 異常系: 登録する(ロック機構自体が異常(`LockError::Failed`)) | spec/testcases/task/register-task.md#異常系 | 実行環境エラーとして非0で終了する |
 | TC-task-register-task-019 | RegisterTask 異常系: 名前指定で登録する(指定した名前に対応する `workflows/<name>.yaml` が存在しない) | spec/testcases/task/register-task.md#異常系 | 解決を試みた絶対パスを添えて非0で終了する |
 | TC-task-register-task-020 | RegisterTask 異常系: パス指定で登録する(指定したファイルパスのワークフロー定義が存在しない) | spec/testcases/task/register-task.md#異常系 | 解決を試みたパスを添えて非0で終了する |
 | TC-task-register-task-021 | RegisterTask 異常系: 登録する(ワークフロー定義ファイルが存在するが読めない(I/O障害)) | spec/testcases/task/register-task.md#異常系 | 非0で終了する |
-| TC-task-register-task-022 | RegisterTask 異常系: 登録する(ワークフローYAMLが構文として不正(重複キー含む)) | spec/testcases/task/register-task.md#異常系 | 位置・原因を表示して非0で終了する(`YamlSyntax`) |
+| TC-task-register-task-022 | RegisterTask 異常系: 登録する(ワークフローYAMLが構文として不正(重複キー含む)) | spec/testcases/task/register-task.md#異常系 | 位置・原因に加えて解決先の絶対パスを表示して非0で終了する(`YamlSyntax`) |
 | TC-task-register-task-023 | RegisterTask 異常系: 登録する(ワークフローYAMLにスキーマ外のキーがある) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`UnknownKey`。ADR-013) |
 | TC-task-register-task-024 | RegisterTask 異常系: 登録する(`run: wait` のステータスに `judge` 等のエージェント実行用キーがある) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`ForbiddenKey`。ADR-013) |
 | TC-task-register-task-025 | RegisterTask 異常系: 登録する(`initial` が欠落している) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`MissingInitial`) |
@@ -63,7 +63,7 @@
 | TC-task-register-task-031 | RegisterTask 異常系: 登録する(エージェント実行のステータスに `next` がない) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`MissingNext`) |
 | TC-task-register-task-032 | RegisterTask 異常系: 登録する(`next` の参照先ステータスが存在しない) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`NextNotFound`) |
 | TC-task-register-task-033 | RegisterTask 異常系: 登録する(ステータス名・期間・コマンドの値が不正(空文字のプロンプト、`timeout: 0s`…) | spec/testcases/task/register-task.md#異常系 | 非0で終了する(`InvalidValue`) |
-| TC-task-register-task-034 | RegisterTask 異常系: パス指定で登録する(`workflow:` キーがなく、ファイル名由来の表示名が不正になるパス…) | spec/testcases/task/register-task.md#異常系 | 表示名の決定失敗として非0で終了する |
+| TC-task-register-task-034 | RegisterTask 異常系: パス指定で登録する(`workflow:` キーがなく、ファイル名由来の表示名が不正になるパス…) | spec/testcases/task/register-task.md#異常系 | 表示名の決定失敗として非0で終了する(例示は語幹が空白のみになる ` .yaml`。`Path::file_stem` は `.yaml` を語幹として返すため「拡張子を除くと空」は作れない) |
 | TC-task-register-task-035 | RegisterTask 異常系: 登録する(指定したリポジトリパスが存在しない) | spec/testcases/task/register-task.md#異常系 | 非0で終了する |
 | TC-task-register-task-036 | RegisterTask 異常系: 登録する(指定したパスが git リポジトリでない) | spec/testcases/task/register-task.md#異常系 | 非0で終了する |
 | TC-task-register-task-037 | RegisterTask 異常系: 登録する(指定したベースブランチがリポジトリに存在しない) | spec/testcases/task/register-task.md#異常系 | 非0で終了する |
@@ -281,7 +281,7 @@
 | TC-exec-tick-019 | Tick 走査と分岐(処理フロー 1〜9) > 異常系: tick を実行する(パース不能なタスクファイル(`Corrupt`)が混在する) | spec/testcases/execution/tick.md#異常系 | 当該タスクは報告のみで書き込まない(stopped化もしない)。残りのタスクは処理を続行し、tick は 0 |
 | TC-exec-tick-020 | Tick 走査と分岐(処理フロー 1〜9) > 異常系: tick を実行する(スナップショットのみ破損(`SnapshotUnreadable`)・stopped…) | spec/testcases/execution/tick.md#異常系 | 定義依存の判断(起動・遷移・終端処理)をすべてスキップして報告する。書き込まない。tick は 0 |
 | TC-exec-tick-021 | Tick 走査と分岐(処理フロー 1〜9) > 異常系: tick を実行する(completed だが手動修復により遷移の前提が破れている(`TransitionErr…) | spec/testcases/execution/tick.md#異常系 | 報告してそのタスクをスキップする。tick は 0 |
-| TC-exec-tick-022 | Tick 走査と分岐(処理フロー 1〜9) > 異常系: tick を実行する(手動修復で不変条件が破れている(Running なのに `current_attempt`…) | spec/testcases/execution/tick.md#異常系 | 不変条件の破れとして報告してスキップする(検出は手続きC / D 冒頭のユースケース検査、または遷移関数の `InvariantViolated`)。修復は人間に委ねる |
+| TC-exec-tick-022 | Tick 走査と分岐(処理フロー 1〜9) > 異常系: tick を実行する(手動修復で不変条件が破れている(Running なのに `current_attempt`…) | spec/testcases/execution/tick.md#異常系 | 不変条件の破れとして報告してスキップする(検出は手続きC / D 冒頭のユースケース検査、または遷移関数の `TransitionError`(`MissingCurrentAttempt` 等))。修復は人間に委ねる |
 | TC-exec-tick-023 | Tick 走査と分岐(処理フロー 1〜9) > 異常系: tick を実行する(1タスクの処理が失敗する(観測の Io 失敗等)) | spec/testcases/execution/tick.md#異常系 | `errors` に記録して残りのタスクを続行する。tick 全体は 0 |
 | TC-exec-tick-024 | Tick 走査と分岐(処理フロー 1〜9) > エッジケース: tick を連続して複数回実行する(状態が変化しないタスク群(Wait 滞留・猶予内待機・実行継続中)) | spec/testcases/execution/tick.md#エッジケース | 毎回同じ判断が再導出され、書き込みは発生しない(tick の冪等性) |
 | TC-exec-tick-025 | Tick 走査と分岐(処理フロー 1〜9) > エッジケース: tick を実行する(running のタスクの exit 0 を観測した) | spec/testcases/execution/tick.md#エッジケース | この tick では completed の記録まで(`complete_run`)。next への遷移は行わず、次の tick の `advance` に委ねる(1タスク1tick1ステップ) |
@@ -327,7 +327,7 @@
 | TC-exec-tick-065 | Tick 手続きB: 終端処理(Pending / Failed × Cleanup) > 境界値: tick を繰り返し実行する(Cleanup ステータスでの失敗の繰り返し) | spec/testcases/execution/tick.md#境界値-1 | 適用される上限は常に組み込みデフォルト 2(ADR-014。上書き不可): 加算後 attempt_count = 2 では failed のまま、= 3 で stopped になる |
 | TC-exec-tick-066 | Tick 手続きB: 終端処理(Pending / Failed × Cleanup) > エッジケース: 次の tick を実行する(worktree 削除成功後にアーカイブ移動が失敗した) | spec/testcases/execution/tick.md#エッジケース-2 | `remove` が `AlreadyAbsent` を返すため、実質アーカイブ移動から再開する(冪等) |
 | TC-exec-tick-067 | Tick 手続きB: 終端処理(Pending / Failed × Cleanup) > エッジケース: 次の tick を実行する(worktree 削除とアーカイブの間で前回の tick がクラッシュした) | spec/testcases/execution/tick.md#エッジケース-2 | 「Cleanup ステータスのタスクがまだ tasks にある」ことから同じ処理が再導出される。worktree なしの削除は成功扱いで、二重処理は無害 |
-| TC-exec-tick-068 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(runディレクトリに pid・starttime の両方がある) | spec/testcases/execution/tick.md#正常系-3 | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる |
+| TC-exec-tick-068 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(runディレクトリに pid・starttime の両方がある) | spec/testcases/execution/tick.md#正常系-3 | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる。サマリーの `confirmed_running` に記録される |
 | TC-exec-tick-069 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(pid がなく、launching 記録からの経過が猶予時間内) | spec/testcases/execution/tick.md#正常系-3 | `KeepWaiting`: 何もしない(ラッパーの書き込み待ち) |
 | TC-exec-tick-070 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(pid がなく、猶予時間を超過している) | spec/testcases/execution/tick.md#正常系-3 | 無効化マーカーを書き、pid を再読する。なお pid がなければ `record_spawn_failure`: pending 復帰・spawn_fail_count 加算・last_failure = SpawnFail |
 | TC-exec-tick-071 | Tick 手続きC: spawn確認(Launching) > 正常系: tick を実行する(マーカー書き込み後の再読で pid・starttime が現れていた) | spec/testcases/execution/tick.md#正常系-3 | pending に戻さず `confirm_running` で running へ取り込む |
@@ -346,7 +346,7 @@
 | TC-exec-tick-084 | Tick 手続きC: spawn確認(Launching) > エッジケース: tick を繰り返し実行する(runファイルの破損(`Corrupt` / `InconsistentRunFiles`…) | spec/testcases/execution/tick.md#エッジケース-3 | スキップと報告が続き、タスクは launching のまま滞留する(stopped に至らないため通知されない) |
 | TC-exec-tick-085 | Tick 手続きC: spawn確認(Launching) > エッジケース: 次の tick を実行する(人間が破損した runファイルを削除した) | spec/testcases/execution/tick.md#エッジケース-3 | 「不在」として無効化マーカープロトコルに合流し、通常の spawn失敗分類で決着する |
 | TC-exec-tick-086 | Tick 手続きC: spawn確認(Launching) > エッジケース: 次の tick を実行する(spawn失敗で pending 復帰したタスクが再起動される) | spec/testcases/execution/tick.md#エッジケース-3 | 新しい attempt 番号が採番され、runディレクトリも新しいパスになる(過去の試行の残骸と混同しない) |
-| TC-exec-tick-087 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルに 0・judge 未定義) | spec/testcases/execution/tick.md#正常系-4 | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick) |
+| TC-exec-tick-087 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルに 0・judge 未定義) | spec/testcases/execution/tick.md#正常系-4 | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick)。サマリーの `judged` に記録される |
 | TC-exec-tick-088 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルに非0・judge 未定義) | spec/testcases/execution/tick.md#正常系-4 | デフォルト判定で Failed → `fail_run`: failed になり attempt_count 加算・judge_attempt_count リセット |
 | TC-exec-tick-089 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(exit ファイルあり・judge 定義あり) | spec/testcases/execution/tick.md#正常系-4 | 判定コマンドが `TASK_ID` / `WORKSPACE` / `EXIT_CODE`(10進文字列)/ `RUN_DIR` の環境変数と `config.judge_timeout` で、シェルを介さず直接起動される(引数なし・プレースホルダ展開なし) |
 | TC-exec-tick-090 | Tick 手続きD: 観測・判定(Running) > 正常系: tick を実行する(判定コマンドが exit 0 で終了する) | spec/testcases/execution/tick.md#正常系-4 | Completed → `complete_run` |
@@ -362,7 +362,7 @@
 | TC-exec-tick-100 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(`fail_run` の加算で attempt_count が上限を超過する) | spec/testcases/execution/tick.md#異常系-4 | `Stopped { RetryLimitExceeded }` を保存し notify を実行する |
 | TC-exec-tick-101 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(timeout kill が失敗する(`KillError`)) | spec/testcases/execution/tick.md#異常系-4 | `fail_run` を呼ばず状態を変更せず報告のみ行う。次tickが同じ決定を再導出して再試行する(プロセス生存のまま failed → 再起動 → 同一worktree並走を防ぐ) |
 | TC-exec-tick-102 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(`starttime_of` が `Err(Io)` を返す(取得機構自体の失敗)) | spec/testcases/execution/tick.md#異常系-4 | 状態を変更せず報告してスキップする。次tickで再観測 |
-| TC-exec-tick-103 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(exit ファイルあり・`starttime_of` が失敗する環境) | spec/testcases/execution/tick.md#異常系-4 | 生存観測に依存せず判定が遅延なく実行され、分類が確定する(exit が Some なら判定 — RunningClassifier の2段規則。観測の一過性失敗で判定を遅延させない) |
+| TC-exec-tick-103 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(exit ファイルあり・`starttime_of` が失敗する環境) | spec/testcases/execution/tick.md#異常系-4 | 生存観測に依存せず判定が遅延なく実行され、分類が確定する(exit が Some なら判定 — 2段規則の1段目はユースケース側にあり、`classify_alive` は生存の分類だけを返す。観測の一過性失敗で判定を遅延させない) |
 | TC-exec-tick-104 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(`read_exit` が `RunFileError` を返す) | spec/testcases/execution/tick.md#異常系-4 | 当該タスクをスキップして報告する(書き込まない)。tick は 0 |
 | TC-exec-tick-105 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(`try_kill_remnants` が `NotIdentifiable` /…) | spec/testcases/execution/tick.md#異常系-4 | 結果は報告のみで、分類(failed)には影響しない(孤児の残存は許容) |
 | TC-exec-tick-106 | Tick 手続きD: 観測・判定(Running) > 境界値: tick を実行する(launching の猶予に時間を要したタスクが running 中) | spec/testcases/execution/tick.md#境界値-3 | timeout の経過は記録済み starttime の壁時計成分(`starttime.wall`)を起点に測る(launching 記録から pid 出現までの猶予は timeout に含まれない) |
@@ -545,7 +545,7 @@
 | TC-port-task-repository-006 | TaskRepository save / save_degraded: 遷移後の値(実行状態・カウンタ・`updated_at`…(`create` 済みのタスク) | spec/testcases/ports/task-repository.md#save--save_degraded | `Ok`。直後の `find` が更新後の内容を返す(read-your-writes) |
 | TC-port-task-repository-007 | TaskRepository save / save_degraded: `save`(`create` していない ID のタスク) | spec/testcases/ports/task-repository.md#save--save_degraded | `Err(NotFound)`(現役に存在しない) |
 | TC-port-task-repository-008 | TaskRepository save / save_degraded: `save`(`create` → `archive` 済みのタスク) | spec/testcases/ports/task-repository.md#save--save_degraded | `Err(NotFound)`(アーカイブ側は `save` の対象外) |
-| TC-port-task-repository-009 | TaskRepository save / save_degraded: タスク側フィールドを変更(`abort` による…(スナップショットフィールドのみを不正な内容に書き換えたタスクファイルを `find` し…) | spec/testcases/ports/task-repository.md#save--save_degraded | `Ok`。直後の `find` は変更後のタスク側フィールドを持つ `SnapshotUnreadable` を返し、スナップショットフィールドは元の(破損した)内容のままファイルに温存される(往復。修復の材料を消さない) |
+| TC-port-task-repository-009 | TaskRepository save / save_degraded: タスク側フィールドを変更(`abort` による…(スナップショットフィールドのみを有効な JSON だがスナップショットとして解釈できない内容に書き換えたタスクファイルを `find` し…) | spec/testcases/ports/task-repository.md#save--save_degraded | `Ok`。直後の `find` は変更後のタスク側フィールドを持つ `SnapshotUnreadable` を返し、スナップショットフィールドは元の(破損した)内容のままファイルに温存される(往復。修復の材料を消さない) |
 | TC-port-task-repository-010 | TaskRepository save / save_degraded: `save_degraded`(現役に存在しない ID の DegradedTask) | spec/testcases/ports/task-repository.md#save--save_degraded | `Err(NotFound)` |
 | TC-port-task-repository-011 | TaskRepository save / save_degraded: `save`(`create` 済みのタスク。書き込み先へ書き込めない(`state/tasks/`…) | spec/testcases/ports/task-repository.md#save--save_degraded | `Err(Io)`。message を含む(部分的な書き込み結果を残さないことは「原子性の観測面」で検証) |
 | TC-port-task-repository-012 | TaskRepository save / save_degraded: `save_degraded`(`find` で `SnapshotUnreadable(DegradedTask)`…) | spec/testcases/ports/task-repository.md#save--save_degraded | `Err(Io)`。message を含む |
@@ -558,13 +558,13 @@
 | TC-port-task-repository-019 | TaskRepository find と解決順: `find`(走査対象を読み取れない(`state/tasks/` が読み取り不能等。再現できるアダプタ…) | spec/testcases/ports/task-repository.md#find-と解決順 | `Err(Io)`。message を含む(`Ok(NotFound)` / `Corrupt` に写像しない。機構失敗は値のエラーとして呼び出し側に届く) |
 | TC-port-task-repository-020 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(タスクファイル全体を JSON として不正な内容に置き換える) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Corrupt { path, message }`(path は当該ファイル) |
 | TC-port-task-repository-021 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(タスク側フィールドの構文・値制約を破る(実行状態に未知の値、`task_id`…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Corrupt`(タスク側フィールドの破れはファイル全体の破損として扱う) |
-| TC-port-task-repository-022 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(スナップショットフィールドのみを構文不正な内容に置き換える(タスク側フィールドは有効なまま…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Active(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールド(実行状態・カウンタ・attempt 参照等)はすべて読める |
+| TC-port-task-repository-022 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(スナップショットフィールドのみを有効な JSON だがスナップショットとして解釈できない内容に置き換える(タスク側フィールドは有効なまま…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Active(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールド(実行状態・カウンタ・attempt 参照等)はすべて読める |
 | TC-port-task-repository-023 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(スナップショットフィールドを**削除**する(不在。タスク側フィールドは有効なまま)) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Active(SnapshotUnreadable(DegradedTask))`(欠落も「スナップショットのみ読めない」に分類する。`Corrupt` に落とさない — pages 縮退表「スナップショット 不在・パース不能」) |
 | TC-port-task-repository-024 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(`task_status` を snapshot の statuses…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `SnapshotUnreadable`(不変条件1の照合破れ。`RehydrateError::StatusNotInSnapshot` の写像) |
 | TC-port-task-repository-025 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(スナップショットの構造不変条件を破る(`initial ∉ statuses`、または…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `SnapshotUnreadable` |
-| TC-port-task-repository-026 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(状態間整合の不変条件2〜4を破る内容(例: Running なのに…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Active(Intact)`(不変条件2〜4はデコードでは検証しない。遷移関数の前提検査 `InvariantViolated` に委ねる) |
+| TC-port-task-repository-026 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(状態間整合の不変条件2〜4を破る内容(例: Running なのに…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Active(Intact)`(不変条件2〜4はデコードでは検証しない。遷移関数の前提検査(`TransitionError::MissingCurrentAttempt` 等)に委ねる) |
 | TC-port-task-repository-027 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(`state/archive/` に JSON として不正な内容のタスクファイルを置く…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Corrupt { path, message }`(path はアーカイブ側の当該ファイル。破損の区分は tasks / archive で変わらない) |
-| TC-port-task-repository-028 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(`state/archive/` にスナップショットフィールドのみ構文不正なタスクファイル…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Archived(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールドはすべて読める |
+| TC-port-task-repository-028 | TaskRepository Corrupt と SnapshotUnreadable の区別: `find`(`state/archive/` にスナップショットフィールドのみ有効な JSON だがスナップショットとして解釈できない内容のタスクファイル…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `Archived(SnapshotUnreadable(DegradedTask))`。message に理由を含み、タスク側フィールドはすべて読める |
 | TC-port-task-repository-029 | TaskRepository Corrupt と SnapshotUnreadable の区別: `list_active`(上記の各破損フィクスチャのうち**現役側(`state/tasks/`)に置いたもの**) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | `find` と同じ区分で列挙される(`Corrupt` は `TaskEntry::Corrupt`、スナップショット破損は `Record(SnapshotUnreadable)`)。アーカイブ側のフィクスチャは現れない |
 | TC-port-task-repository-030 | TaskRepository Corrupt と SnapshotUnreadable の区別: `list_active`(`state/tasks/` に命名形式(`<task-id>.json`)に合致しないエ…) | spec/testcases/ports/task-repository.md#corrupt-と-snapshotunreadable-の区別 | 形式外エントリは列挙されない(`Corrupt` としても現れない)。既存タスクの走査には影響しない(RunStore の `attempt-<n>` 形式外と同じ規則) |
 | TC-port-task-repository-031 | TaskRepository archive: `archive`(`create` 済みのタスク(`state/archive/` 不在)) | spec/testcases/ports/task-repository.md#archive | `Ok`。移動先ディレクトリが自動作成され、`find` は `Archived` を返す |
@@ -597,19 +597,19 @@
 | TC-port-workflow-store-014 | WorkflowStore 正常系パース: `load`(遷移経路のない到達不能ステータスを含む定義を置く) | spec/testcases/ports/workflow-store.md#正常系パース | `Ok`(到達不能ステータスは許容) |
 | TC-port-workflow-store-015 | WorkflowStore 正常系パース: `load`(`judge` のトークンに波括弧(`{...}`)を含む定義を置く) | spec/testcases/ports/workflow-store.md#正常系パース | `Ok`。`PlainCommand` はプレースホルダ展開・検査をせず文字どおり保持される |
 | TC-port-workflow-store-016 | WorkflowStore 正常系パース: `load`(グローバル設定に存在しないエージェント名を参照する定義を置く) | spec/testcases/ports/workflow-store.md#正常系パース | `Ok`(グローバル設定との突き合わせは本ポートの責務外。`RegistrationValidator` が担う) |
-| TC-port-workflow-store-017 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(YAML として不正な内容(構文エラー・重複キー)のファイルを置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(YamlSyntax))`。message・location を含む |
-| TC-port-workflow-store-018 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(トップレベルに許容外のキー(`workflow` / `agent` / `model`…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(UnknownKey))` |
-| TC-port-workflow-store-019 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(ステータス内にスキーマ外のキー(`prmopt` 等の typo)を含む定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(UnknownKey))` |
-| TC-port-workflow-store-020 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`run: wait` / `run: cleanup` のステータスにエージェント実行系…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(ForbiddenKey))`(`Wait` / `Cleanup` に許されるキーは `run` のみ) |
-| TC-port-workflow-store-021 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`initial` キーの無い定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(MissingInitial))` |
-| TC-port-workflow-store-022 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`initial` が `statuses` に無い名前を指す定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(InitialNotFound))` |
-| TC-port-workflow-store-023 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`statuses` が空・欠落した定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(EmptyStatuses))` |
-| TC-port-workflow-store-024 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(動作宣言(`prompt` / `skill` / `run`)の無いステータスを含む定義…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(NoAction))` |
-| TC-port-workflow-store-025 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(動作宣言が複数あるステータス(`prompt` と `skill`、`prompt` と…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(MultipleActions))` |
-| TC-port-workflow-store-026 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`run` の値が `cleanup` / `wait` 以外の定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(UnknownRunValue))` |
-| TC-port-workflow-store-027 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(AgentRun ステータスに `next` の無い定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(MissingNext))` |
-| TC-port-workflow-store-028 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`next` が `statuses` に無い名前を指す定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(NextNotFound))` |
-| TC-port-workflow-store-029 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(値の生成エラーを含む定義(空の `prompt`、`timeout: 0s`、空文字列の…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse(InvalidValue))`(`NameError` / `DurationError` / `CommandError` を包む) |
+| TC-port-workflow-store-017 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(YAML として不正な内容(構文エラー・重複キー)のファイルを置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: YamlSyntax, resolved_from })`。message・location を含み、`resolved_from` は名前解決した絶対パス(`<workflows_dir>/wf.yaml`)。message に解決先を前置しない — パスを持たないのは `WorkflowParseError` 12種すべての契約であり、この行が固定するのは `YamlSyntax` の1経路 |
+| TC-port-workflow-store-018 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(トップレベルに許容外のキー(`workflow` / `agent` / `model`…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: UnknownKey, .. })` |
+| TC-port-workflow-store-019 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(ステータス内にスキーマ外のキー(`prmopt` 等の typo)を含む定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: UnknownKey, .. })` |
+| TC-port-workflow-store-020 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`run: wait` / `run: cleanup` のステータスにエージェント実行系…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: ForbiddenKey, .. })`(`Wait` / `Cleanup` に許されるキーは `run` のみ) |
+| TC-port-workflow-store-021 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`initial` キーの無い定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: MissingInitial, .. })` |
+| TC-port-workflow-store-022 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`initial` が `statuses` に無い名前を指す定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: InitialNotFound, .. })` |
+| TC-port-workflow-store-023 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`statuses` が空・欠落した定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: EmptyStatuses, .. })` |
+| TC-port-workflow-store-024 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(動作宣言(`prompt` / `skill` / `run`)の無いステータスを含む定義…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: NoAction, .. })` |
+| TC-port-workflow-store-025 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(動作宣言が複数あるステータス(`prompt` と `skill`、`prompt` と…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: MultipleActions, .. })` |
+| TC-port-workflow-store-026 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`run` の値が `cleanup` / `wait` 以外の定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: UnknownRunValue, .. })` |
+| TC-port-workflow-store-027 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(AgentRun ステータスに `next` の無い定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: MissingNext, .. })` |
+| TC-port-workflow-store-028 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(`next` が `statuses` に無い名前を指す定義を置く) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: NextNotFound, .. })` |
+| TC-port-workflow-store-029 | WorkflowStore パースエラー(ADR-013 の全エラー種): `load`(値の生成エラーを含む定義(空の `prompt`、`timeout: 0s`、空文字列の…) | spec/testcases/ports/workflow-store.md#パースエラーadr-013-の全エラー種 | `Err(Parse { error: InvalidValue, .. })`(`NameError` / `DurationError` / `CommandError` を包む) |
 | TC-port-workflow-store-030 | WorkflowStore エラー・可視性: `load`(ファイルは存在するが読み取れない(権限不足等。再現できるアダプター環境に限る)) | spec/testcases/ports/workflow-store.md#エラー可視性 | `Err(Io)`。message を含む |
 | TC-port-workflow-store-031 | WorkflowStore エラー・可視性: 再度 `load`(`load` に成功した後、同じファイルを別の有効な定義に書き換える) | spec/testcases/ports/workflow-store.md#エラー可視性 | 書き換え後の定義が返る(呼び出し時点のファイル内容。スナップショットは呼び出し側の責務) |
 | TC-port-worktree-manager-001 | WorktreeManager: `validate_repo(repo)`(コミットのある実在するgitリポジトリ) | spec/testcases/ports/worktree-manager.md | `Ok(())` |
@@ -633,3 +633,6 @@
 | TC-port-worktree-manager-019 | WorktreeManager: `remove(repo, path)`(worktree が既に存在しない(手動削除・前回削除済み等)) | spec/testcases/ports/worktree-manager.md | `Ok(AlreadyAbsent)`(達成済みとして成功) |
 | TC-port-worktree-manager-020 | WorktreeManager: 同じ引数で再度 `remove`(`remove` で `Removed` を得た直後) | spec/testcases/ports/worktree-manager.md | `Ok(AlreadyAbsent)`(冪等)。ブランチは引き続き残る |
 | TC-port-worktree-manager-021 | WorktreeManager: `remove(repo, ws.path)`(`create` 成功済みの worktree が存在し、その削除操作自体が失敗する状況…) | spec/testcases/ports/worktree-manager.md | `Err(WorktreeError::Failed { message })` を値として返す(パニックしない。呼び出し側が `record_tool_failure(WorktreeRemove)` の入力にする報告用エラー)。worktree(実体・登録)とブランチの既存状態には触れない(次回の `remove` が同じ前提から再試行できる) |
+| TC-port-run-store-035 | RunStore: `write_starttime` / `write_pid_file` / `write_exit` のいずれか(`prepare_attempt` を経ずに attempt ディレクトリが不在) | spec/testcases/ports/run-store.md | `Ok`。書き込み先のディレクトリが作られ、対応する read 系が書いた値を返す(`prepare_attempt` の失敗後も spawn は行われるため、ラッパーが自力で置き場を作って書けることが自己修復の前提) |
+| TC-exec-tick-160 | Tick 手続きD: 観測・判定(Running) > 異常系: tick を実行する(exit ファイルあり・judge 定義あり・`task.workspace` が None(手動修復による不変条件4の破れ)) | spec/testcases/execution/tick.md#異常系-4 | 判定コマンドを起動せず書き込みも行わず、`MissingWorkspace` として報告してスキップする。tick は 0 |
+| TC-exec-run-wrapper-028 | RunWrapper 異常系: ラッパー自身の終了コードを観測する(エージェントが非0で終了する / 同定情報一式を残せずに終える) | spec/testcases/execution/run-wrapper.md#異常系 | 前者は 0(エージェントは実行できており、その終了コードは伝播しない — 非0の値は `exit` ファイルだけが持つ)、後者は非0(起動引数が不正な場合も同じく非0)。ラッパー自身の終了コードが表すのはラッパーが責務を果たせたかであって、エージェントの成否ではない |

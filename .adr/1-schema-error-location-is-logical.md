@@ -15,7 +15,7 @@ spec は「config.yaml がパース不能(構文エラー・未知キー)なら�
 - 構文エラー・重複キー: パーサから得た行・列(`位置: N行M列`)
 - スキーマ違反: 対象ファイルの絶対パスと論理位置(キー名、ネストしていれば `agents.claude.cmd` のようなキーのパス)
 
-ただしワークフロー定義のスキーマ違反(`UnknownKey` / `InvalidValue`)は絶対パスを伴わず、論理位置だけで示す。解決先を知っているのはストアのアダプターだけで、パスを載せられる場所が自由形式のメッセージに限られるため(`.adr/1-workflow-error-file-path-goes-into-free-form-messages.md`)。config.yaml は読む対象が1つに定まるので CLI の文言層がパスを補える。
+ワークフロー定義のスキーマ違反(`UnknownKey` / `InvalidValue`)では、`location` は論理位置のみを指す。対象ファイルは `WorkflowLoadError::Parse { resolved_from }` が構造として持つ(Issue #9)。config.yaml は読む対象が1つに定まるので CLI の文言層がパスを補える。
 
 受け入れテストは前者に行・列の表示を、後者に問題のキー名の表示を要求し、文言そのものは固定しない。
 
@@ -28,5 +28,5 @@ spec は「config.yaml がパース不能(構文エラー・未知キー)なら�
 
 - 利用者は壊れている箇所をキー単位で特定できる。エラー種の区別(`.adr/1-yaml-value-then-hand-written-schema-walk.md`)を保ったまま案内が具体になる
 - トレードオフ: スキーマ違反では行番号が出ないため、大きな設定では絞り込みが1段階弱い
-- トレードオフ: ワークフロー定義を名前で指定した場合、解決先(`<home>/workflows/<name>.yaml`)は利用者が直接書いていないのに、スキーマ違反の案内にそのパスが出ない。ポート表に解決先を持たせる改訂(`WorkflowLoadError::Parse` にパスを添える)は spec 側の追従として提起する
+- 名前で指定した場合の解決先(`<home>/workflows/<name>.yaml`)は利用者が直接書いていないが、Issue #9 でポート表に `Parse { resolved_from }` を持たせたため、スキーマ違反の案内にもそのパスが出る。当初のトレードオフは解消した
 - spec の「エラー位置」を行・列に限定しない読みで満たしている。行・列まで求める場合は YAML の読み込み方(`.adr/1-yaml-value-then-hand-written-schema-walk.md`)から見直しになる

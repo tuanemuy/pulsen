@@ -82,7 +82,16 @@ pub enum WorkflowLoadError {
         attempted: PathBuf,
     },
     /// 読めたが定義として解釈できない。
-    Parse(WorkflowParseError),
+    ///
+    /// 解決先を構造として持つ — `--workflow` を名前で指定した場合、利用者が直接書いて
+    /// いないパスを案内できるのはポート側だけである。内側の `WorkflowParseError` は
+    /// どれもパスを持たず、`location` は論理位置だけを指す。
+    Parse {
+        /// 定義として解釈できなかった原因。
+        error: WorkflowParseError,
+        /// 実際に読み込んだ絶対パス(案内に使う)。
+        resolved_from: PathBuf,
+    },
     /// 存在するが読めない(権限不足・I/O 障害)。
     Io {
         /// 原因の説明。
@@ -93,6 +102,9 @@ pub enum WorkflowLoadError {
 /// `WorkflowRef` からワークフロー定義を解決・読み込み・パースする。
 ///
 /// 契約:
+/// - 解決先の案内は構造化フィールドに一本化する。`NotFound { attempted }` と
+///   `Parse { resolved_from }` が対象ファイルを持ち、自由形式のメッセージにパスを
+///   前置するのは、解決先を構造として持たない `Io { message }` だけ
 /// - 名前解決の規則: `Name(n)` → `<home>/workflows/<n>.yaml`(固定。`.yml` への
 ///   フォールバックはしない)。`Path(p)` → そのパス(相対はカレントディレクトリから解決)
 /// - アダプターが YAML テキストを `RawWorkflowDoc` に変換し(構文エラー・スキーマ外キーは

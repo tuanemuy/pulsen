@@ -12,8 +12,8 @@
 
 use pulsen_domain::definition::{StatusName, WorkflowName};
 use pulsen_domain::execution::{
-    CommandRunner, ExclusiveLock, NotificationService, NotifyOutcome, ProcessController, RunStore,
-    WorktreeManager,
+    CommandRunner, ExclusiveLock, NotificationService, NotifyFailureCause, NotifyOutcome,
+    ProcessController, RunStore, WorktreeManager,
 };
 use pulsen_domain::task::{Clock, DegradedTask, Task, TaskId, TaskRepository};
 
@@ -47,8 +47,8 @@ where
             // 「通知した」という虚偽の記録を作らない。後から notify_cmd が定義されれば、
             // 次の tick が未通知の stopped として検出して catch-up する。
             Delivery::NotConfigured => {}
-            Delivery::Attempted(NotifyOutcome::Failed { detail }) => {
-                report_failure(id, detail, summary)
+            Delivery::Attempted(NotifyOutcome::Failed { cause }) => {
+                report_failure(id, cause, summary)
             }
             Delivery::Attempted(NotifyOutcome::Delivered) => {
                 match task.mark_notified(self.clock.now()) {
@@ -72,8 +72,8 @@ where
         let id = task.id().clone();
         match self.deliver(&id, task.workflow_name(), task.task_status()) {
             Delivery::NotConfigured => {}
-            Delivery::Attempted(NotifyOutcome::Failed { detail }) => {
-                report_failure(id, detail, summary)
+            Delivery::Attempted(NotifyOutcome::Failed { cause }) => {
+                report_failure(id, cause, summary)
             }
             Delivery::Attempted(NotifyOutcome::Delivered) => {
                 match task.mark_notified(self.clock.now()) {
@@ -109,8 +109,8 @@ where
 }
 
 /// 通知の失敗を報告する。状態は変更していない(次の tick が再通知する)。
-fn report_failure(task_id: TaskId, message: String, summary: &mut TickSummary) {
+fn report_failure(task_id: TaskId, cause: NotifyFailureCause, summary: &mut TickSummary) {
     summary
         .errors
-        .push(TickIssue::NotifyFailed { task_id, message });
+        .push(TickIssue::NotifyFailed { task_id, cause });
 }

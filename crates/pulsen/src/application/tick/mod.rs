@@ -18,8 +18,8 @@ use std::path::PathBuf;
 
 use pulsen_domain::definition::{AgentInput, GlobalConfig, StatusDefinition, TimeoutSpec};
 use pulsen_domain::execution::{
-    CommandRunner, ExclusiveLock, ExitCode, InconsistentRunFiles, LockError, ProcessController,
-    RemnantOutcome, RunFileError, RunStore, WorktreeManager,
+    CommandRunner, ExclusiveLock, ExitCode, InconsistentRunFiles, LockError, NotifyFailureCause,
+    ProcessController, RemnantOutcome, RunFileError, RunStore, WorktreeManager,
 };
 use pulsen_domain::task::{
     AttemptNumber, Clock, ExecutionState, ExecutionStateKind, ReadError, SaveError, StateRoot,
@@ -203,8 +203,8 @@ pub enum TickIssue {
     NotifyFailed {
         /// 対象のタスク。
         task_id: TaskId,
-        /// 原因の説明。
-        message: String,
+        /// 通知が届かなかった原因。
+        cause: NotifyFailureCause,
     },
     /// タスクファイルを保存できない。
     SaveFailed {
@@ -268,8 +268,11 @@ impl RemnantsLeft {
 
 /// tick パスの結果。
 ///
-/// spec の全フィールドに、spec のどれにも当てはまらない `confirmed_running` と `judged` を
-/// 足した形。`archived` / `gc_deleted` / `gc_errors` はまだ値の入る経路を持たない。
+/// 1タスクは1tickで1ステップしか進まないため、進んだステップごとに別のフィールドで受ける
+/// (`confirmed_running` は launching → running の取込、`judged` は判定の確定、
+/// `transitioned` は次ステータスへの前進)。まとめると、どのステップが起きたかを結果から
+/// 読み分けられなくなる。`archived` / `gc_deleted` / `gc_errors` は対応する手続きが未実装で、
+/// まだ値の入る経路を持たない。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickSummary {
     /// 起動したタスク。

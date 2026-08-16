@@ -581,7 +581,7 @@ exit 20
 |---|---|---|
 | 1 | `pulsen add --workflow pipeline --repo /tmp/pulsen-test/repo` を実行し、IDを T20 として控える。続けて `pulsen add --workflow /tmp/pulsen-test/draft.yaml --repo /tmp/pulsen-test/repo` を実行し、IDを T20h として控える | 2タスクが登録される |
 | 2 | `cp /tmp/pulsen-test/home/state/tasks/<T20>.json /tmp/pulsen-test/t20.bak` の後、`echo broken > /tmp/pulsen-test/home/state/tasks/<T20>.json` を実行する | T20 のタスクファイルが破損状態になる |
-| 3 | `pulsen tick` を実行する | サマリーにスキップした破損ファイルとして T20 のファイルパスが報告される。T20h は通常どおり処理されてアーカイブされる(他タスクへの影響なし)。tick の exit code は 0 |
+| 3 | `pulsen tick` を実行する | サマリーの「スキップ」の見出しに T20 のファイルパスが報告される。T20h は通常どおり処理されてアーカイブされる(他タスクへの影響なし)。tick の exit code は 0 |
 | 4 | `cat /tmp/pulsen-test/home/state/tasks/<T20>.json` を実行する | 内容は `broken` のまま(破損ファイルへの書き込みは行われない) |
 | 5 | `pulsen ls` を実行する | パース不能なタスクファイルの存在(パスと読めない旨)が報告される(修復の入口) |
 | 6 | `cat /tmp/pulsen-test/notify.log` を実行する | T20 に関する通知は発生していない(stopped化されない) |
@@ -670,7 +670,7 @@ exit 20
 | RegisterTask | ワークフロー解決失敗(`NotFound`) | TC-08, TC-09 | 名前指定(TC-08)・パス指定(TC-09 手順2)の両方 |
 | RegisterTask | ワークフロー解決失敗(`Io`) | 対象外 | 読み取りI/O障害の注入が必要 |
 | RegisterTask | ワークフローのパースエラー(`WorkflowParseError` 全種) | TC-09 | 構文エラーで経路を代表確認。キー単位の検証エラー全種(`MissingInitial` 等)は `testcases/task/register-task.md` の自動テストで網羅 |
-| RegisterTask | 表示名の決定失敗(`NameError`) | 対象外 | 拡張子を除くと空になるファイル名という特殊入力のみ。自動テストで網羅 |
+| RegisterTask | 表示名の決定失敗(`NameError`) | 対象外 | 語幹が空白のみになるファイル名という特殊入力のみ。自動テストで網羅 |
 | RegisterTask | リポジトリ不在・非リポジトリ | TC-10 | |
 | RegisterTask | ブランチ不在 / HEAD 解決不能(detached HEAD) | TC-11 | 空リポジトリのケースは同一経路のため detached HEAD で代表確認 |
 | RegisterTask | 対象検証の git 操作自体の失敗(`TargetError::Failed`) | 対象外 | git 実行環境の障害注入が必要 |

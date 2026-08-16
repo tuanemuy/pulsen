@@ -15,7 +15,7 @@ pub use judgement::{DefaultJudgement, JudgementService};
 pub use launching::{
     InconsistentRunFiles, LaunchingClassifier, LaunchingDecision, LaunchingRecheck,
 };
-pub use notification::{NotificationService, NotifyOutcome};
+pub use notification::{NotificationService, NotifyFailureCause, NotifyOutcome};
 pub use port::{
     CommandRunner, ExclusiveLock, Io, KillError, LockError, LockGuard, ProcessController,
     RemnantOutcome, RunFileError, RunStore, SpawnError, TargetError, WorktreeError,

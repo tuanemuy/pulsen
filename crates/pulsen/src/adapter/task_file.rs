@@ -13,8 +13,8 @@
 //! | タスク側フィールドは読めるが、`snapshot` が解釈できない | `SnapshotUnreadable` |
 //! | 状態間整合の不変条件2〜4の破れ | 検証しない(`Intact`) |
 //!
-//! 不変条件2〜4を復号で検証すると、遷移関数の前提検査(`InvariantViolated`)が受け持つ
-//! 「手動修復で壊れたタスクを人間に見せる」経路が塞がる。
+//! 不変条件2〜4を復号で検証すると、遷移関数の前提検査(`TransitionError::MissingCurrentAttempt`
+//! / `WorkspaceNotSet`)が受け持つ「手動修復で壊れたタスクを人間に見せる」経路が塞がる。
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

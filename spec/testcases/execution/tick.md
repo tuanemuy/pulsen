@@ -36,7 +36,7 @@
 | パース不能なタスクファイル(`Corrupt`)が混在する | tick を実行する | 当該タスクは報告のみで書き込まない(stopped化もしない)。残りのタスクは処理を続行し、tick は 0 | |
 | スナップショットのみ破損(`SnapshotUnreadable`)・stopped 以外のタスクがある | tick を実行する | 定義依存の判断(起動・遷移・終端処理)をすべてスキップして報告する。書き込まない。tick は 0 | |
 | completed だが手動修復により遷移の前提が破れている(`TransitionError`) | tick を実行する | 報告してそのタスクをスキップする。tick は 0 | |
-| 手動修復で不変条件が破れている(Running なのに `current_attempt` / `process` が None 等) | tick を実行する | 不変条件の破れとして報告してスキップする(検出は手続きC / D 冒頭のユースケース検査、または遷移関数の `InvariantViolated`)。修復は人間に委ねる | |
+| 手動修復で不変条件が破れている(Running なのに `current_attempt` / `process` が None 等) | tick を実行する | 不変条件の破れとして報告してスキップする(検出は手続きC / D 冒頭のユースケース検査、または遷移関数の `TransitionError`(`MissingCurrentAttempt` 等))。修復は人間に委ねる | |
 | 1タスクの処理が失敗する(観測の Io 失敗等) | tick を実行する | `errors` に記録して残りのタスクを続行する。tick 全体は 0 | |
 
 ### エッジケース
@@ -138,7 +138,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| runディレクトリに pid・starttime の両方がある | tick を実行する | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる | |
+| runディレクトリに pid・starttime の両方がある | tick を実行する | `ConfirmRunning`: 実行状態が running になり、`current_attempt.process` に同定情報一式(pid・kill同定子・starttime)が取り込まれ、spawn_fail_count が 0 にリセットされる。サマリーの `confirmed_running` に記録される | |
 | pid がなく、launching 記録からの経過が猶予時間内 | tick を実行する | `KeepWaiting`: 何もしない(ラッパーの書き込み待ち) | |
 | pid がなく、猶予時間を超過している | tick を実行する | 無効化マーカーを書き、pid を再読する。なお pid がなければ `record_spawn_failure`: pending 復帰・spawn_fail_count 加算・last_failure = SpawnFail | |
 | マーカー書き込み後の再読で pid・starttime が現れていた | tick を実行する | pending に戻さず `confirm_running` で running へ取り込む | |
@@ -179,7 +179,7 @@
 
 | 前提条件 | 操作 | 期待結果 | 実装ステータス |
 |---|---|---|---|
-| exit ファイルに 0・judge 未定義 | tick を実行する | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick) | |
+| exit ファイルに 0・judge 未定義 | tick を実行する | デフォルト判定で Completed → `complete_run`: completed になり attempt_count・judge_attempt_count が 0 にリセットされる(next への遷移は次tick)。サマリーの `judged` に記録される | |
 | exit ファイルに非0・judge 未定義 | tick を実行する | デフォルト判定で Failed → `fail_run`: failed になり attempt_count 加算・judge_attempt_count リセット | |
 | exit ファイルあり・judge 定義あり | tick を実行する | 判定コマンドが `TASK_ID` / `WORKSPACE` / `EXIT_CODE`(10進文字列)/ `RUN_DIR` の環境変数と `config.judge_timeout` で、シェルを介さず直接起動される(引数なし・プレースホルダ展開なし) | |
 | 判定コマンドが exit 0 で終了する | tick を実行する | Completed → `complete_run` | |
@@ -200,9 +200,10 @@
 | `fail_run` の加算で attempt_count が上限を超過する | tick を実行する | `Stopped { RetryLimitExceeded }` を保存し notify を実行する | |
 | timeout kill が失敗する(`KillError`) | tick を実行する | `fail_run` を呼ばず状態を変更せず報告のみ行う。次tickが同じ決定を再導出して再試行する(プロセス生存のまま failed → 再起動 → 同一worktree並走を防ぐ) | |
 | `starttime_of` が `Err(Io)` を返す(取得機構自体の失敗) | tick を実行する | 状態を変更せず報告してスキップする。次tickで再観測 | |
-| exit ファイルあり・`starttime_of` が失敗する環境 | tick を実行する | 生存観測に依存せず判定が遅延なく実行され、分類が確定する(exit が Some なら判定 — RunningClassifier の2段規則。観測の一過性失敗で判定を遅延させない) | |
+| exit ファイルあり・`starttime_of` が失敗する環境 | tick を実行する | 生存観測に依存せず判定が遅延なく実行され、分類が確定する(exit が Some なら判定 — 2段規則の1段目はユースケース側にあり、`classify_alive` は生存の分類だけを返す。観測の一過性失敗で判定を遅延させない) | |
 | `read_exit` が `RunFileError` を返す | tick を実行する | 当該タスクをスキップして報告する(書き込まない)。tick は 0 | |
 | `try_kill_remnants` が `NotIdentifiable` / `Failed` を返す | tick を実行する | 結果は報告のみで、分類(failed)には影響しない(孤児の残存は許容) | |
+| exit ファイルあり・judge 定義あり・`task.workspace` が None(手動修復による不変条件4の破れ) | tick を実行する | 判定コマンドを起動せず書き込みも行わず、`MissingWorkspace` として報告してスキップする。tick は 0 | |
 
 ### 境界値
 

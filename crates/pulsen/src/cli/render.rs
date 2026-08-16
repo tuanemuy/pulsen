@@ -9,7 +9,9 @@ use pulsen_domain::definition::{
     AgentName, CommandError, ConfigLoadError, RegistrationError, SourceLocation, TimeoutSpec,
     WorkflowLoadError, WorkflowParseError, WorkflowStructureError,
 };
-use pulsen_domain::execution::{InconsistentRunFiles, RunFileError, TargetError};
+use pulsen_domain::execution::{
+    InconsistentRunFiles, NotificationService, NotifyFailureCause, RunFileError, TargetError,
+};
 use pulsen_domain::task::{
     AbsolutePathError, AttemptNumber, CreateError, ExecutionStateKind, RunDirPath, SaveError,
     TaskId, TransitionError,
@@ -243,9 +245,10 @@ fn tick_issue(issue: &TickIssue) -> String {
             "{}: 判定コマンドへ渡すワークスペースが未確定です(タスクファイルの修復が必要です)",
             task_id.as_str()
         ),
-        TickIssue::NotifyFailed { task_id, message } => format!(
-            "{}: 凍結を通知できません({message})。次の tick が再通知します",
-            task_id.as_str()
+        TickIssue::NotifyFailed { task_id, cause } => format!(
+            "{}: 凍結を通知できません({})。次の tick が再通知します",
+            task_id.as_str(),
+            notify_failure_cause(cause)
         ),
         TickIssue::SaveFailed { task_id, error } => format!(
             "{}: タスクファイルを保存できません({})",
@@ -276,6 +279,22 @@ fn run_failure_cause(cause: &RunFailureCause) -> String {
             timeout: TimeoutSpec::Unlimited,
         } => "実行を終了させました".to_owned(),
         RunFailureCause::DiedWithoutExit => "実行が終了コードを残さずに終わりました".to_owned(),
+    }
+}
+
+/// 通知が届かなかった原因。timeout の秒数は組み込み定数から読む。
+fn notify_failure_cause(cause: &NotifyFailureCause) -> String {
+    match cause {
+        NotifyFailureCause::ExitedNonZero { exit } => {
+            format!("通知コマンドが終了コード {} で終了しました", exit.get())
+        }
+        NotifyFailureCause::TimedOut => format!(
+            "通知コマンドが {} 秒のうちに終了しませんでした",
+            NotificationService::NOTIFY_TIMEOUT.seconds()
+        ),
+        NotifyFailureCause::FailedToStart { message } => {
+            format!("通知コマンドを起動できませんでした: {message}")
+        }
     }
 }
 
@@ -532,8 +551,16 @@ fn workflow_load_error(error: &WorkflowLoadError) -> String {
             "ワークフロー定義を読み込めません。",
             &[format!("原因: {message}")],
         ),
-        WorkflowLoadError::Parse(error) => {
-            problem("ワークフロー定義が不正です。", &workflow_parse_error(error))
+        WorkflowLoadError::Parse {
+            error,
+            resolved_from,
+        } => {
+            // 名前で指定した場合、解決先は利用者が直接書いていないので、ここだけが案内する。
+            // 見出しを `NotFound` の「解決を試みたパス」と書き分けるのは、読めたファイルと
+            // 到達できなかったパスとで、次に開く先が変わるためである。
+            let mut details = vec![format!("解決したパス: {}", resolved_from.display())];
+            details.extend(workflow_parse_error(error));
+            problem("ワークフロー定義が不正です。", &details)
         }
     }
 }
@@ -907,6 +934,42 @@ mod tests {
     }
 
     #[test]
+    fn 解釈できない定義は読んだパスを一度だけ添えて案内される() {
+        const RESOLVED: &str = "/home/u/.pulsen/workflows/implement.yaml";
+        let parse = |error| {
+            register(RegisterTaskError::WorkflowLoad(WorkflowLoadError::Parse {
+                error,
+                resolved_from: PathBuf::from(RESOLVED),
+            }))
+        };
+
+        assert_eq!(
+            parse(WorkflowParseError::UnknownKey {
+                location: "statuses.queued".to_owned(),
+                key: "typo_key".to_owned(),
+            }),
+            "エラー: ワークフロー定義が不正です。\n  \
+             解決したパス: /home/u/.pulsen/workflows/implement.yaml\n  \
+             statuses.queued にスキーマ外のキー `typo_key` があります。"
+        );
+
+        let syntax = parse(WorkflowParseError::YamlSyntax {
+            message: "重複キー initial".to_owned(),
+            location: Some(SourceLocation { line: 2, column: 1 }),
+        });
+
+        assert!(
+            syntax.contains(&format!("解決したパス: {RESOLVED}")),
+            "{syntax}"
+        );
+        assert_eq!(
+            syntax.matches(RESOLVED).count(),
+            1,
+            "同じパスが1つの案内に2回現れない: {syntax}"
+        );
+    }
+
+    #[test]
     fn 登録時検証のエラーは全件が並びタスク不作成を伝える() {
         let text = register(RegisterTaskError::Registration(vec![
             RegistrationError::UnknownAgent {
@@ -1149,6 +1212,45 @@ mod tests {
         assert!(
             failed(RunFailureCause::DiedWithoutExit)
                 .ends_with("実行の失敗を記録しました(実行が終了コードを残さずに終わりました)"),
+        );
+    }
+
+    #[test]
+    fn 通知できなかった原因は3つが区別できる形で示される() {
+        let failed = |cause: NotifyFailureCause| {
+            tick_summary(&TickSummary {
+                errors: vec![TickIssue::NotifyFailed {
+                    task_id: task("20260812t101112-abcd1234"),
+                    cause,
+                }],
+                ..TickSummary::default()
+            })
+        };
+
+        assert_eq!(
+            failed(NotifyFailureCause::ExitedNonZero {
+                exit: ExitCode::new(3),
+            }),
+            "tick を実行しました。\n  \
+             スキップ(1件):\n    \
+             - 20260812t101112-abcd1234: 凍結を通知できません\
+             (通知コマンドが終了コード 3 で終了しました)。次の tick が再通知します"
+        );
+        assert!(
+            failed(NotifyFailureCause::TimedOut).contains(&format!(
+                "凍結を通知できません(通知コマンドが {} 秒のうちに終了しませんでした)",
+                NotificationService::NOTIFY_TIMEOUT.seconds()
+            )),
+            "秒数は設定値ではなく組み込み定数から読む"
+        );
+        assert!(
+            failed(NotifyFailureCause::FailedToStart {
+                message: "通知コマンドが見つかりません".to_owned(),
+            })
+            .contains(
+                "凍結を通知できません\
+                 (通知コマンドを起動できませんでした: 通知コマンドが見つかりません)"
+            ),
         );
     }
 

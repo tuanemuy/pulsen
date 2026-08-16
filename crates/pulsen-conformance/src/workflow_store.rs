@@ -419,6 +419,11 @@ statuses:
 pub fn tc_port_workflow_store_017_構文エラーと重複キーは位置つきで拒否される(
     harness: &impl WorkflowStoreHarness,
 ) -> CaseOutcome {
+    // 期待値との一致は名前解決の期待を持つアダプターだけが主張できる。この行の主題は
+    // 構文エラーの分類なので、ケース全体ではなくその一致だけを条件にする。ポートが返した
+    // resolved_from だけで書ける主張は、フックの有無に関わらず無条件に走らせる。
+    let expected = harness.expected_path_for_name("wf");
+
     for text in [
         "initial: [\n",
         "initial: queued
@@ -431,13 +436,22 @@ statuses:
     ] {
         require!(harness.put_named("wf", text));
 
-        match expect_parse_error(harness.store().load(&name("wf"))) {
+        let (error, resolved_from) = expect_parse_error(harness.store().load(&name("wf")));
+        match error {
             WorkflowParseError::YamlSyntax { message, location } => {
                 assert!(!message.is_empty());
                 assert!(location.is_some(), "テキスト上の位置を伴う");
+                assert!(
+                    !message.contains(&resolved_from.display().to_string()),
+                    "解決先は構造化フィールドで示し、メッセージには前置しない"
+                );
             }
             other => panic!("YamlSyntax として拒否される: {other:?}"),
         }
+        if let Some(expected) = &expected {
+            assert_eq!(&resolved_from, expected);
+        }
+        assert!(resolved_from.is_absolute(), "案内に使える絶対パスを返す");
     }
     CaseOutcome::Ran
 }
@@ -455,7 +469,7 @@ statuses:
 "
     ));
 
-    let error = expect_parse_error(harness.store().load(&name("wf")));
+    let error = expect_parse_error(harness.store().load(&name("wf"))).0;
 
     assert!(
         matches!(&error, WorkflowParseError::UnknownKey { key, .. } if key == "initail"),
@@ -478,7 +492,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::UnknownKey {
             location: "statuses.queued".to_owned(),
             key: "prmopt".to_owned()
@@ -512,7 +526,7 @@ statuses:
     ] {
         require!(harness.put_named("wf", text));
 
-        let error = expect_parse_error(harness.store().load(&name("wf")));
+        let error = expect_parse_error(harness.store().load(&name("wf"))).0;
         assert!(
             matches!(&error, WorkflowParseError::ForbiddenKey { key: found, .. } if found == key),
             "ForbiddenKey({key}) として拒否される: {error:?}"
@@ -534,7 +548,7 @@ pub fn tc_port_workflow_store_021_initialが無ければ拒否される(
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::MissingInitial
     );
     CaseOutcome::Ran
@@ -554,7 +568,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::InitialNotFound {
             initial: "missing".to_owned()
         }
@@ -569,7 +583,7 @@ pub fn tc_port_workflow_store_023_statusesが空または欠落なら拒否さ�
         require!(harness.put_named("wf", text));
 
         assert_eq!(
-            expect_parse_error(harness.store().load(&name("wf"))),
+            expect_parse_error(harness.store().load(&name("wf"))).0,
             WorkflowParseError::EmptyStatuses
         );
     }
@@ -590,7 +604,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::NoAction {
             status: "queued".to_owned()
         }
@@ -613,7 +627,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::MultipleActions {
             status: "queued".to_owned(),
             keys: vec!["prompt".to_owned(), "skill".to_owned()]
@@ -635,7 +649,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::UnknownRunValue {
             status: "queued".to_owned(),
             value: "sleep".to_owned()
@@ -657,7 +671,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::MissingNext {
             status: "queued".to_owned()
         }
@@ -679,7 +693,7 @@ statuses:
     ));
 
     assert_eq!(
-        expect_parse_error(harness.store().load(&name("wf"))),
+        expect_parse_error(harness.store().load(&name("wf"))).0,
         WorkflowParseError::NextNotFound {
             status: "queued".to_owned(),
             next: "nowhere".to_owned()
@@ -733,7 +747,7 @@ statuses:
     ] {
         require!(harness.put_named("wf", text));
 
-        let error = expect_parse_error(harness.store().load(&name("wf")));
+        let error = expect_parse_error(harness.store().load(&name("wf"))).0;
         assert!(
             matches!(&error, WorkflowParseError::InvalidValue { location: found, .. } if found == location),
             "InvalidValue({location}) として拒否される: {error:?}"
@@ -757,7 +771,7 @@ pub fn tc_port_workflow_store_030_読み取れない定義は入出力エラー�
         Err(WorkflowLoadError::NotFound { attempted }) => {
             panic!("存在するので NotFound ではない: {}", attempted.display())
         }
-        Err(WorkflowLoadError::Parse(error)) => {
+        Err(WorkflowLoadError::Parse { error, .. }) => {
             panic!("読めないことはパースエラーではない: {error:?}")
         }
     }
@@ -824,7 +838,7 @@ fn expect_ok(result: Result<LoadedWorkflow, WorkflowLoadError>) -> LoadedWorkflo
         Err(WorkflowLoadError::NotFound { attempted }) => {
             panic!("配置したのに NotFound: {}", attempted.display())
         }
-        Err(WorkflowLoadError::Parse(error)) => {
+        Err(WorkflowLoadError::Parse { error, .. }) => {
             panic!("受理されるべき定義が拒否された: {error:?}")
         }
         Err(WorkflowLoadError::Io { message }) => panic!("読み込みに失敗した: {message}"),
@@ -838,18 +852,25 @@ fn expect_not_found(result: Result<LoadedWorkflow, WorkflowLoadError>) -> PathBu
             loaded.resolved_from().display()
         ),
         Err(WorkflowLoadError::NotFound { attempted }) => attempted,
-        Err(WorkflowLoadError::Parse(error)) => panic!("不在はパースエラーではない: {error:?}"),
+        Err(WorkflowLoadError::Parse { error, .. }) => {
+            panic!("不在はパースエラーではない: {error:?}")
+        }
         Err(WorkflowLoadError::Io { message }) => panic!("不在は Io ではない: {message}"),
     }
 }
 
-fn expect_parse_error(result: Result<LoadedWorkflow, WorkflowLoadError>) -> WorkflowParseError {
+fn expect_parse_error(
+    result: Result<LoadedWorkflow, WorkflowLoadError>,
+) -> (WorkflowParseError, PathBuf) {
     match result {
         Ok(loaded) => panic!(
             "拒否されるべき定義が受理された: {}",
             loaded.resolved_from().display()
         ),
-        Err(WorkflowLoadError::Parse(error)) => error,
+        Err(WorkflowLoadError::Parse {
+            error,
+            resolved_from,
+        }) => (error, resolved_from),
         Err(WorkflowLoadError::NotFound { attempted }) => {
             panic!("配置したのに NotFound: {}", attempted.display())
         }

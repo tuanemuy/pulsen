@@ -1,11 +1,11 @@
 # Inventory — adapter
 
-生成元: spec/domains/(ポート実装。最終同期: 2026-08-11)
+生成元: spec/domains/(ポート実装。最終同期: 2026-08-16)
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
-| ADP-config-001 | ConfigStore.load(実装) | spec/domains/definition.md#configstore | 読み取り専用・ロック不要。YAML構文検証・未知キー検出(ADR-013)・型/期間形式の検証を読み込み時に行い`NotFound`/`Invalid`/`Io`を区別する。テンプレート内容(プレースホルダ)は検証しない(参照時検証)。キャッシュせず呼び出し時点のファイル内容を返す |
-| ADP-workflowstore-001 | WorkflowStore.load(実装) | spec/domains/definition.md#workflowstore | 名前解決は`Name(n)`→`<home>/workflows/<n>.yaml`固定(`.yml`へのフォールバックなし)、`Path(p)`はプロセスのカレントディレクトリから相対解決。YAMLテキスト→`RawWorkflowDoc`変換時に構文エラー(`YamlSyntax`)・スキーマ外キー(`UnknownKey`)を検出し、`WorkflowAssembler::assemble`に委譲する。`resolved_from`に実際に読み込んだ絶対パスを返す。読み取り専用・キャッシュしない |
+| ADP-config-001 | ConfigStore.load(実装) | spec/domains/definition.md#configstore | 読み取り専用・ロック不要。YAML構文検証・未知キー検出(ADR-013)・型/期間形式の検証を読み込み時に行い`NotFound`/`Invalid`/`Io`を区別する。`Invalid`の`location`は2層で、構文エラー・重複キーは行・列、スキーマ違反(未知キー・型不一致)は問題のキーのパス(論理位置。`agents.claude.cmd`等)を指す。テンプレート内容(プレースホルダ)は検証しない(参照時検証)。キャッシュせず呼び出し時点のファイル内容を返す |
+| ADP-workflowstore-001 | WorkflowStore.load(実装) | spec/domains/definition.md#workflowstore | 名前解決は`Name(n)`→`<home>/workflows/<n>.yaml`固定(`.yml`へのフォールバックなし)、`Path(p)`はプロセスのカレントディレクトリから相対解決。YAMLテキスト→`RawWorkflowDoc`変換時に構文エラー(`YamlSyntax`)・スキーマ外キー(`UnknownKey`)を検出し、`WorkflowAssembler::assemble`に委譲する。`resolved_from`に実際に読み込んだ絶対パスを返す。パースの失敗は`Parse{error,resolved_from}`として解決先を伴って返し、`WorkflowParseError`側の自由形式メッセージにはパスを前置しない(前置が残るのは`Io{message}`のみ)。読み取り専用・キャッシュしない |
 | ADP-taskrepo-001 | TaskRepository.create(実装) | spec/domains/task.md#taskrepository | ID衝突をアダプターが担保し`Conflict`を返す(呼び出し側の事前確認に依存しない)。存在判定はデコード可否によらない(破損ファイルも存在扱い)。必要なディレクトリ(`state/tasks/`等)を自動作成する。書き込みはアトミック置換で行い部分的な内容を観測させない |
 | ADP-taskrepo-002 | TaskRepository.save(実装) | spec/domains/task.md#taskrepository | 現役に存在しない場合`NotFound`。アトミック置換により書きかけの内容を観測させない。直後の`find`が更新後の内容を返す(read-your-writes) |
 | ADP-taskrepo-003 | TaskRepository.save_degraded(実装) | spec/domains/task.md#taskrepository | スナップショットフィールドをファイル内の元の内容のまま書き戻す(往復可能性・修復材料の温存)。タスク側フィールドのみ更新する。アトミック置換 |
@@ -22,9 +22,9 @@
 | ADP-runstore-005 | RunStore.attempt_exists(実装) | spec/domains/execution.md#runstore | attemptディレクトリ自体の存在確認をread系の`Ok(None)`とは独立に提供し、「空ディレクトリ」と「ディレクトリごと不在」を区別できるようにする |
 | ADP-runstore-006 | RunStore.write_invalidation_marker(実装) | spec/domains/execution.md#runstore | ディレクトリ不在なら作成したうえでマーカーを書く。冪等 |
 | ADP-runstore-007 | RunStore.marker_exists(実装) | spec/domains/execution.md#runstore | マーカーファイルの存在有無をそのまま返す |
-| ADP-runstore-008 | RunStore.write_starttime(実装) | spec/domains/execution.md#runstore | アトミック置換で書き込み、並行読み取りに書きかけ・新旧混合の内容を観測させない。書き込み失敗時も部分的な内容を残さない(不在または従前の完全な値のみを観測可能に保つ) |
-| ADP-runstore-009 | RunStore.write_pid_file(実装) | spec/domains/execution.md#runstore | write_starttimeと同じアトミック置換・非観測性の契約を`PidFileContent`に適用する |
-| ADP-runstore-010 | RunStore.write_exit(実装) | spec/domains/execution.md#runstore | write_starttimeと同じアトミック置換・非観測性の契約を`ExitCode`に適用する |
+| ADP-runstore-008 | RunStore.write_starttime(実装) | spec/domains/execution.md#runstore | アトミック置換で書き込み、並行読み取りに書きかけ・新旧混合の内容を観測させない。書き込み先のディレクトリは必要に応じて作る。書き込み失敗時も部分的な内容を残さない(不在または従前の完全な値のみを観測可能に保つ) |
+| ADP-runstore-009 | RunStore.write_pid_file(実装) | spec/domains/execution.md#runstore | write_starttimeと同じアトミック置換・非観測性・書き込み先のディレクトリを必要に応じて作る契約を`PidFileContent`に適用する |
+| ADP-runstore-010 | RunStore.write_exit(実装) | spec/domains/execution.md#runstore | write_starttimeと同じアトミック置換・非観測性・書き込み先のディレクトリを必要に応じて作る契約を`ExitCode`に適用する |
 | ADP-runstore-011 | RunStore.list_runs(実装) | spec/domains/execution.md#runstore | `state/runs/`不在時は空の`RunListing`を返す。`attempt-<n>`形式外のエントリは列挙対象外とする。`last_activity`はディレクトリ内ファイルの最終更新時刻の最大値、ファイルが1つもなければディレクトリ自体の最終更新時刻とする。`TaskId`にパースできないディレクトリ名は生文字列のまま列挙する |
 | ADP-runstore-012 | RunStore.delete_attempt(実装) | spec/domains/execution.md#runstore | 指定attemptのみを削除し他のattemptに影響しない。削除失敗は`Io`を値として返す(パニックしない。カウンタ・stoppedを発生させない呼び出し側判断の前提) |
 | ADP-runstore-013 | RunStore.remove_task_dir_if_empty(実装) | spec/domains/execution.md#runstore | attemptが1つ以上、または`attempt-<n>`形式外のエントリが残る場合は削除せず`Ok`を返す(非空はエラーではない。残存エントリに触れない)。空になった場合のみタスクディレクトリを削除する |

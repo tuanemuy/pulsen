@@ -1,6 +1,6 @@
 # Inventory — frontend
 
-生成元: spec/pages/(CLI コマンド。最終同期: 2026-08-11)
+生成元: spec/pages/(CLI コマンド。最終同期: 2026-08-16)
 
 | ID | 要素 | 定義場所 | 実装されるべき振る舞いの要点 |
 |----|------|---------|------------------------------|
@@ -19,12 +19,12 @@
 | PAGE-add-007 | 検証済み定義のスナップショット保存とタスクファイルの作成 | spec/pages/index.md#add | 検証済みのワークフロー定義をスナップショットとして保存し、実行状態 pending のタスクファイルを作成すれば PASS。 |
 | PAGE-add-008 | タスクIDの発行と表示 | spec/pages/index.md#add | 登録時にタスクIDを発行し、その値を利用者に表示すれば PASS。 |
 | PAGE-add-009 | 成功時の終了 | spec/pages/index.md#add | 検証・登録が成功した場合にタスクIDを表示して 0 で終了すれば PASS。 |
-| PAGE-add-010 | 検証エラー時の拒否 | spec/pages/index.md#add | ワークフロー不在・YAML不正・エージェント未定義・skill_input 欠落・リポジトリ/ブランチ不在の各原因を表示して非0で終了し、タスクを作らず、ワークフロー名解決失敗時は解決を試みたパス(`workflows/<name>.yaml` の絶対パス)を、エージェント未定義時は config.yaml に定義済みのエージェント名一覧を添えれば PASS。 |
+| PAGE-add-010 | 検証エラー時の拒否 | spec/pages/index.md#add | ワークフロー不在・YAML不正・エージェント未定義・skill_input 欠落・リポジトリ/ブランチ不在の各原因を表示して非0で終了し、タスクを作らず、ワークフロー名解決失敗時は解決を試みたパス(`workflows/<name>.yaml` の絶対パス)を、ワークフロー定義のパースエラー時は解決先の絶対パス(名前指定では利用者が直接書いていないため)を、エージェント未定義時は config.yaml に定義済みのエージェント名一覧を添えれば PASS。 |
 | PAGE-tick-001 | tick コマンド | spec/pages/index.md#tick | `pulsen tick` の構文で1回のtickパスを実行して終了し、定期実行は外部スケジューラーに委ねる責務であれば PASS。 |
 | PAGE-tick-002 | 全タスクファイルの走査と状態応じた処理 | spec/pages/index.md#tick | 全タスクファイルを走査し、実行状態・タスクステータスに応じて起動/launching分類/観測・判定/遷移/クリーンアップ/通知を行えば PASS。 |
 | PAGE-tick-003 | run_retention 設定時のgc | spec/pages/index.md#tick | `run_retention` が設定されている場合にのみ保持期間を超えたattemptのrunディレクトリをgcし(保護規則・失敗時の扱いは requirements §9.2 準拠)、未設定なら行わなければ PASS。 |
-| PAGE-tick-004 | 処理結果のサマリー表示 | spec/pages/index.md#tick | 起動したタスク、遷移したタスク、skippedで実行待ちに戻したタスク、凍結したタスク、gcで削除したattempt、スキップした破損ファイル等を含むサマリーを表示すれば PASS。 |
-| PAGE-tick-005 | 成功時の終了 | spec/pages/index.md#tick | 実行したアクションのサマリーを表示して 0 で終了し、処理対象がなければその旨を表示して 0 で終了すれば PASS。 |
+| PAGE-tick-004 | 処理結果のサマリー表示 | spec/pages/index.md#tick | ID を並べる見出しがサマリーの10フィールド(launched/confirmed_running/judged/transitioned/skipped_back/frozen/notified/archived/gc_deleted/gc_errors)と1対1で対応し、空の見出しを出さなければ PASS(日本語の文言は表示層の裁量)。 |
+| PAGE-tick-005 | 成功時の終了 | spec/pages/index.md#tick | 実行したアクションのサマリーを表示して 0 で終了し、記録すべきことが1つも起きなかった tick は「処理対象のタスクはありませんでした」を表示して 0 で終了すれば PASS。 |
 | PAGE-ls-001 | ls コマンド | spec/pages/index.md#ls | `pulsen ls [--status <task-status>] [--state <exec-state>] [--all]` の構文を解析し、タスク一覧を表示する責務であれば PASS。 |
 | PAGE-ls-002 | `--status` オプションによる絞り込み | spec/pages/index.md#ls | タスクステータス(ユーザー定義)で絞り込み、値の検証は行わず未知の値は「該当なし」として空の一覧(exit code 0)になれば PASS。 |
 | PAGE-ls-003 | `--state` オプションによる絞り込み | spec/pages/index.md#ls | 実行状態(pending/launching/running/completed/failed/stopped)で絞り込めれば PASS。 |
@@ -67,7 +67,7 @@
 | PAGE-wrapper-004 | エージェント起動とログ・exitファイルの書き込み | spec/pages/index.md#wrapper内部コマンド | エージェントを起動し、stdout/stderrをログへリダイレクトし、終了後にexitファイルを書き込めば PASS。 |
 | PAGE-wrapper-005 | 結果の観測点 | spec/pages/index.md#wrapper内部コマンド | 利用者が直接観測せず、結果がすべてrunディレクトリのファイル(pid/starttime/exit/ログ)として現れれば PASS。 |
 | PAGE-common-007 | 出力形式 | spec/pages/index.md#共通事項 | 全コマンドの出力が人間可読なテキストであり、JSON等の機械可読形式を本フェーズでは提供しない |
-| PAGE-common-008 | config.yaml 不在・パース不能時の全コマンド共通の拒否 | spec/pages/index.md#縮退状態の共通規則 | add/tick/ls/show/abort/retry/set-status のすべてが非0終了。不在時は「グローバルホームが未初期化」である旨・解決後のホームパス・作成が必要であることを、パース不能時はエラー位置を表示し、状態は変更しない(※1) |
+| PAGE-common-008 | config.yaml 不在・パース不能時の全コマンド共通の拒否 | spec/pages/index.md#縮退状態の共通規則 | add/tick/ls/show/abort/retry/set-status のすべてが非0終了。不在時は「グローバルホームが未初期化」である旨・解決後のホームパス・作成が必要であることを、パース不能時は構文エラー・重複キーなら行・列を、スキーマ違反ならキーのパス(論理位置)を表示し、状態は変更しない(※1) |
 | PAGE-common-009 | state/ 配下ディレクトリの自動作成 | spec/pages/index.md#縮退状態の共通規則 | `state/`(tasks / runs / archive)が不在でも状態を書き込むコマンドが必要に応じて自動作成する。ls は空一覧で 0、単一タスク対象コマンドは「タスク不在」として非0(※3) |
 | PAGE-common-010 | ロック競合時のコマンド別の結末 | spec/pages/index.md#縮退状態の共通規則 | tick のみ 0 でスキップ、add は登録前競合のためタスクを作らず非0、abort/retry/set-status は非0、ls/show はロックを取得しないため影響なし。いずれも部分的な変更を残さない(※2) |
 | PAGE-common-011 | 設定・ワークフロー定義の作成コマンドを提供しない | spec/pages/index.md#シナリオとの対応 | config.yaml / workflows/*.yaml の作成・編集用コマンドを設けず、検証は add の登録時検証が担う |
@@ -87,3 +87,5 @@
 | PAGE-retry-006 | スナップショット破損時の受理と警告 | spec/pages/index.md#縮退状態の共通規則 | スナップショットに依存しないため受理して 0。ただし pending に戻しても tick に拾われないため、スナップショットの修復が必要である旨を警告表示する(※7) |
 | PAGE-set-status-007 | タスク不在・アーカイブ済み・パース不能時の拒否 | spec/pages/index.md#縮退状態の共通規則 | いずれの場合も書き込みを行わず非0 |
 | PAGE-set-status-008 | スナップショット不在・パース不能時の拒否 | spec/pages/index.md#縮退状態の共通規則 | 遷移先の検証にスナップショットが必要なため、状態を変更せず非0で拒否する(※7) |
+| PAGE-tick-010 | サマリーの報告(errors)の見出しの規約 | spec/pages/index.md#tick | 報告の見出しが「失敗を記録 / 起動の結果が未確定 / スキップ / 後始末が残っている」の4つに固定され、見出しの軸が「タスクファイルに何を残したか」ではなく「報告が何を残したか＝運用者が次に取る行動」であれば PASS |
+| PAGE-wrapper-006 | 終了コードの規約 | spec/pages/index.md#wrapper内部コマンド | 終了コードがラッパー自身の責務の達否を表し、エージェントを実行した場合と、エージェントを起動せずに終えた場合(無効化マーカーがあった場合と、マーカーの確認自体に失敗して安全側に倒した場合の両方)は 0、同定情報一式を残せずに終えた場合と起動引数が不正な場合は非0であり、エージェントの終了コードを伝播しなければ PASS |

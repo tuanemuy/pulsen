@@ -28,5 +28,5 @@
 
 - 「表示専用のエラーは分類だけを持つ」という規則がドメインのエラー型にも通る。表示の変更がドメインに触れずに済む
 - `expected` がデータになり、前提の実行状態を足しても文言が自動で追随する
-- トレードオフ: `spec/domains/task.md` のエラー型定義（`expected: &'static str` / `InvariantViolated { message: String }`）と一致しないため、spec 追従が必要になる
+- 決定時点の `spec/domains/task.md` のエラー型定義（旧文面: `expected: &'static str` / `InvariantViolated { message: String }`）とは一致せず、spec 追従が要るトレードオフを負った。Issue #9 で spec 側が追従して解消した
 - 遷移エラーの `MissingCurrentAttempt` と tick の報告分類の `MissingCurrentAttempt` は、同じ事実の別文脈での報告になる（手続きは観測前に検出し、遷移関数は前提として検査する）。どちらも分類なので、文言の重複は `cli::render` の中だけに閉じる

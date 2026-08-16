@@ -34,11 +34,14 @@
 ### JudgeOutcome / JudgeConclusion
 
 ```
-JudgeOutcome    = Completed | Failed | Skipped
-JudgeConclusion = Outcome(JudgeOutcome) | JudgeFailure { detail: String }
+JudgeOutcome     = Completed | Failed | Skipped
+JudgeConclusion  = Outcome(JudgeOutcome) | JudgeFailure { detail: String }
+DefaultJudgement = Completed | Failed
 ```
 
 - `Skipped` は判定コマンドでのみ生じる(ADR-008)
+- `DefaultJudgement` は判定コマンド未定義のときの2値。デフォルト判定が `Skipped` を導けないことを返り値型で述べる。この経路の結末は2値のまま写す
+- `JudgeOutcome` が3値のまま残るのは、判定コマンドの exit 20(`interpret_judge_completion`)が `Skipped` を生むためである。`From<DefaultJudgement> for JudgeOutcome` は2値が3値に含まれることを型で示す変換として提供する
 - `JudgeFailure` は「判定自体が壊れた」(プロトコル外の exit code・判定timeout・判定コマンド起動不能)
 
 ### 分類の決定(直和型)
@@ -58,6 +61,11 @@ RunningDecision =
 | KeepRunning                      // exitなし・生存・timeout未超過
 | KillOnTimeout                    // exitなし・生存・timeout超過 → kill して failed
 | DiedWithoutExit                  // exitなし・死亡 → 残存終了ベストエフォート後 failed
+
+AliveDecision =
+  KeepRunning | KillOnTimeout | DiedWithoutExit
+                                   // `RunningDecision` から `Judge` を除いた3値。
+                                   // `From<AliveDecision> for RunningDecision` で合流させる
 
 Aliveness = Alive | Dead           // Dead は「取得不能」と「起動時刻の不一致(PID再利用)」の両方を含む
 ```
@@ -96,7 +104,7 @@ CommandCompletion = Exited(ExitCode) | TimedOut | FailedToStart { message: Strin
     - pid None・経過(`now - recorded_at`、負なら0)が猶予内 → `KeepWaiting`
     - pid None・猶予超過 → `SuspectSpawnFailure`
     - pid Some・starttime None → `Err(InconsistentRunFiles)`(ラッパーの書き込み順序保証の破れ。当該tickではスキップして報告し、次tickで再観測する)
-    - `InconsistentRunFiles { message: String }` — どのタスク・どの run_dir かの文脈付与は呼び出し側(報告時)の責務(純粋サービスに報告用のパスを持ち込まない)
+    - `InconsistentRunFiles` — 破れの**種別だけを持つ列挙**(現在の変種は `MissingStartTime` の1つ)。文言は表示側が組み立てる。どのタスク・どの run_dir かの文脈付与は呼び出し側(報告時)の責務(純粋サービスに報告用のパスを持ち込まない)
   - `classify_recheck(pid: Option<PidFileContent>, starttime: Option<StartTimeRecord>) -> Result<LaunchingRecheck, InconsistentRunFiles>`
     - マーカー書き込み後の再確認。pid・starttime とも Some → `ConfirmRunning`、pid None → `SpawnFailed`(starttime の有無は問わない — starttime のみは書き込み順序 starttime → pid の正常な中間状態)、pid Some・starttime None → `Err`(本体 `classify` と同じ場合分け)
 
@@ -104,9 +112,10 @@ CommandCompletion = Exited(ExitCode) | TimedOut | FailedToStart { message: Strin
 
 - 責務: running タスクの分類(requirements §6.1)
 - 分類は2段で行う。exit ファイルがあれば生存観測(`starttime_of` + IdentityCheck)は**不要かつ行わない**(exit があれば実行は終了しており、観測の一過性失敗で判定を遅延させない):
-  - exit が Some → 即 `Judge(exit)`(観測なし)
-  - exit が None → 生存を観測してから `classify_alive` を呼ぶ
-- メソッド: `classify_alive(aliveness: Aliveness, started_wall: &Timestamp, timeout: &TimeoutSpec, now: &Timestamp) -> RunningDecision`(`Judge` は返さない)
+  - **1段目(exit の有無)はユースケースが値にする** — exit が Some なら生存を観測せず `RunningDecision::Judge(exit)` とする
+  - **2段目(生存)だけを `classify_alive` が受け持つ** — exit が None のとき、生存を観測してから呼ぶ
+- メソッド: `classify_alive(aliveness: Aliveness, started_wall: &Timestamp, timeout: &TimeoutSpec, now: &Timestamp) -> AliveDecision`
+  - 「`Judge` は返さない」を doc ではなく**返り値型で担保する**(`AliveDecision` に `Judge` が無い)。呼び出し側は `RunningDecision` へ合流させてから網羅 `match` で分岐する
   - `Alive`・timeout 未超過(または `Unlimited`)→ `KeepRunning`
   - `Alive`・timeout 超過 → `KillOnTimeout`
   - `Dead` → `DiedWithoutExit`
@@ -116,16 +125,26 @@ CommandCompletion = Exited(ExitCode) | TimedOut | FailedToStart { message: Strin
 
 - 責務: 終了した実行の判定(requirements §6.3)
 - メソッド:
-  - `default_judgement(exit: &ExitCode) -> JudgeOutcome` — 0 = `Completed`、非0 = `Failed`(2値。`Skipped` は返さない)
+  - `default_judgement(exit: &ExitCode) -> DefaultJudgement` — 0 = `Completed`、非0 = `Failed`。「`Skipped` は返さない」を返り値型で担保する
   - `interpret_judge_completion(c: &CommandCompletion) -> JudgeConclusion` — `Exited(0)` = Completed、`Exited(10)` = Failed、`Exited(20)` = Skipped、`Exited(その他)` / `TimedOut` / `FailedToStart` = `JudgeFailure`(detail に原因を記す)
   - `judge_env(task_id: &TaskId, workspace: &WorktreePath, exit: &ExitCode, run_dir: &RunDirPath) -> Vec<(String, String)>` — `TASK_ID` / `WORKSPACE` / `EXIT_CODE`(10進文字列)/ `RUN_DIR`。引数は使わない(requirements §6.3)
 - 判定は冪等: 同じ exit・同じ定義に対して常に同じ結論を導く(判定コマンド自体の冪等性は利用者の責務。setup.md シナリオ5)
 
 ### NotificationService
 
-- 責務: stopped 確定通知の環境変数の構成(requirements §8)
-- メソッド: `notify_env(task_id: &TaskId, workflow: &WorkflowName, task_status: &StatusName) -> Vec<(String, String)>` — `TASK_ID` / `WORKFLOW` / `TASK_STATUS`
-- 定数: `NOTIFY_TIMEOUT = 60秒`(組み込み。ADR-018)。notify_cmd の実行にはこのtimeoutを必ず適用する(ハングした通知コマンドが排他ロックを保持したまま tick / CLI を塞ぐことを防ぐ)。超過・起動不能・非0終了はいずれも通知失敗であり、`notified_at` を書かずに終える — 次のtickが再通知する(at-least-once。requirements §8)
+- 責務: stopped 確定通知の環境変数の構成と、通知の結末の成否の解釈(requirements §8)
+- メソッド:
+  - `notify_env(task_id: &TaskId, workflow: &WorkflowName, task_status: &StatusName) -> Vec<(String, String)>` — `TASK_ID` / `WORKFLOW` / `TASK_STATUS`
+  - `interpret_notify_completion(c: &CommandCompletion) -> NotifyOutcome` — `Exited(0)` = `Delivered`。非0終了 / `TimedOut` / `FailedToStart` はいずれも `Failed` で、**原因は分類として持ち完成文言は持たない**(文言は CLI 層が組み立てる)。`Failed` は `notified_at` を書かずに終える — 次のtickが再通知する(at-least-once。requirements §8)。「`Exited(0)` だけが `notified_at` を書く根拠になる」という規則を、stopped を書くすべての経路(tick の各上限超過・DegradedTask の再通知・abort)が共有するためにドメインへ置く(経路ごとに書くと requirements §8 の at-least-once が片方だけで破れる)。隣の `interpret_judge_completion` と解釈の位置が揃う
+
+  ```
+  NotifyOutcome      = Delivered | Failed { cause: NotifyFailureCause }
+  NotifyFailureCause = ExitedNonZero { exit: ExitCode } | TimedOut | FailedToStart { message: String }
+  ```
+
+  - `TimedOut` がフィールドを持たないのは、通知の timeout が設定値ではなく組み込み定数 `NOTIFY_TIMEOUT` の1つに定まるため(表示側が定数を読む)
+  - `Failed` を平坦化せず `cause` を内側に持つのは、`Delivered` / `Failed` の2分岐が at-least-once の規則そのものだから(4変種にすると、`notified_at` を書く根拠を呼び出し側が3変種の列挙で書くことになる)
+- 定数: `NOTIFY_TIMEOUT = 60秒`(組み込み。ADR-018)。notify_cmd の実行にはこのtimeoutを必ず適用する(ハングした通知コマンドが排他ロックを保持したまま tick / CLI を塞ぐことを防ぐ)
 - notify_cmd が未定義(`GlobalConfig.notify_cmd = None`)の場合は通知を行わず、**`notified_at` も書かない**(「通知した」という虚偽の記録を作らない)。後から notify_cmd を定義すると、次のtickが `notified_at` のない stopped タスクを検出して catch-up 通知する(凍結中で対応が必要なタスクの通知であり、有用な挙動として意図する)
 
 ### GcPolicy
@@ -162,6 +181,8 @@ Task ドメインの `RunDirPath` に対する純粋な導出関数としてフ�
 | `stderr_log()` | `<run_dir>/stderr.log` | エージェントの標準エラー |
 | `marker_file()` | `<run_dir>/invalidated` | 無効化マーカー(存在のみが意味を持つ空ファイル) |
 
+逆写像 `state_root(&self) -> Option<StateRoot>` も同じ語彙に属する(Task ドメインの `RunDirPath` に定義。`derive` との一致を条件に復元する)。
+
 ## ポート
 
 ### RunStore
@@ -188,6 +209,7 @@ Task ドメインの `RunDirPath` に対する純粋な導出関数としてフ�
 - `RunFileError = Corrupt { path, message } | Io { message }` — 内容が不正なファイルは「不在」と区別する(呼び出し側は当該タスクをその tick でスキップして報告し、次 tick で再観測する)
 - 契約:
   - **ディレクトリ自体の不在もファイル不在と同様に `Ok(None)` とする**(read系)。launching記録と `prepare_attempt` の間のクラッシュで run_dir が存在しないまま観測されるのは正常な復旧経路であり、猶予時間経路の分類(pending 復帰)に合流させる(pages ※8)。`list_runs` も `state/runs/` 不在時は空の `RunListing` を返す
+  - **write 系(`write_starttime` / `write_pid_file` / `write_exit` / `write_invalidation_marker`)はいずれも書き込み先のディレクトリを必要に応じて作る。** `prepare_attempt` が失敗した後も spawn は行われる設計であり、ラッパーが自力でディレクトリを作って書けることが自己修復の前提になる
   - `write_starttime` / `write_pid_file` / `write_exit` はアトミック置換で行い、書きかけの内容が観測されない(requirements §9.2)
   - 読み取りは書き込みと並行しても常に「不在」か「完全な内容」のどちらかを観測する
   - `list_runs` の `last_activity`: ディレクトリ内ファイルの最終更新時刻の最大値。ファイルが1つもない場合はディレクトリ自体の最終更新時刻(requirements §9.2)

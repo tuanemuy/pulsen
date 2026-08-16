@@ -69,14 +69,20 @@ impl WorkflowStore for FsWorkflowStore {
             Ok(text) => text,
             Err(error) => return Err(read_error(&error, resolved)),
         };
+        // パースは構文・構造・組み立ての3経路で失敗しうるが、載せる解決先は同じ1つ。
+        // 構築を畳んでおくと、経路ごとに解決先がずれることが起きえない。
+        let parse_error = |error: WorkflowParseError| WorkflowLoadError::Parse {
+            error,
+            resolved_from: resolved.clone(),
+        };
         let document = yaml::parse_document(&text).map_err(|error| {
-            WorkflowLoadError::Parse(WorkflowParseError::YamlSyntax {
-                message: at(&resolved, &error.message),
+            parse_error(WorkflowParseError::YamlSyntax {
+                message: error.message,
                 location: error.location,
             })
         })?;
-        let doc = decode(&document).map_err(WorkflowLoadError::Parse)?;
-        let parsed = WorkflowAssembler::assemble(doc).map_err(WorkflowLoadError::Parse)?;
+        let doc = decode(&document).map_err(parse_error)?;
+        let parsed = WorkflowAssembler::assemble(doc).map_err(parse_error)?;
         Ok(LoadedWorkflow::new(parsed, resolved))
     }
 }
@@ -102,8 +108,9 @@ fn read_error(error: &io::Error, attempted: PathBuf) -> WorkflowLoadError {
 
 /// どのファイルの話かをメッセージに載せる。
 ///
-/// `WorkflowLoadError::Io` と `WorkflowParseError::YamlSyntax` はパスを持つフィールドを
-/// 持たず、`NotFound` と違って CLI 側も解決先を知らないため、ここで前置する。
+/// 構造化フィールドで示せる経路(`NotFound { attempted }` / `Parse { resolved_from }`)には
+/// 前置しない。前置すると同じパスが1つの案内に2回現れるため。前置が残るのは、解決先を
+/// 構造として持たず CLI 側も解決先を知らない `WorkflowLoadError::Io` だけ。
 fn at(resolved: &Path, message: &str) -> String {
     format!("{}: {message}", resolved.display())
 }

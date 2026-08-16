@@ -40,6 +40,7 @@
 | attemptがすべて削除され空になったタスクディレクトリ | `remove_task_dir_if_empty(dir_name)` | `Ok`。タスクディレクトリが削除され、`list_runs` に `dir_name` が現れない | |
 | attemptが1つ以上残っているタスクディレクトリ | `remove_task_dir_if_empty(dir_name)` | 削除せず `Ok` を返す(非空はエラーではない)。残っているattemptに影響しない | |
 | タスクディレクトリに `attempt-<n>` 形式外のエントリのみが残存 | `remove_task_dir_if_empty(dir_name)` | 親ディレクトリを削除せず `Ok` を返し、残存エントリにも触れない(ユーザーが置いたものを黙って消さない。非空はエラーではなく、残存が毎tick `gc_errors` に報告され続けない) | |
+| `prepare_attempt` を経ずに attempt ディレクトリが不在 | `write_starttime` / `write_pid_file` / `write_exit` のいずれか | `Ok`。書き込み先のディレクトリが作られ、対応する read系が書いた値を返す(`prepare_attempt` の失敗後も spawn は行われるため、ラッパーが自力で置き場を作って書けることが自己修復の前提) | |
 
 ## 対象外
 

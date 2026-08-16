@@ -377,12 +377,13 @@ tick は1タスクにつき1回で1ステップだけ進める。1回のエー�
 ## TC-26: ワークフローYAMLが構文として不正(重複キー含む)
 
 **種別**: 異常系
-**目的**: シナリオ2の異常系。インデント崩れ・重複キー等の構文エラーが位置とともに報告され、登録が失敗することを確認する。
+**目的**: シナリオ2の異常系。インデント崩れ・重複キー等の構文エラーが位置とともに報告され、登録が失敗することを確認する。名前指定の場合は、利用者が直接書いていない解決先パスも案内されることを確認する。
 
 | # | 操作 | 期待結果 |
 |---|---|---|
-| 1 | `$WORK/broken.yaml` を以下の内容(インデント崩れ)で作成し、`pulsen add --workflow "$WORK/broken.yaml" --repo "$REPO"` を実行する。<br><br><pre>agent: shell<br>initial: start<br>statuses:<br>start:<br>    prompt: "hi"</pre> | 構文エラーの位置・原因が表示されて exit code 非0。タスクは作られない |
+| 1 | `$WORK/broken.yaml` を以下の内容(インデント崩れ。`next` の行だけ3スペースで1段浅い)で作成し、`pulsen add --workflow "$WORK/broken.yaml" --repo "$REPO"` を実行する。<br><br><pre>agent: shell<br>initial: start<br>statuses:<br>  start:<br>    prompt: "hi"<br>   next: waiting</pre> | 構文エラーの位置・原因が表示されて exit code 非0。タスクは作られない |
 | 2 | `$WORK/dup-key.yaml` を以下の内容(`start` キーの重複)で作成し、同様に add する。<br><br><pre>agent: shell<br>initial: start<br>statuses:<br>  start:<br>    prompt: "hi"<br>    next: waiting<br>  start:<br>    run: wait<br>  waiting:<br>    run: wait</pre> | 重複キーがパースエラーとして扱われ exit code 非0。タスクは作られない |
+| 3 | `cp "$WORK/broken.yaml" "$PULSEN_HOME/workflows/broken.yaml"` を実行し、`pulsen add --workflow broken --repo "$REPO"` を名前指定で実行する | 構文エラーの位置・原因に加えて、解決先の絶対パス(`$PULSEN_HOME/workflows/broken.yaml`)が1回だけ表示されて exit code 非0。タスクは作られない(片付ける: `rm "$PULSEN_HOME/workflows/broken.yaml"`) |
 
 ## TC-27: ワークフローYAMLにスキーマ外のキーがある
 
@@ -596,11 +597,11 @@ tick は1タスクにつき1回で1ステップだけ進める。1回のエー�
 ## TC-46: 表示名を決定できないファイル名のパス指定は拒否される
 
 **種別**: 境界値
-**目的**: `workflow:` キーがなく、ファイル名から拡張子を除くと空になるパス指定が、表示名の決定失敗として弾かれることを確認する。
+**目的**: `workflow:` キーがなく、ファイル名の語幹が空白のみになるパス指定が、表示名の決定失敗として弾かれることを確認する。
 
 | # | 操作 | 期待結果 |
 |---|---|---|
-| 1 | `workflow:` キーを含まない有効な定義(TC-20 の YAML の先頭に `agent: shell` の行を追記したもの)を `$WORK/.yaml` という名前で作成し、`pulsen add --workflow "$WORK/.yaml" --repo "$REPO"` を実行する | 表示名の決定失敗として exit code 非0。タスクは作られない |
+| 1 | `workflow:` キーを含まない有効な定義(TC-20 の YAML の先頭に `agent: shell` の行を追記したもの)を `$WORK/ .yaml`(先頭が空白)という名前で作成し、`pulsen add --workflow "$WORK/ .yaml" --repo "$REPO"` を実行する | 表示名の決定失敗として exit code 非0。タスクは作られない |
 
 ## TC-47: エージェントの異常終了(シグナル死)の EXIT_CODE は非0に符号化されて判定に渡る
 
