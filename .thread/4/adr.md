@@ -196,3 +196,36 @@ Proposed
 - `attempt_dir_present` フックは廃止しない。`crates/pulsen-conformance/src/run_store.rs` の TC-018(`:339`)と `assert_attempt_dir_absent`(`:448`。write 系の置き場作成の追加ケースが使う)は、`attempt_exists` では代替できない「行の主張とは別に、環境から見てディレクトリごと作られた / まだ無い」を問うており、提供できないハーネスではその分岐だけを飛ばす形で残る。
 - `.thread/2/adr.md` の ADR-084 は #2 の作業ログとして決定節のまま残し、書き換えない。作業ログは `.adr/` の supersede 機構の対象外で、遡って書き換えるとその時点のスライスで何が成り立っていたかが読めなくなる。見直しの記録は本項が持つ。
 - この判断は適合スイート全体と将来の別バックエンドのハーネスに波及するため、`.adr/` への昇格候補。判定は Phase 8 で行う。
+
+---
+
+## ADR-008: 表示語は spec が語を与えている項目については spec の語を正本にする
+
+### Status
+
+Proposed
+
+### Context
+
+`show` の出力は項目名と状態名の集合で、その語の出所は2種類ある。`spec/pages/index.md#show` の「機能」が挙げる項目名(`workspace_path` / `attempt_count` / `notified_at` など)や、`spec/requirements.md` §6.4 と `spec/pages/index.md#abort` が鉤括弧で与える状態名(「人間によるabort」)のように **spec が語そのものを書いているもの**と、spec が「表示する」としか書いておらず語が表示層に委ねられているものである。
+
+両者を区別せずに表示語を決めると、spec が語を与えている項目でも実装が独自の言い換えを当てうる。それが起きたのが `StopReason::Aborted`(spec「人間によるabort」に対し実装「利用者による中断」)と `notified_at`(spec の識別子に対し実装「通知」)の2件だった。手動テストの手順書は spec の語で期待文を書くため(`spec/manual-tests/monitoring.md:342` / `intervention.md:223` / `intervention.md:609` / `setup.md:480` が `show` の出力に対して「人間による abort」を名指しする)、言い換えは手順書と出力を照合不能にする。さらに `notified_at` は `AC-6` が掲げるタスクファイルの直接閲覧の入口 — show の項目とタスクファイルのキーの突き合わせ — を、この1項目だけ読み手の推測にしていた。
+
+### Decision
+
+**spec が語を与えている項目(項目名・状態名)は spec の語をそのまま出す。spec が語を与えていない項目だけが表示層の裁量である。**
+
+適用結果は2件。
+
+- `StopReason::Aborted` の表示語を「人間による abort」にする。ASCII の前後に空白を置くのは既存の表示語(「spawn 失敗の上限の超過」)と同じ流儀で、手順書の綴りとも一致する。ドメインの `StopReason::Aborted` の doc も同じ語に揃える — 語の出所が2つあると、#5 が abort を実装するときに同じ食い違いが再生産される
+- `notified_at` の項目名を素の識別子 `notified_at` にする。`workspace_path` / `attempt_count` と同形になる。「通知(notified_at)」の括弧併記を採らないのは、show の出力に併記形の項目が他に1つも無く、非対称が別の形で残るため
+
+`StopReason` の他3経路(`RetryLimitExceeded` / `JudgeLimitExceeded` / `SpawnFailLimitExceeded`)は、spec が経路の存在だけを述べて表示語を与えていないため裁量に留まる。
+
+### Consequences
+
+- 良い点: 手動テストの手順書が期待する綴りと出力が照合できる。show の項目名とタスクファイルのキーが綴りで辿れ、`AC-6` の修復の入口が推測を要さない。
+- 良い点: 表示語を決めるときに問うことが「spec がこの語を書いているか」の1点に定まり、項目ごとに語感で選び直す余地が無くなる。
+- spec が show の項目名として挙げていない項目(凍結要因・在籍・現在attempt・同定情報・定義済みステータス・スナップショット保存先)は表示層の裁量であり、本 PR では変えない。
+- トレードオフ: 隣接する項目で日本語と識別子が混在する(`凍結要因` の次に `notified_at` が並ぶ)。見た目の一貫性より、綴りで辿れることを採る。
+- この判断は #5(abort / retry / set-status)が同じ問題に必ず当たるため `.adr/` への昇格候補。判定は Phase 8 で行う。

@@ -478,6 +478,11 @@ impl DegradedBuilder {
         self
     }
 
+    pub fn last_failure(mut self, note: FailureNote) -> Self {
+        self.fields.last_failure = Some(note);
+        self
+    }
+
     pub fn build(self) -> DegradedTask {
         DegradedTask::rehydrate(self.fields)
     }

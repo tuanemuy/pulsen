@@ -287,7 +287,7 @@ fn push_stop(out: &mut String, execution: &ExecutionState) {
             notified_at,
         } => {
             push_field(out, "凍結要因", stop_reason(*reason));
-            push_field(out, "通知", &notified(*notified_at));
+            push_field(out, "notified_at", &notified(*notified_at));
         }
         ExecutionState::Pending
         | ExecutionState::Launching { .. }
@@ -303,7 +303,7 @@ fn stop_reason(reason: StopReason) -> &'static str {
         StopReason::RetryLimitExceeded => "リトライ上限の超過",
         StopReason::JudgeLimitExceeded => "判定失敗の上限の超過",
         StopReason::SpawnFailLimitExceeded => "spawn 失敗の上限の超過",
-        StopReason::Aborted => "利用者による中断",
+        StopReason::Aborted => "人間による abort",
     }
 }
 
@@ -712,7 +712,7 @@ mod tests {
         });
 
         assert!(text.contains("凍結要因: spawn 失敗の上限の超過"), "{text}");
-        assert!(text.contains("通知: 未記録"), "{text}");
+        assert!(text.contains("notified_at: 未記録"), "{text}");
         assert!(
             text.contains("直近の失敗要因: エージェントの起動(2026-08-12T10:00:00Z): "),
             "{text}"
@@ -731,7 +731,7 @@ mod tests {
             ..detail()
         });
 
-        assert!(text.contains("通知: 2026-08-12T10:00:00Z"), "{text}");
+        assert!(text.contains("notified_at: 2026-08-12T10:00:00Z"), "{text}");
         assert!(text.contains("更新日時: 2026-08-12T10:11:12Z"), "{text}");
     }
 
@@ -776,7 +776,7 @@ mod tests {
             });
 
             assert!(!text.contains("凍結要因"), "{execution:?}: {text}");
-            assert!(!text.contains("通知"), "{execution:?}: {text}");
+            assert!(!text.contains("notified_at"), "{execution:?}: {text}");
         }
     }
 

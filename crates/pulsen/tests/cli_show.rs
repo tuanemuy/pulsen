@@ -22,7 +22,7 @@ const STOP_REASONS: [(&str, &str); 4] = [
     ("retry_limit_exceeded", "リトライ上限の超過"),
     ("judge_limit_exceeded", "判定失敗の上限の超過"),
     ("spawn_fail_limit_exceeded", "spawn 失敗の上限の超過"),
-    ("aborted", "利用者による中断"),
+    ("aborted", "人間による abort"),
 ];
 
 /// 有効な設定と `implement` ワークフローを備えたホーム。
@@ -447,7 +447,7 @@ fn 凍結したタスクは要因と通知の有無と上限つきのカウン�
         run.assert_succeeded().assert_shows(&[
             "実行状態: stopped",
             &format!("凍結要因: {described}"),
-            "通知: 未記録",
+            "notified_at: 未記録",
             "直近の失敗要因: エージェントの起動(2026-08-12T10:00:00Z): エージェントを起動できません",
             "spawn_fail_count: 4(上限 3)",
         ]);

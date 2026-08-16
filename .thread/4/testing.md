@@ -300,7 +300,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   - 手順4: attempt_count 0 / judge_attempt_count 0 / spawn_fail_count 0 が、それぞれリトライ上限 2・judge 上限 3・spawn 上限 3 を**併記して**表示される（カウンタは連続失敗の数なので、attempt 番号が 1 でも attempt_count は 0）。
   - 手順5: `work` と `done` の2つが定義済みステータスとして並び、保存先として `state/tasks/<TASK_B>.json`（タスクファイル自身。ADR-015）が表示される。
   - 手順6: 番号 1・`state/runs/<TASK_B>/attempt-1`・PID・starttime（とプラットフォームの kill 同定子）が表示され、どの attempt が動いているか特定できる。
-  - 手順7: exit code 0。workspace は「未作成」、ブランチは未確定、attempt は「なし」で runディレクトリ・PID・exit への参照が出ない（または「なし」と明示される）。`ls` は非0（ディレクトリ不在）で、これが自然な状態であることが show の表示と一致する。`hold` は `run: wait` なので **attempt_count にリトライ上限が併記されない**（適用対象がない）。
+  - 手順7: exit code 0。workspace は「未作成」、ブランチは未確定、attempt は「なし」で runディレクトリ・PID・exit への参照が出ない（または「なし」と明示される）。`ls(1)` は非0（ディレクトリ不在）で、これが自然な状態であることが show の表示と一致する。`hold` は `run: wait` なので **attempt_count にリトライ上限が併記されない**（適用対象がない）。
   - 手順8: 実行状態 `launching` が表示され exit code 0。attempt 番号と runディレクトリは出るが、PID・starttime は「未取得」と表示され、エラーにならない。
 - **確認ポイント:** 手順7 の「併記なし」（`NotApplicable`）と、確認項目7 手順6 で見る「不明」（`Unknown`）が**別の文言**であること — 両者が同じ表示に潰れると、待ちステータスとスナップショット破損の区別が失われる。手順8 の3項目（PID / kill同定子 / starttime）は**まとめて**未取得になること（`ProcessIdent` は3値を1つの `Option` で持つ）。
 
@@ -397,7 +397,7 @@ grep -n -A 10 '^\[dependencies\]' crates/pulsen-domain/Cargo.toml crates/pulsen/
   - 手順3: `stopped: <TASK_C> (wf-fail/work)` の行がある。
   - 手順4: worktree が残っている（`wf-fail` は成果物を書かないので中身は `.git` だけ。`ls -a` でないと見えない）。
   - 手順7: exit code 0。judge_attempt_count が上限 3 を超過し、attempt_count は上限未満 → 「判定自体の不能」と判別できる。スナップショットには `["sh", "-c", "exit 5"]` が固定されており、エージェント再実行では解決しない不具合であることが分かる。現在attemptの `.code` は 0（エージェント自体は成功している）。
-  - 手順11: exit code 0。spawn_fail_count が上限 3 を超過し、直近の失敗要因に展開エラー（未知プレースホルダ）の内容が表示され、**attempt は「なし」**（採番されない）。`ls` は非0（runディレクトリが無い）。通知ログに `TASK_I` の行がある。
+  - 手順11: exit code 0。spawn_fail_count が上限 3 を超過し、直近の失敗要因に展開エラー（未知プレースホルダ）の内容が表示され、**attempt は「なし」**（採番されない）。`ls(1)` は非0（runディレクトリが無い）。通知ログに `TASK_I` の行がある。
 - **確認ポイント:** 3経路が「どのカウンタがどの上限を超えたか」だけで判別できること — 凍結要因の文言に頼らず数字で判別できるのがこのシナリオの目的。手順11 の「attempt なし」と手順5 の「runディレクトリ不在」が、同期検出の spawn 失敗と猶予時間超過の経路を分ける点であること。手順12 の復元を忘れると以降のすべての spawn が失敗する。
 
 ### 7. タスクファイルの直接閲覧・修復

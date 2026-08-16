@@ -544,23 +544,47 @@ fn 境界の長さの有効なタスクidは受理される() {
     }
 }
 
+/// 落ちるのはスナップショット由来の項目だけ、という解釈を attempt の派生値
+/// (run ディレクトリ・その有無・exit)と直近の失敗まで含めて固定する。
 #[test]
 fn スナップショットだけが読めないタスクは読める項目を残して注記される() {
     let tasks = repository(
         degraded(TASK, "statuses が空")
             .status("queued")
             .workspace()
+            .attempt(1)
             .counters(2, 1, 0)
             .execution(ExecutionState::Failed)
+            .last_failure(failure(
+                FailureKind::JudgeFail,
+                "判定コマンドが異常終了",
+                at("2026-08-12T08:59:00Z"),
+            ))
             .found(),
     );
 
-    let detail = show(&tasks, &untouched(), TASK);
+    let detail = show(&tasks, &present_without_exit(), TASK);
 
+    assert_eq!(detail.workflow_name, usecase_fixture::workflow_name());
+    assert_eq!(detail.target.repo(), &usecase_fixture::repo());
     assert_eq!(detail.task_status, status("queued"));
     assert_eq!(detail.execution, ExecutionState::Failed);
     assert!(detail.workspace.is_some(), "タスクファイル由来の項目は残る");
     assert_eq!(detail.counters.attempt_count(), 2);
+    let attempt = attempt_of(&detail);
+    assert_eq!(attempt.number.get(), 1);
+    assert_eq!(attempt.run_dir, run_dir(TASK, 1));
+    assert_eq!(
+        attempt.run_dir_presence,
+        RunDirPresence::Present {
+            exit: ExitOutcome::Absent
+        }
+    );
+    assert_eq!(
+        detail.last_failure.expect("失敗要因がある").kind(),
+        FailureKind::JudgeFail
+    );
+    assert_eq!(detail.updated_at, at(usecase_fixture::NOW));
     assert_eq!(
         detail.snapshot,
         SnapshotInfo::Unreadable("statuses が空".to_owned()),

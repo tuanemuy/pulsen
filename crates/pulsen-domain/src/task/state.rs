@@ -83,7 +83,7 @@ pub enum StopReason {
     JudgeLimitExceeded,
     /// spawn 失敗の上限の超過。
     SpawnFailLimitExceeded,
-    /// 利用者による中断。
+    /// 人間による abort。
     Aborted,
 }
 
