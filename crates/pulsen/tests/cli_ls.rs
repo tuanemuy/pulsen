@@ -105,8 +105,9 @@ fn tc_task_list_tasks_001_一覧は各タスクの表示項目を並べて0で�
         running_row.contains(&format!("pulsen/{running}")),
         "ブランチが並ぶ: {running_row}"
     );
+    let attempt = home.task(&running)["counters"]["attempt_count"].to_string();
     assert!(
-        running_row.contains(" 2 "),
+        running_row.split_whitespace().any(|cell| cell == attempt),
         "attempt_count が並ぶ: {running_row}"
     );
     let updated = home.task(&running)["updated_at"]
@@ -210,6 +211,35 @@ fn tc_task_list_tasks_019_読めないタスクファイルが混ざっても一
         run.stdout.contains(&broken.display().to_string()),
         "修復の入口としてファイルパスが出る: {}",
         run.stdout
+    );
+}
+
+#[test]
+fn スナップショットだけが読めないタスクは印つきの行として現れ破損報告には出ない() {
+    let home = home_with_workflow();
+    let repo = Repo::with_commit();
+    let id = register(&home, "implement", &repo);
+    home.patch_task(&id, |task| {
+        task["snapshot"] = json!({ "initial": "queued" });
+    });
+
+    let run = run_ls(&home);
+    let filtered = ls().home(home.path()).state("pending").run();
+
+    run.assert_succeeded();
+    let listed = row(&run, &id);
+    assert!(listed.contains("スナップショット読み取り不能"), "{listed}");
+    assert!(
+        !run.stdout.contains("読み取れなかったタスクファイル"),
+        "タスクファイル自体は読めており破損の報告には寄せない: {}",
+        run.stdout
+    );
+
+    filtered.assert_succeeded();
+    assert!(
+        row(&filtered, &id).contains("スナップショット読み取り不能"),
+        "実行状態は読めているので絞り込みにも乗る: {}",
+        filtered.stdout
     );
 }
 
@@ -337,6 +367,24 @@ fn 実行状態の不正値は有効な値の一覧を添えて非0で終わる(
             "stopped",
         ]);
     }
+}
+
+#[test]
+fn 実行状態の値を省いて次のフラグを置いてもそれを値として拒否する() {
+    let home = home_with_workflow();
+
+    let run = ls().home(home.path()).state("--all").run();
+
+    run.assert_rejected().assert_reports(&[
+        "--state の値が不正です",
+        "指定: `--all`",
+        "pending",
+        "launching",
+        "running",
+        "completed",
+        "failed",
+        "stopped",
+    ]);
 }
 
 /// `probe` エージェントとワークフローを備えたホーム。

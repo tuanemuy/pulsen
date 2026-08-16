@@ -121,14 +121,20 @@ impl RunStore for FsRunStore {
 
     fn attempt_exists(&self, run_dir: &RunDirPath) -> Result<bool, Io> {
         let path = run_dir.as_path();
-        // 対象はファイルではなく attempt ディレクトリ自身。`marker_exists` と同じく
-        // `try_exists()` を使い、機構の失敗を「無い」に丸めない。
-        path.try_exists().map_err(|error| Io::Failed {
-            message: format!(
-                "{}: attempt ディレクトリの有無を確認できない: {error}",
-                path.display()
-            ),
-        })
+        // 問うのは「attempt ディレクトリが在るか」であって「そのパスに何かが在るか」では
+        // ない。同じ位置に通常ファイルが置かれた木で「在る」と答えると、read 系が
+        // `Ok(None)` ではなく `Io` を返す状態を存在として写してしまう。`is_dir()` の
+        // 直呼びは機構の失敗を `false` に丸めるため、`metadata` で受けて不在と失敗を分ける。
+        match std::fs::metadata(path) {
+            Ok(metadata) => Ok(metadata.is_dir()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Io::Failed {
+                message: format!(
+                    "{}: attempt ディレクトリの有無を確認できない: {error}",
+                    path.display()
+                ),
+            }),
+        }
     }
 
     fn write_starttime(&self, run_dir: &RunDirPath, record: &StartTimeRecord) -> Result<(), Io> {
@@ -248,6 +254,17 @@ mod tests {
             .expect("マーカーを書ける");
 
         assert_eq!(std::fs::read(run_dir.marker_file()).expect("読める"), b"");
+    }
+
+    #[test]
+    fn attemptの位置に通常ファイルがあれば存在しないと答える() {
+        let (home, store) = store();
+        let state_root = StateRoot::parse(home.path().join("state")).expect("絶対パスになる");
+        let run_dir = RunDirPath::derive(&state_root, &task_id(), AttemptNumber::FIRST);
+        ensure_dir(run_dir.as_path().parent().expect("親を持つ")).expect("親を作れる");
+        std::fs::write(run_dir.as_path(), b"").expect("置ける");
+
+        assert_eq!(store.attempt_exists(&run_dir), Ok(false));
     }
 
     #[test]

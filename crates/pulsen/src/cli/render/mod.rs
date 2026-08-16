@@ -124,6 +124,43 @@ fn push_attempts(out: &mut String, label: &str, attempts: &[(String, AttemptNumb
     push_field(out, label, &attempts);
 }
 
+/// 端末が消費する桁数。
+///
+/// 桁揃えは文字数ではなく表示幅で測る — 見出しもワークフローごとに定義される
+/// タスクステータスも全角になり得るため、文字数で測ると列がずれる。
+/// 判定は East Asian Wide / Fullwidth の範囲に限る。本ツールが並べるのは日本語と
+/// ASCII なのでこの近似で足り、幅の計算のために本番依存を増やさない。
+fn display_width(text: &str) -> usize {
+    text.chars().map(char_width).sum()
+}
+
+/// 1文字が消費する桁数。
+fn char_width(character: char) -> usize {
+    /// 2桁を占める符号位置の範囲。
+    const WIDE: [(char, char); 11] = [
+        ('\u{1100}', '\u{115F}'),
+        ('\u{2E80}', '\u{303E}'),
+        ('\u{3041}', '\u{33FF}'),
+        ('\u{3400}', '\u{4DBF}'),
+        ('\u{4E00}', '\u{9FFF}'),
+        ('\u{A000}', '\u{A4CF}'),
+        ('\u{AC00}', '\u{D7A3}'),
+        ('\u{F900}', '\u{FAFF}'),
+        ('\u{FE30}', '\u{FE6F}'),
+        ('\u{FF00}', '\u{FF60}'),
+        ('\u{FFE0}', '\u{FFE6}'),
+    ];
+
+    if WIDE
+        .iter()
+        .any(|(first, last)| (*first..=*last).contains(&character))
+    {
+        2
+    } else {
+        1
+    }
+}
+
 /// テキスト上の位置。
 fn source_location(location: SourceLocation) -> String {
     format!("{}行{}列", location.line, location.column)

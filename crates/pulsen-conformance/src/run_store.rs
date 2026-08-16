@@ -32,8 +32,18 @@ pub fn tc_port_run_store_001_準備でattemptディレクトリが親ごと作�
         .expect("attempt を用意できる");
 
     assert_eq!(run_dir, expected, "返るパスは導出結果と一致する");
-    let after = require!(harness.attempt_dir_present(&run_dir));
-    assert!(after, "準備の後は attempt ディレクトリが在る");
+    // 前半でフックが `Some` を返した以上、後半の `None` は環境の制約ではなく実装の失敗。
+    // ここで `require!` を使うとその失敗がスキップに化ける(ADR-084)。
+    assert_eq!(
+        harness.attempt_dir_present(&run_dir),
+        Some(true),
+        "準備の後は attempt ディレクトリが在る"
+    );
+    assert_eq!(
+        harness.store().attempt_exists(&run_dir),
+        Ok(true),
+        "準備の後は attempt_exists が true になる"
+    );
     CaseOutcome::Ran
 }
 

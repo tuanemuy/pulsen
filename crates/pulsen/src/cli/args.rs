@@ -69,7 +69,9 @@ pub struct LsArgs {
     /// 実行状態(pending / launching / running / completed / failed / stopped)で絞り込む
     // 有効値の検証を clap の `value_parser` に委ねない — 有効値一覧を添えた拒否の文言
     // (PAGE-ls-011)を表示層の管理下に置くため、値はそのままユースケースへ渡す。
-    // `--base` と同じ理由で `-` 始まりの値も値として受け取る。
+    // `--base` と同じ理由で `-` 始まりの値も値として受け取る。後続のフラグも値になる
+    // (`--state --all` は `--all` を値として拒否する) — 有効値は固定6値で `-` 始まりが
+    // 存在せず、clap の使い方の誤りにするより拒否の文言を表示層に持たせるほうを採る。
     #[arg(long, value_name = "EXEC-STATE", allow_hyphen_values = true)]
     pub state: Option<String>,
 

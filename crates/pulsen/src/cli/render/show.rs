@@ -3,17 +3,22 @@
 //! 縮退の場合分けはユースケースが直和型に畳んで渡すため、ここは網羅 `match` で
 //! 言葉を当てるだけにする。**workspace_path は表示するのみで存在を検証しない**
 //! (pages ※9)。
+//!
+//! パスを文言へ差し込むのはこの層に限る。機構の失敗(`Io`)のメッセージは
+//! アダプターが既に対象のパスを含むため前置せず、構造として受け取ったパスだけを
+//! 1度だけ出す。
 
 use std::path::Path;
 
 use pulsen_domain::definition::StatusName;
+use pulsen_domain::execution::RunFileError;
 use pulsen_domain::task::{
     FailureKind, FailureNote, ProcessIdent, ReadError, StopReason, Workspace,
 };
 
 use crate::application::show_task::{
-    AttemptSummary, ExitInfo, Limits, RetryLimitInfo, RunDirPresence, ShowTaskError, StopInfo,
-    TaskDetail,
+    AttemptSummary, ExitInfo, Limits, RetryLimitInfo, RunDirPresence, ShowTaskError, SnapshotInfo,
+    StopInfo, TaskDetail,
 };
 use crate::cli::show::ShowError;
 
@@ -73,10 +78,7 @@ pub fn task_detail(detail: &TaskDetail) -> String {
     push_field(
         &mut out,
         "定義済みステータス",
-        &defined_statuses(
-            detail.defined_statuses.as_deref(),
-            detail.snapshot_error.as_deref(),
-        ),
+        &defined_statuses(&detail.snapshot),
     );
     push_field(
         &mut out,
@@ -192,8 +194,17 @@ fn push_attempt(out: &mut String, attempt: Option<&AttemptSummary>) {
         &run_dir(attempt.run_dir.as_path(), &attempt.run_dir_exists),
     );
     push_process(out, attempt.process.as_ref());
-    push_sub(out, "stdout.log", &attempt.stdout_log.display().to_string());
-    push_sub(out, "stderr.log", &attempt.stderr_log.display().to_string());
+    // run ディレクトリ配下のパスはすべて `run_dir` から導出する(派生値を DTO に持たない)。
+    push_sub(
+        out,
+        "stdout.log",
+        &attempt.run_dir.stdout_log().display().to_string(),
+    );
+    push_sub(
+        out,
+        "stderr.log",
+        &attempt.run_dir.stderr_log().display().to_string(),
+    );
     push_sub(
         out,
         "exit",
@@ -203,26 +214,37 @@ fn push_attempt(out: &mut String, attempt: Option<&AttemptSummary>) {
 
 /// run ディレクトリのパスと、その有無。
 fn run_dir(path: &Path, presence: &RunDirPresence) -> String {
-    let path = path.display().to_string();
     match presence {
-        RunDirPresence::Present => path,
-        RunDirPresence::Absent => format!("{path}(存在しません)"),
-        RunDirPresence::Unknown { message } => {
-            format!("{path}(存在を確認できません: {message})")
-        }
+        RunDirPresence::Present => path.display().to_string(),
+        RunDirPresence::Absent => format!("{}(存在しません)", path.display()),
+        // 機構の失敗のメッセージは対象のパスを既に含む。
+        RunDirPresence::Unknown { message } => format!("存在を確認できません: {message}"),
     }
 }
 
 /// exit ファイルのパスと、読み取った値。
 fn exit(path: &Path, exit: &ExitInfo) -> String {
-    let path = path.display().to_string();
     match exit {
-        ExitInfo::Recorded(code) => format!("{path}(値 {})", code.get()),
-        ExitInfo::Absent => format!("{path}(記録なし)"),
-        ExitInfo::Unreadable { message } => format!("{path}(読み取れません: {message})"),
-        ExitInfo::Unread => {
-            format!("{path}(runディレクトリの有無を確認できないため読んでいません)")
+        ExitInfo::Recorded(code) => format!("{}(値 {})", path.display(), code.get()),
+        ExitInfo::Absent => format!("{}(記録なし)", path.display()),
+        ExitInfo::Unreadable(error) => unreadable(error),
+        ExitInfo::Unread => format!(
+            "{}(runディレクトリの有無を確認できないため読んでいません)",
+            path.display()
+        ),
+    }
+}
+
+/// 読み取りが失敗した run ディレクトリ内のファイル。
+///
+/// 破損は構造として受け取ったパスをここで1度だけ出し、機構の失敗はメッセージが既に
+/// 対象を含むため前置しない。
+fn unreadable(error: &RunFileError) -> String {
+    match error {
+        RunFileError::Corrupt { path, message } => {
+            format!("{}(読み取れません: {message})", path.display())
         }
+        RunFileError::Io { message } => format!("読み取れません: {message}"),
     }
 }
 
@@ -289,17 +311,14 @@ fn failure_kind(kind: FailureKind) -> &'static str {
 }
 
 /// スナップショットの定義済みステータス一覧。読めない場合は理由を注記する(※6)。
-fn defined_statuses(statuses: Option<&[StatusName]>, snapshot_error: Option<&str>) -> String {
-    match statuses {
-        Some(statuses) => statuses
+fn defined_statuses(snapshot: &SnapshotInfo) -> String {
+    match snapshot {
+        SnapshotInfo::Readable(statuses) => statuses
             .iter()
             .map(StatusName::as_str)
             .collect::<Vec<_>>()
             .join(", "),
-        None => match snapshot_error {
-            Some(message) => format!("読み取れません({message})"),
-            None => "読み取れません".to_owned(),
-        },
+        SnapshotInfo::Unreadable(message) => format!("読み取れません({message})"),
     }
 }
 
@@ -370,8 +389,7 @@ mod tests {
             attempt: None,
             last_failure: None,
             stop_info: None,
-            defined_statuses: Some(vec![status("done"), status("queued")]),
-            snapshot_error: None,
+            snapshot: SnapshotInfo::Readable(vec![status("done"), status("queued")]),
             task_file_path: TaskFilePath::active(&state_root(), &task_id()),
             archived: false,
             updated_at: Timestamp::parse_rfc3339("2026-08-12T10:11:12Z").expect("受理される"),
@@ -379,16 +397,21 @@ mod tests {
     }
 
     fn attempt() -> AttemptSummary {
-        let run_dir = RunDirPath::derive(&state_root(), &task_id(), AttemptNumber::FIRST);
         AttemptSummary {
             number: AttemptNumber::FIRST,
-            run_dir: run_dir.clone(),
+            run_dir: RunDirPath::derive(&state_root(), &task_id(), AttemptNumber::FIRST),
             process: None,
             exit: ExitInfo::Absent,
-            stdout_log: run_dir.stdout_log(),
-            stderr_log: run_dir.stderr_log(),
             run_dir_exists: RunDirPresence::Present,
         }
+    }
+
+    /// 現在 attempt に属する項目行を1つ取り出す。
+    fn sub_line<'a>(text: &'a str, label: &str) -> &'a str {
+        let prefix = format!("{label}: ");
+        text.lines()
+            .find(|line| line.trim_start().starts_with(&prefix))
+            .expect("項目行がある")
     }
 
     #[test]
@@ -484,6 +507,7 @@ mod tests {
 
     #[test]
     fn runディレクトリの不在と確認できないことは書き分けられる() {
+        let path = attempt().run_dir.as_path().display().to_string();
         let absent = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
                 run_dir_exists: RunDirPresence::Absent,
@@ -494,7 +518,7 @@ mod tests {
         let unknown = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
                 run_dir_exists: RunDirPresence::Unknown {
-                    message: "権限がありません".to_owned(),
+                    message: format!("{path}: 有無を確認できない: 権限がありません"),
                 },
                 exit: ExitInfo::Unread,
                 ..attempt()
@@ -504,27 +528,92 @@ mod tests {
 
         assert!(absent.contains("(存在しません)"), "{absent}");
         assert!(
-            unknown.contains("(存在を確認できません: 権限がありません)"),
+            sub_line(&unknown, "runディレクトリ").contains("存在を確認できません: "),
             "{unknown}"
         );
     }
 
     #[test]
-    fn 読めなかったexitは注記として示される() {
+    fn 存在を確認できないrunディレクトリのパスは1度しか現れない() {
+        let path = attempt().run_dir.as_path().display().to_string();
         let text = task_detail(&TaskDetail {
             attempt: Some(AttemptSummary {
-                exit: ExitInfo::Unreadable {
-                    message: "内容を解釈できない".to_owned(),
+                run_dir_exists: RunDirPresence::Unknown {
+                    message: format!("{path}: 有無を確認できない: 権限がありません"),
                 },
+                exit: ExitInfo::Unread,
+                ..attempt()
+            }),
+            ..detail()
+        });
+
+        assert_eq!(
+            sub_line(&text, "runディレクトリ")
+                .matches(path.as_str())
+                .count(),
+            1,
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn 読めなかったexitは破損と機構の失敗を書き分けて注記される() {
+        let exit_file = attempt().run_dir.exit_file();
+        let corrupt = task_detail(&TaskDetail {
+            attempt: Some(AttemptSummary {
+                exit: ExitInfo::Unreadable(RunFileError::Corrupt {
+                    path: exit_file.clone(),
+                    message: "内容を解釈できない".to_owned(),
+                }),
+                ..attempt()
+            }),
+            ..detail()
+        });
+        let io = task_detail(&TaskDetail {
+            attempt: Some(AttemptSummary {
+                exit: ExitInfo::Unreadable(RunFileError::Io {
+                    message: format!("{}: 読み取れない: 権限がありません", exit_file.display()),
+                }),
                 ..attempt()
             }),
             ..detail()
         });
 
         assert!(
-            text.contains("(読み取れません: 内容を解釈できない)"),
-            "{text}"
+            sub_line(&corrupt, "exit").contains("(読み取れません: 内容を解釈できない)"),
+            "{corrupt}"
         );
+        assert!(sub_line(&io, "exit").contains("読み取れません: "), "{io}");
+    }
+
+    #[test]
+    fn 読めなかったexitのパスは1度しか現れない() {
+        let exit_file = attempt().run_dir.exit_file();
+        let path = exit_file.display().to_string();
+
+        for exit in [
+            ExitInfo::Unreadable(RunFileError::Corrupt {
+                path: exit_file.clone(),
+                message: "内容を解釈できない".to_owned(),
+            }),
+            ExitInfo::Unreadable(RunFileError::Io {
+                message: format!("{path}: 読み取れない: 権限がありません"),
+            }),
+        ] {
+            let text = task_detail(&TaskDetail {
+                attempt: Some(AttemptSummary {
+                    exit: exit.clone(),
+                    ..attempt()
+                }),
+                ..detail()
+            });
+
+            assert_eq!(
+                sub_line(&text, "exit").matches(path.as_str()).count(),
+                1,
+                "{exit:?}: {text}"
+            );
+        }
     }
 
     #[test]
@@ -557,8 +646,7 @@ mod tests {
     #[test]
     fn スナップショット破損では定義済みステータスの代わりに理由が注記される() {
         let text = task_detail(&TaskDetail {
-            defined_statuses: None,
-            snapshot_error: Some("statuses が空".to_owned()),
+            snapshot: SnapshotInfo::Unreadable("statuses が空".to_owned()),
             limits: Limits {
                 retry: RetryLimitInfo::Unknown,
                 ..detail().limits

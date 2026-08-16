@@ -11,7 +11,8 @@ mod usecase_fixture;
 use std::collections::BTreeMap;
 
 use pulsen::application::show_task::{
-    ExitInfo, RetryLimitInfo, RunDirPresence, ShowTask, ShowTaskError, ShowTaskInput, TaskDetail,
+    ExitInfo, RetryLimitInfo, RunDirPresence, ShowTask, ShowTaskError, ShowTaskInput, SnapshotInfo,
+    TaskDetail,
 };
 use pulsen_conformance::doubles::{ScriptedRunStore, ScriptedTaskRepository};
 use pulsen_domain::definition::{GlobalConfig, GlobalConfigInput, StatusDefinition};
@@ -124,15 +125,13 @@ fn 起動記録済みで同定情報が未取り込みのattemptは未取得と�
 }
 
 #[test]
-fn 実行履歴のあるタスクはrunディレクトリとログのパスを示す() {
+fn 実行履歴のあるタスクはrunディレクトリを示す() {
     let tasks = repository(task(TASK).running(1).found());
 
     let detail = show(&tasks, &present_without_exit(), TASK);
     let attempt = attempt_of(&detail);
 
     assert_eq!(attempt.run_dir, run_dir(TASK, 1));
-    assert_eq!(attempt.stdout_log, run_dir(TASK, 1).stdout_log());
-    assert_eq!(attempt.stderr_log, run_dir(TASK, 1).stderr_log());
     let process = attempt.process.as_ref().expect("同定情報がある");
     assert_eq!(process.pid().get(), 4242);
     assert_eq!(process.kill_ident().as_str(), "-4242");
@@ -336,10 +335,9 @@ fn スナップショットが読めるタスクは定義済みステータス�
     let detail = show(&tasks, &untouched(), TASK);
 
     assert_eq!(
-        detail.defined_statuses.expect("一覧がある"),
-        vec![status("done"), status("queued"), status("waiting")]
+        detail.snapshot,
+        SnapshotInfo::Readable(vec![status("done"), status("queued"), status("waiting")])
     );
-    assert!(detail.snapshot_error.is_none());
 }
 
 #[test]
@@ -435,7 +433,7 @@ fn runディレクトリの存在確認の失敗は表示を止めない() {
 }
 
 #[test]
-fn exitの読み取りの失敗は表示を止めない() {
+fn exitの読み取りの失敗は表示を止めず原因の分類のまま渡る() {
     for error in [
         RunFileError::Corrupt {
             path: run_dir(TASK, 1).exit_file(),
@@ -452,9 +450,15 @@ fn exitの読み取りの失敗は表示を止めない() {
 
         let detail = show(&tasks, &runs, TASK);
 
-        assert!(
-            matches!(attempt_of(&detail).exit, ExitInfo::Unreadable { .. }),
-            "{error:?}"
+        assert_eq!(
+            attempt_of(&detail).exit,
+            ExitInfo::Unreadable(error.clone()),
+            "文言の組み立ては表示層に委ねる: {error:?}"
+        );
+        assert_eq!(
+            attempt_of(&detail).run_dir,
+            run_dir(TASK, 1),
+            "残りの項目は表示され続ける"
         );
     }
 }
@@ -516,10 +520,10 @@ fn スナップショットだけが読めないタスクは読める項目を�
     assert_eq!(detail.execution_state, ExecutionStateKind::Failed);
     assert!(detail.workspace.is_some(), "タスクファイル由来の項目は残る");
     assert_eq!(detail.counters.attempt_count(), 2);
-    assert_eq!(detail.snapshot_error.as_deref(), Some("statuses が空"));
-    assert!(
-        detail.defined_statuses.is_none(),
-        "スナップショット由来の項目は出さない"
+    assert_eq!(
+        detail.snapshot,
+        SnapshotInfo::Unreadable("statuses が空".to_owned()),
+        "スナップショット由来の項目は出さず理由だけを残す"
     );
 }
 

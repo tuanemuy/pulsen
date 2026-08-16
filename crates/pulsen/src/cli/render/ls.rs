@@ -9,7 +9,7 @@ use pulsen_domain::task::{ReadError, StateKindError};
 use crate::application::list_tasks::{ListTasksError, TaskList, TaskRow, UnreadableRow};
 use crate::cli::ls::LsError;
 
-use super::{problem, wire_error};
+use super::{display_width, problem, wire_error};
 
 /// 一覧の列見出し。`spec/pages/index.md#ls` の「機能」に書かれた順で固定する。
 const HEADERS: [&str; COLUMNS] = [
@@ -30,6 +30,8 @@ const COLUMNS: usize = 9;
 /// 値が無い項目に置く記号。
 ///
 /// 空欄にしない — 「値が無い」と「列がずれた」を区別できなくなる。
+/// テーブルのセルなので括弧を付ける。`show` の項目行は見出しが隣にあり値と非値を
+/// 取り違えようがないため、そちらは括弧を付けない。
 const UNSET: &str = "(未作成)";
 
 /// タスクの一覧。該当が無ければ空である旨だけを返す。
@@ -109,12 +111,12 @@ fn notes(row: &TaskRow) -> String {
     notes.join(" / ")
 }
 
-/// 列ごとの幅(文字数)。
+/// 列ごとの幅(表示幅)。
 fn widths(rows: &[[String; COLUMNS]]) -> [usize; COLUMNS] {
-    let mut widths = HEADERS.map(|header| header.chars().count());
+    let mut widths = HEADERS.map(display_width);
     for row in rows {
         for (width, cell) in widths.iter_mut().zip(row) {
-            *width = (*width).max(cell.chars().count());
+            *width = (*width).max(display_width(cell));
         }
     }
     widths
@@ -122,13 +124,13 @@ fn widths(rows: &[[String; COLUMNS]]) -> [usize; COLUMNS] {
 
 /// 値を列幅に合わせて並べた1行。末尾の余白は残さない。
 ///
-/// 桁揃えは文字数で行う。長い値は切り詰めない — 成果の回収に使うリポジトリのパスや
-/// ブランチ名が読めなくなる(ADR-001)。
+/// 桁揃えは表示幅で行う — 見出しもタスクステータスも全角になり得る。長い値は
+/// 切り詰めない — 成果の回収に使うリポジトリのパスやブランチ名が読めなくなる(ADR-001)。
 fn line(cells: &[String; COLUMNS], widths: &[usize; COLUMNS]) -> String {
     let mut out = String::new();
     for (cell, width) in cells.iter().zip(widths) {
         out.push_str(cell);
-        out.push_str(&" ".repeat(width.saturating_sub(cell.chars().count())));
+        out.push_str(&" ".repeat(width.saturating_sub(display_width(cell))));
         out.push_str("  ");
     }
     out.trim_end().to_owned()
@@ -209,6 +211,81 @@ mod tests {
             row.matches("running").count(),
             2,
             "同名でもタスクステータスと実行状態の両方が出る: {row}"
+        );
+    }
+
+    /// 行の中で各セルが始まる表示位置。列の区切りは2桁以上の余白で見分ける。
+    ///
+    /// 幅は実装を借りずに数える — 借りると幅の数え方ごと間違えたときに主張が崩れる。
+    /// テストが並べるのは ASCII と日本語だけなので、この単純な境界で足りる。
+    fn column_starts(line: &str) -> Vec<usize> {
+        let mut starts = Vec::new();
+        let mut column = 0;
+        let mut blank = 2;
+        for character in line.chars() {
+            if character == ' ' {
+                blank += 1;
+            } else {
+                if blank >= 2 {
+                    starts.push(column);
+                }
+                blank = 0;
+            }
+            column += if character < '\u{2E80}' { 1 } else { 2 };
+        }
+        starts
+    }
+
+    #[test]
+    fn 全角の値が混じっても見出しと各行の列が同じ位置から始まる() {
+        let text = task_list(&TaskList {
+            rows: vec![
+                TaskRow {
+                    task_status: StatusName::parse("実装中".to_owned()).expect("受理される"),
+                    branch: Some(BranchName::parse("pulsen/a".to_owned()).expect("受理される")),
+                    archived: true,
+                    ..row("20260812t101112-aaaa0001")
+                },
+                TaskRow {
+                    task_status: StatusName::parse("queued".to_owned()).expect("受理される"),
+                    snapshot_unreadable: true,
+                    ..row("20260812t101112-aaaa0002")
+                },
+            ],
+            unreadable: Vec::new(),
+        });
+
+        let mut lines = text.lines();
+        let headers = column_starts(lines.next().expect("見出しがある"));
+        assert_eq!(headers.len(), COLUMNS, "見出しは列の数だけ並ぶ: {text}");
+        for line in lines {
+            assert_eq!(
+                column_starts(line),
+                headers,
+                "見出しと同じ位置から始まる: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn 全角の値は表示幅で詰められる() {
+        // リポジトリのパスの綴りだけは実行環境で変わる。ASCIIのみなので幅は長さに等しい。
+        let repo = absolute(&["repos", "pulsen"]).display().to_string();
+        let repo_pad = " ".repeat(repo.len() - 10);
+        let text = task_list(&TaskList {
+            rows: vec![TaskRow {
+                task_status: StatusName::parse("実装中".to_owned()).expect("受理される"),
+                snapshot_unreadable: true,
+                ..row("20260812t101112-abcd1234")
+            }],
+            unreadable: Vec::new(),
+        });
+
+        assert_eq!(
+            text,
+            format!(
+                "タスクID                  ワークフロー  リポジトリ{repo_pad}  ブランチ  ステータス  実行状態  attempt  更新日時              備考\n20260812t101112-abcd1234  implement     {repo}  (未作成)  実装中      pending   0        2026-08-12T10:11:12Z  スナップショット読み取り不能"
+            )
         );
     }
 

@@ -1,7 +1,8 @@
 //! タスク詳細のユースケース(UC-task-005)。
 //!
 //! ポート越しに読み(`TaskRepository::find` / `RunStore`)、縮退の場合分けをここで
-//! 直和型に畳む。文言の組み立ては行わず、原因を値として返す。
+//! 直和型に畳む。文言の組み立ては行わず、原因を値として返す — パスを文字列へ差し込む
+//! 層を表示層1つに決めるため、ポートのエラーは構造のまま渡す。
 //!
 //! **`ExclusiveLock` を持たない。** 読み取りがロックを取らないこと(pages 共通事項・
 //! 縮退表の「—(非取得)」)を、受け取れる型が無いことで示す。
@@ -78,11 +79,8 @@ pub enum ExitInfo {
     Recorded(ExitCode),
     /// 記録がない。
     Absent,
-    /// 読み取りが失敗した。
-    Unreadable {
-        /// 原因の説明。
-        message: String,
-    },
+    /// 読み取りが失敗した。ポートの分類(内容の破損 / 機構の失敗)をそのまま渡す。
+    Unreadable(RunFileError),
     /// run ディレクトリの有無を確かめられず、読みに行っていない。
     Unread,
 }
@@ -97,17 +95,27 @@ pub struct AttemptSummary {
     /// attempt 番号。
     pub number: AttemptNumber,
     /// run ディレクトリ。
+    ///
+    /// stdout.log / stderr.log / exit のパスはここから導出できるため、派生値は持たない。
     pub run_dir: RunDirPath,
     /// プロセス同定情報。起動確認前は `None`(「未取得」)。
     pub process: Option<ProcessIdent>,
     /// exit の読み取り結果。
     pub exit: ExitInfo,
-    /// 標準出力ログのパス。
-    pub stdout_log: PathBuf,
-    /// 標準エラーログのパス。
-    pub stderr_log: PathBuf,
     /// run ディレクトリ自体の有無。
     pub run_dir_exists: RunDirPresence,
+}
+
+/// スナップショット由来の項目。
+///
+/// 定義済みステータス一覧と読めない理由は常に共変する1軸で、両方が立つ状態も
+/// どちらも立たない状態も存在しない。`Option` を2つ並べず1つの直和型にする。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotInfo {
+    /// 読めたスナップショットの定義済みステータス一覧。
+    Readable(Vec<StatusName>),
+    /// 読めない理由。
+    Unreadable(String),
 }
 
 /// 凍結の要因と通知。
@@ -144,10 +152,8 @@ pub struct TaskDetail {
     pub last_failure: Option<FailureNote>,
     /// 凍結の要因と通知。stopped のときだけ `Some`。
     pub stop_info: Option<StopInfo>,
-    /// スナップショットの定義済みステータス一覧。破損時は `None`。
-    pub defined_statuses: Option<Vec<StatusName>>,
-    /// スナップショットが読めない理由。破損時だけ `Some`。
-    pub snapshot_error: Option<String>,
+    /// スナップショット由来の項目。
+    pub snapshot: SnapshotInfo,
     /// スナップショットの保存先(タスクファイル自身。ADR-015)。
     pub task_file_path: PathBuf,
     /// アーカイブ側で見つかったか。
@@ -253,8 +259,7 @@ where
             attempt: self.attempt(task.current_attempt()),
             last_failure: task.last_failure().cloned(),
             stop_info: stop_info(task.execution()),
-            defined_statuses: Some(defined_statuses),
-            snapshot_error: None,
+            snapshot: SnapshotInfo::Readable(defined_statuses),
             task_file_path: self.task_file_path(task.id(), archived),
             archived,
             updated_at: task.updated_at(),
@@ -278,8 +283,7 @@ where
             attempt: self.attempt(task.current_attempt()),
             last_failure: task.last_failure().cloned(),
             stop_info: stop_info(task.execution()),
-            defined_statuses: None,
-            snapshot_error: Some(task.snapshot_error().to_owned()),
+            snapshot: SnapshotInfo::Unreadable(task.snapshot_error().to_owned()),
             task_file_path: self.task_file_path(task.id(), archived),
             archived,
             updated_at: task.updated_at(),
@@ -321,10 +325,7 @@ where
             RunDirPresence::Present => match self.runs.read_exit(run_dir) {
                 Ok(Some(code)) => ExitInfo::Recorded(code),
                 Ok(None) => ExitInfo::Absent,
-                Err(RunFileError::Corrupt { path, message }) => ExitInfo::Unreadable {
-                    message: format!("{}: {message}", path.display()),
-                },
-                Err(RunFileError::Io { message }) => ExitInfo::Unreadable { message },
+                Err(error) => ExitInfo::Unreadable(error),
             },
             // ディレクトリごと無いなら exit ファイルも無い。
             RunDirPresence::Absent => ExitInfo::Absent,
@@ -337,8 +338,6 @@ where
             run_dir: run_dir.clone(),
             process: attempt.process().cloned(),
             exit,
-            stdout_log: run_dir.stdout_log(),
-            stderr_log: run_dir.stderr_log(),
             run_dir_exists: presence,
         })
     }

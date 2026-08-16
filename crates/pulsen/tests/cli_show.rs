@@ -6,6 +6,8 @@
 
 mod common;
 
+use std::fs;
+
 use common::{Home, Repo, Run, WORKFLOW, add, agent_probe, probe_config, show, tick, wait_until};
 use serde_json::json;
 
@@ -308,6 +310,39 @@ fn workspaceのパスは実体が無くても表示されるだけで0で終わ�
         &format!("workspace_path: {}", home.worktree(&id).display()),
         &format!("branch: pulsen/{id}"),
     ]);
+}
+
+#[test]
+fn 読めないexitは注記して0で終わり対象のパスを重ねて出さない() {
+    let home = home_with_workflow();
+    let repo = Repo::with_commit();
+    let id = register(&home, &repo);
+    let run_dir = home.run_dir(&id, 1);
+    fs::create_dir_all(&run_dir).expect("runディレクトリを作れる");
+    let exit_file = run_dir.join("exit");
+    fs::write(&exit_file, "{ これは JSON ではない").expect("exit を壊せる");
+    home.patch_task(&id, |task| {
+        task["current_attempt"] = json!({
+            "number": 1,
+            "run_dir": run_dir,
+            "process": null,
+        });
+    });
+
+    let run = run_show(&home, &id);
+
+    run.assert_succeeded();
+    let line = run
+        .stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("exit: "))
+        .expect("exit の項目行がある");
+    assert!(line.contains("読み取れません: "), "{line}");
+    assert_eq!(
+        line.matches(&exit_file.display().to_string()).count(),
+        1,
+        "パスを文言へ入れる層は1つ: {line}"
+    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # 適合テストの行 × ハーネスのフック
 
-`spec/testcases/ports/*.md` のうち、これまでのスライスで扱った10ポート196行を、どう組み立てるかで分類した表。フックは spec の前提条件から導く（`.adr/1-port-conformance-suite-and-harness-hooks.md`）。行を足す・フックを足すときはこの表も更新する。
+`spec/testcases/ports/*.md` のうち、これまでのスライスで扱った10ポート198行を、どう組み立てるかで分類した表。フックは spec の前提条件から導く（`.adr/1-port-conformance-suite-and-harness-hooks.md`）。行を足す・フックを足すときはこの表も更新する。
 
 台帳行に対応しない追加ケースは、件数に数えず「追加ケース」として区別して載せる。
 
@@ -16,10 +16,10 @@
 
 | 区分 | 件数 |
 |---|---|
-| A | 41 |
-| B | 132 |
+| A | 42 |
+| B | 133 |
 | C | 23 |
-| 合計 | 196 |
+| 合計 | 198 |
 
 スキップは libtest の出力では成功と区別できないため、スイートを適用するテストファイルが「この環境でスキップを許容するケース」を集合として宣言する（`SkipBudget`）。集合の外のスキップはそのケースの失敗として現れる。集合は環境の能力から実行時に決める（`.adr/1-conformance-skip-budget.md`）。
 
@@ -272,7 +272,7 @@ run ディレクトリのファイルの位置はケース側が契約の語彙�
 
 | ID | 前提条件 | 区分 | 組み立て手段 |
 |---|---|---|---|
-| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。ADR-084） |
+| TC-port-run-store-001 | runディレクトリ階層が未作成 | B | `expected_run_dir` + `attempt_dir_present` + `attempt_exists`（`prepare_attempt` の**前後で観測が反転すること**まで主張する。定数を返すハーネスはどちらかの側で落ちる。後の観測は `require!` ではなく `Some(true)` / `Ok(true)` との等値比較で書く。ADR-084） |
 | TC-port-run-store-002 | 準備済みで write 系を書き込み済み | A | `prepare_attempt` 2回 → read 系（内容の不変で観測する。`attempt_exists` はディレクトリの有無しか答えず、既存の書き込みが保たれたことを主張できない。ADR-084） |
 | TC-port-run-store-003 | 準備済み・pid 未書き込み | A | `prepare_attempt` → `read_pid_file` |
 | TC-port-run-store-004 | attempt ディレクトリ自体が不在 | B | `expected_run_dir`（準備しないまま読む） |

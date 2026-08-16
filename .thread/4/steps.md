@@ -133,7 +133,7 @@ CLI が「画面」。`crates/pulsen/src/cli/` の既存構成に乗る。
 - **変更内容:**
   - 適合ケースを1行1関数で足す。TC-022 は `prepare_attempt` 済み・**ファイルを1つも書いていない**状態で `Ok(true)`、TC-023 は attemptディレクトリ不在で `Ok(false)`。`run_store_conformance!` のケース一覧に2件を追加する(`conformance_run_store.rs` 側の変更はスイート適用のマクロ経由なので不要)。
   - `ScriptedRunStore` に `with_attempt_exists` と `RunStoreCall::AttemptExists` を足す。台本を使い切ったらパニックする既存の流儀に揃える。
-  - `HOOKS.md` の RunStore の節の見出し(「本スライス該当の21行」)と区分別の件数を 23行に更新する。
+  - `HOOKS.md` の RunStore の節の見出し(「本スライス該当の21行」)と区分別の件数を 23行に更新し、冒頭の集計(「10ポート196行」と区分表)も各節の合計に数え直す。冒頭は「これまでのスライスで扱った行」の総数なので、行が増えた節だけを直すと正本が割れる。
 - **理由:** 適合ケースが無ければアダプターの実装が無主張になり、ダブルが無ければステップ11 の ShowTask ユースケーステストが1件も書けない。
 
 ### 4. `ListTasks` ユースケースを実装する — UC-task-004

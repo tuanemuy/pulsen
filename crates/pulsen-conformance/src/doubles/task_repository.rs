@@ -187,6 +187,6 @@ impl TaskRepository for ScriptedTaskRepository {
     }
 
     fn archive(&self, _id: &TaskId) -> Result<(), ArchiveError> {
-        panic!("このダブルは create / find / list_active / list_archived / save を扱う")
+        panic!("このダブルは archive を扱わない(#6 で台本を足す)")
     }
 }

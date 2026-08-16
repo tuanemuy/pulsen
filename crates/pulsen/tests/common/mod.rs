@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use pulsen::adapter::process;
 use pulsen::adapter::task_repository::FsTaskRepository;
 use pulsen_conformance::{Restore, SkipBudget};
-use pulsen_domain::task::{StateRoot, TaskId, TaskRepository};
+use pulsen_domain::task::{StateRoot, TaskFilePath, TaskId, TaskRepository};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -254,10 +254,11 @@ impl Home {
     /// `pulsen tick` でアーカイブへ到達させる形に置き換えられる。**
     pub fn archive_task(&self, id: &str) -> PathBuf {
         let state_root = StateRoot::parse(self.state_dir()).expect("絶対パスになる");
-        FsTaskRepository::new(state_root)
-            .archive(&TaskId::parse(id.to_owned()).expect("受理される"))
+        let id = TaskId::parse(id.to_owned()).expect("受理される");
+        FsTaskRepository::new(state_root.clone())
+            .archive(&id)
             .expect("アーカイブへ移せる");
-        self.archive_dir().join(format!("{id}.json"))
+        TaskFilePath::archived(&state_root, &id)
     }
 
     /// 排他ロックのパス。
@@ -535,11 +536,7 @@ impl Add {
 
         let output = command.output().expect("pulsen を起動できる");
         drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+        Run::of(&output)
     }
 }
 
@@ -587,11 +584,7 @@ impl Tick {
 
         let output = command.output().expect("pulsen を起動できる");
         drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+        Run::of(&output)
     }
 }
 
@@ -802,11 +795,7 @@ impl Wrapper {
 
         let output = command.output().expect("pulsen を起動できる");
         drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+        Run::of(&output)
     }
 
     /// 実バイナリを起動し、終了を待たずに実行中のラッパーを返す。
@@ -894,11 +883,7 @@ pub fn run_cli(arguments: &[&str]) -> Run {
 
     let output = command.output().expect("pulsen を起動できる");
     drop(sandbox);
-    Run {
-        code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
+    Run::of(&output)
 }
 
 /// 起動する `pulsen` のホーム解決を、実行環境から切り離す。
