@@ -1,8 +1,8 @@
 //! `ls` の文言。
 //!
 //! 読めたタスクは1行1タスクの桁揃えテーブル、読めなかったファイルは一覧の後ろの
-//! 独立したブロックに置く(adr.md ADR-001)。破損ファイルはタスクIDもステータスも
-//! 読めておらず、テーブルの列を埋められない。
+//! 独立したブロックに置く。破損ファイルはタスクIDもステータスも読めておらず、
+//! テーブルの列を埋められない。
 
 use pulsen_domain::task::{ReadError, StateKindError};
 
@@ -125,7 +125,7 @@ fn widths(rows: &[[String; COLUMNS]]) -> [usize; COLUMNS] {
 /// 値を列幅に合わせて並べた1行。末尾の余白は残さない。
 ///
 /// 桁揃えは表示幅で行う — 見出しもタスクステータスも全角になり得る。長い値は
-/// 切り詰めない — 成果の回収に使うリポジトリのパスやブランチ名が読めなくなる(ADR-001)。
+/// 切り詰めない — 成果の回収に使うリポジトリのパスやブランチ名が読めなくなる。
 fn line(cells: &[String; COLUMNS], widths: &[usize; COLUMNS]) -> String {
     let mut out = String::new();
     for (cell, width) in cells.iter().zip(widths) {

@@ -31,7 +31,7 @@ pub struct ListTasksInput {
 /// 一覧に並ぶタスク1件。
 ///
 /// `snapshot_unreadable` が立っていても行として出る — 実行状態とタスクステータスは
-/// 読めており、絞り込みの対象になる(pages ※5 との差は plan.md の「spec との差分」)。
+/// 読めており、絞り込みの対象になる。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRow {
     /// タスクID。
@@ -109,8 +109,7 @@ where
     /// spec の処理フローの順に実行する。
     pub fn execute(&self, input: ListTasksInput) -> Result<TaskList, ListTasksError> {
         // ロックを取らない読み取りで、`state` の可否は走査結果に依存しない。入力の誤りを
-        // 走査の成否に従属させないため入力境界で先に弾く
-        // (`.adr/1-parse-inputs-at-spec-flow-position.md` の適用範囲外)。
+        // 走査の成否に従属させないため入力境界で先に弾く。
         let state = match input.state {
             Some(given) => {
                 Some(ExecutionStateKind::parse(&given).map_err(ListTasksError::InvalidState)?)

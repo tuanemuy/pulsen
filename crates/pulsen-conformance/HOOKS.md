@@ -66,7 +66,7 @@
 
 出典は GitHub Actions の run 31698858400（コミット `d9dd9d6`、全7ジョブ success）。`ubuntu-latest` / `macos-latest` / `windows-latest` の各ランナーで、非 root（unix ジョブは `id -u` が 0 でないことを直接アサートする）・ジョブのコンテナ指定なし・`cargo test --workspace --locked --no-fail-fast -- --nocapture` を実行し、`SKIP ` 行を採取したもの。走ったテストバイナリは3 OS とも24本（`Running` 行を数えたもの。`test result:` 行は Doc-tests 3本を含めて27）で同数、スキップした分を除けば実行された適合ケースの数に OS 差は無い。
 
-先行する run 31683845168（`1c582c2`、Issue #13 が保持フィクスチャの能力 probe を入れる前）でもスキップの集合は同じだった。TC-port-exclusive-lock-002 / 003 / 004 / 005 の前提の言い換えは、この3ランナーでは成立するかどうかを変えていない。出典を後の run へ寄せたのは、表がいまその前提を書いている以上、それを測った run を指すべきだからである。
+先行する run 31683845168（`1c582c2`）でもスキップの集合は同じだった。出典に後の run を採るのは、表がいま書いている前提を測った run を指すためである。
 
 下の3列を書き換える理由になるのは集合が動いたときだけで、run を重ねること自体では動かない。
 
@@ -74,7 +74,7 @@
 - **Windows で成立しなかったのは、上の1件に権限系を加えた計17件。** 適合行は表の `permission_restrictions_effective` を判定に持つ12行（TC-port-config-store-023 / TC-port-workflow-store-030 / TC-port-task-repository-005・011・012・019・035・041 / TC-port-run-store-007・017 / TC-port-process-controller-023・025）で、残る4件は同じ述語を使う CLI 側の受け入れケース（TC-task-register-task-016 / 021、TC-exec-run-wrapper-014 / 016）。**表の権限系12行と実測のスキップ12件が過不足なく一致する** — 述語から導けると書いた行の集合が、実際に走らなかった行の集合と同じであることの裏付けになる。この run の後に足した TC-port-command-runner-004 は同じ述語を判定に持つが、まだ測っていない（表では `未測定`）。
 - **区分 C のうち TC-port-clock-003 / TC-port-exclusive-lock-007 / TC-port-worktree-manager-009 は3 OS すべてで走った。** いずれも判定がハーネス側のフック提供の有無で、実アダプターのハーネスが `observe_wall_clock` / `unusable_lock` / `failing_manager` を提供している。
 - **区分 B の環境依存行も3 OS すべてで走った。** `--workspace` で example がビルドされるため `agent_probe` / `spawn_probe` / ロック保持プロセスを要する行はすべて成立し、worktree の置き場をシンボリックリンク経由にする前提も Windows で成立した（ディレクトリのリンクを張れた）。この run の後に足した TC-port-process-controller-007 / 011〜016 と TC-port-command-runner-001 / 002 / 005〜016 も同じくフィクスチャの実行ファイル（`agent_probe` / `spawn_probe` / `judge_probe`）を要するが、まだ測っていない（表では `未測定`）。TC-port-worktree-manager-003 の「一時ディレクトリの置き場が git リポジトリ配下にならない」も3 OS で成立している。TC-port-exclusive-lock-002 / 003 / 004 / 005 と同じ前提（保持プロセスの合図が期限内に返るか）を共有する CLI 側の受け入れケース TC-task-register-task-017 も、3 OS すべてで走った。この1件は表に行を持たず、`SKIP` 行は `ハーネスが lock::hold を提供しないため…` と出るので、成立しなかった条件は TC-port-exclusive-lock-002 / 003 / 004 / 005 の行の括弧で読む。
-- **TC-port-process-controller-024 は環境依存行ではなかった。** 以前この表は「`agent_probe abort` がシグナル死になるプラットフォームか」を判定に持つ独立した行として載せていたが、ケースが要求するのは `agent_command` の提供だけで、期待も「非0の符号化値」までである（`.adr/2-agent-and-spawn-probes-as-examples.md`）。シグナル死になるかを問うフックは無く、Windows でも走った。`agent_command` を判定に持つ行に吸収し、独立した行は落とした。
+- **TC-port-process-controller-024 は環境依存行ではない。** ケースが要求するのは `agent_command` の提供だけで、期待も「非0の符号化値」までである（`.adr/2-agent-and-spawn-probes-as-examples.md`）。「`agent_probe abort` がシグナル死になるプラットフォームか」を問うフックは無く、Windows でも走った。判定は `agent_command` を持つ行と同じなので、独立した行は持たない。
 
 ログには実在の適合ケースと形の区別が付かない `SKIP tc_port_clock_004_時刻の前進` / `tc_port_clock_0051_別のケース` / `tc_port_clock_005_時刻の巻き戻し` の3行が全 OS で出る。これは `pulsen-conformance` の lib ユニットテストが `SkipBudget` 自身を検証するために `record` を直接呼ぶもので、架空のケース名を持つ。上の集計にも CI のジョブサマリーにも含めない — 走らなかった適合ケースとして数えられると、実測が示す内容が変わってしまうため。
 

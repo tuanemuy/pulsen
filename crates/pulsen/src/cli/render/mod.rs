@@ -139,7 +139,8 @@ fn display_width(text: &str) -> usize {
 /// 2桁と数えるのは `WIDE` の11範囲だけで、East Asian Wide であってもここに入らない文字は
 /// 1桁になる — BMP 内の記号・絵文字(`U+231A` など)、Hangul Jamo Extended-A(`U+A960`〜)、
 /// BMP 外の絵文字が該当する。ゼロ幅の結合文字・異体字セレクタも1桁、Ambiguous 幅も1桁へ倒す。
-/// 範囲表を手で育てず、この近似の限界を受け入れる理由は `.thread/4/adr.md` の ADR-001 に置く。
+/// 範囲表は手で育てない — 足していくと `unicode-width` の劣化再実装になる。この近似で
+/// 足りなくなったら、範囲ではなく依存の可否を問い直す。
 fn char_width(character: char) -> usize {
     /// 2桁を占める符号位置の範囲。
     const WIDE: [(char, char); 11] = [

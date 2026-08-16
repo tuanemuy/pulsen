@@ -34,8 +34,7 @@ pub struct ShowTaskInput {
 ///
 /// `Unknown` は `SnapshotInfo::Unreadable` と共変する従属軸だが `SnapshotInfo` へは
 /// 畳まない。`limits.retry` はカウンタ行(attempt_count)の併記の正本で、畳むと
-/// 表示が定義済みステータス項目の内部形を読むことになる。基準は
-/// `.thread/4/adr.md` の ADR-004。
+/// 表示が定義済みステータス項目の内部形を読むことになる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetryLimitInfo {
     /// 適用される上限。
@@ -159,11 +158,11 @@ pub struct TaskDetail {
     pub last_failure: Option<FailureNote>,
     /// スナップショット由来の項目。
     pub snapshot: SnapshotInfo,
-    /// スナップショットの保存先(タスクファイル自身。ADR-015)。
+    /// スナップショットの保存先(タスクファイル自身)。
     ///
     /// 在籍(`archived`)に従属して決まるが `archived` へは畳まない。`archived` は
     /// 在籍行の正本で、畳むと在籍の表示が保存先フィールドの内部形を読むことになる
-    /// (`limits.retry` と同じ理由)。基準は `.thread/4/adr.md` の ADR-004。
+    /// (`limits.retry` と同じ理由)。
     pub task_file_path: PathBuf,
     /// アーカイブ側で見つかったか。
     pub archived: bool,
@@ -306,7 +305,7 @@ where
         }
     }
 
-    /// スナップショットの保存先はタスクファイル自身(ADR-015)。
+    /// スナップショットの保存先はタスクファイル自身。
     fn task_file_path(&self, id: &TaskId, archived: bool) -> PathBuf {
         if archived {
             TaskFilePath::archived(self.state_root, id)

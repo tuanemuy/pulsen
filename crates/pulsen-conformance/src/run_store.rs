@@ -33,8 +33,7 @@ pub fn tc_port_run_store_001_準備でattemptディレクトリが親ごと作�
 
     assert_eq!(run_dir, expected, "返るパスは導出結果と一致する");
     // 前半でフックが `Some` を返した以上、後半の `None` は環境の制約ではなく実装の失敗。
-    // ここで `require!` を使うとその失敗がスキップに化ける
-    // (`.adr/1-no-skippable-hooks-for-post-operation-observation.md`)。
+    // ここで `require!` を使うとその失敗がスキップに化ける。
     assert_eq!(
         harness.attempt_dir_present(&run_dir),
         Some(true),
