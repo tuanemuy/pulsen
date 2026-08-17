@@ -45,3 +45,4 @@
 ## 対象外
 
 - 残りメソッドの `Io`(`read_starttime` / `read_exit` / `prepare_attempt` / `write_starttime` / `write_pid_file` / `write_exit` / `write_invalidation_marker` / `marker_exists` / `attempt_exists` / `list_runs` / `remove_task_dir_if_empty`): 契約横断の共通規則「機構失敗は `Err(Io)` の値として返す(パニックしない・不在の `Ok(None)` や `Corrupt` に写像しない)」は、読み取り側は `read_pid_file` の `Io` ケース、削除側は `delete_attempt` の `Io` ケースが代表して検証する。呼び出し側の分岐(tick が `write_invalidation_marker` の `Err(Io)` で pending に戻さない判断をする等)が依存するのは「Err が値として返る」ことのみで各メソッドで同型のため、メソッド個別のケースは置かない
+- `attempt_exists` の述語(attempt の位置にディレクトリでないものが在るときに `Ok(false)` を返す): 適合ケースにするには「attempt の位置に通常ファイルを置く」フックが要り、全バックエンドに実装を求めることになる。この述語が破れるのはアダプター内部の実装差(`metadata` で型まで見るか `exists` で有無だけ見るか)によるため、フックを増やすよりアダプター側のユニットテストで固定するほうが費用対効果が高い

@@ -198,15 +198,14 @@
 | フィールド | 型 | 備考 |
 |---|---|---|
 | `task_id` / `workflow_name` / `target` | | |
-| `task_status` / `execution_state` | `StatusName` / `ExecutionStateKind` | |
+| `task_status` | `StatusName` | |
+| `execution` | `ExecutionState` | ドメインの直和型をそのまま通す。凍結要因(`Stopped.reason`)と `notified_at` はその付随データとして入り、stopped 以外では項目そのものが出ない。`notified_at` が None なら通知の記録が無いことが分かるように表示する |
 | `workspace` | `Option<Workspace>` | None は「未作成」。アーカイブ済みは「削除済み」注記 |
 | `counters` | `RetryCounters` | |
 | `limits` | `{ retry: RetryLimitInfo, judge: u32, spawn: u32 }` | `RetryLimitInfo = Applicable(u32) \| NotApplicable \| Unknown`。Intact は `applicable_retry_limit`(Wait は `NotApplicable` = 併記なし)、DegradedTask は `Unknown`(スナップショット破損で導出不能。`NotApplicable` と区別して表示)。judge / spawn は config の `judge_attempt_limit` / `spawn_fail_limit`(スナップショット非依存のため常に表示) |
-| `attempt` | `Option<AttemptSummary>` | `{ number, run_dir, pid?, kill_ident?, starttime?, exit: Option<ExitCode>, stdout_log, stderr_log, run_dir_exists: bool }`。None は「なし」、process 未取込は「未取得」、runディレクトリ消失(gc後)は「存在しない」を明示 |
+| `attempt` | `Option<AttemptSummary>` | `{ number: AttemptNumber, run_dir: RunDirPath, process: Option<ProcessIdent>, run_dir_presence: RunDirPresence }`。None は現在の attempt が無いこと、`process` が None は PID・kill同定子・starttime をまとめて未取込であること。`RunDirPresence = Present { exit: ExitOutcome } \| Absent \| Unknown { message }`(`Absent` はrunディレクトリが不在(gc後・未作成)であること、`Unknown` は存在確認自体が失敗して有無が分からないこと)。`ExitOutcome = Recorded(ExitCode) \| Absent \| Unreadable(RunFileError)` は `Present` に入れ子で持つ(exit を読みに行けるのはrunディレクトリが在るときだけ)。`ExitOutcome::Absent` と `RunDirPresence::Absent` はどちらも exit の記録が無いこととして同じ扱いにし、`RunDirPresence::Unknown` は exit を読みに行っていないことが分かるように表示する。`stdout.log` / `stderr.log` / `exit` のパスは `run_dir` からの派生値のため DTO には持たず、表示層が導出する |
 | `last_failure` | `Option<FailureNote>` | |
-| `stop_info` | `Option<{ reason: StopReason, notified_at: Option<Timestamp> }>` | stopped のみ |
-| `defined_statuses` | `Option<Vec<StatusName>>` | スナップショットの定義済みステータス一覧。DegradedTask では None |
-| `snapshot_error` | `Option<String>` | DegradedTask のみ Some(スナップショットが読めない理由の注記。pages ※6) |
+| `snapshot` | `SnapshotInfo` | `SnapshotInfo = Readable(Vec<StatusName>) \| Unreadable(String)`。`Readable` はスナップショットの定義済みステータス一覧、`Unreadable` は DegradedTask で読めない理由の注記(pages ※6) |
 | `task_file_path` | `PathBuf` | `TaskFilePath::active / archived`(スナップショット保存先の表示。ADR-015) |
 | `archived` | `bool` | |
 | `updated_at` | `Timestamp` | |
@@ -214,8 +213,8 @@
 ### 処理フロー
 
 1. `TaskRepository::find`(tasks → archive)。`NotFound` はエラー、`Corrupt` はパスとエラー内容を表示して非0
-2. `Intact(task)` はスナップショット由来の項目(`defined_statuses`・`limits.retry`)を含めて構成する。`SnapshotUnreadable(degraded)` は読める項目をすべて表示し、`snapshot_error` を Some・`defined_statuses` を None・`limits.retry` を `Unknown` として 0 で表示する(注記付き表示。pages ※6)
-3. `attempt` の実行メタデータは `RunStore::attempt_exists(run_dir)` で存在を確認し(false なら `run_dir_exists: false` =「存在しない」表示)、存在すれば `read_exit` で exit を補完する(いずれもエラーにしない)
+2. `Intact(task)` はスナップショット由来の項目(`snapshot`・`limits.retry`)を含めて構成する。`SnapshotUnreadable(degraded)` は読める項目をすべて表示し、`snapshot` を `Unreadable`・`limits.retry` を `Unknown` として 0 で表示する(注記付き表示。pages ※6)
+3. `attempt` の実行メタデータは `RunStore::attempt_exists(run_dir)` で存在を確認する。`Ok(false)` は `run_dir_presence: Absent`、`Err(Io)` は `Unknown { message }`、`Ok(true)` は `read_exit` で exit を補完して `Present { exit }` にする(いずれもエラーにしない)
 4. 詳細を表示して 0
 
 ### トランザクション境界
