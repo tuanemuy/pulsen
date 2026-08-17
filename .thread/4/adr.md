@@ -92,8 +92,6 @@ Proposed
 
 Proposed
 
-→ `.adr/4-exit-nested-in-run-dir-presence.md` に昇格
-
 ### Context
 
 `ShowTask` は `RunStore::attempt_exists` で run ディレクトリの有無を確かめ、**存在すれば** `read_exit` で exit を補う(`spec/usecases/task.md#showtaskshow` の処理フロー3)。存在確認は3値(在る / 無い / 確認できなかった)になるため、`read_exit` を呼ばない経路が2つ生まれる。
@@ -122,7 +120,7 @@ Proposed
 - 読み取りが失敗した場合(`ExitOutcome::Unreadable`)は、原因をポートの分類の**構造のまま**持つ — `RunFileError` の `Corrupt { path, message }` と `Io { message }` の区別を残す。文字列に潰すと、表示層がパスを出すべきかどうかを判定できなくなる。
 - パスを文字列に入れる層を決める。アダプターの `Io` 系メッセージは既に対象を含むため、表示層はパスを前置しない。`Corrupt` は構造化された `path` を持つので、表示層がそれを1度だけ出す。`RunDirPresence::Unknown` も `Io` と同じ扱いにする。
 - トレードオフ: 表示層が同じ値を2度 `match` する。1つの項目にまとめれば1度で済むが、`spec/pages/index.md` の縮退表(run ディレクトリ・中身の不在は注記して 0)と AC-4(exit のパスと値を示す)はどちらも独立した項目として求めており、DTO の形に合わせて表示の項目構成を変えない。
-- `SnapshotInfo` / `RunDirPresence` / `execution` は、`spec/usecases/task.md` の ShowTask 出力DTO(`defined_statuses` / `snapshot_error`、`exit` / `run_dir_exists`、`execution_state` / `stop_info` をそれぞれ並べたフィールド)とフィールドの持ち方が離れるため、spec 追従として Issue #4 のコメントで提起する。
+- `SnapshotInfo` / `RunDirPresence` / `execution` は、`spec/usecases/task.md` の ShowTask 出力DTO(`defined_statuses` / `snapshot_error`、`exit` / `run_dir_exists`、`execution_state` / `stop_info` をそれぞれ並べたフィールド)とフィールドの持ち方が離れるため、spec 追従として提起した(Issue #28 で反映済み。現在の spec は `snapshot` / `run_dir_presence` / `execution` を持つ)。
 
 ---
 
@@ -180,8 +178,6 @@ Proposed
 
 Proposed
 
-→ `.adr/4-conformance-observation-by-hook-and-method.md` に昇格
-
 ### Context
 
 `TC-port-run-store-001` の台帳の期待文(`spec/testcases/ports/run-store.md`)は「親を含めて attempt ディレクトリが作成され、`attempt_exists` が true になる」である。`.thread/2/adr.md` の ADR-084 はこの観測を、選択肢 (a)「`attempt_exists` を宣言して #4 の行を先取りする」を退けて (c)「ハーネスのフック(`attempt_dir_present`)と既存の read 系に置き換える」で満たすと決めた。(a) を退けた理由は Issue #2 の AC-6(未実装メソッドの宣言・スタブが1つも無い)というスライス限定の制約で、ADR-084 自身が Consequences に「#4 が `attempt_exists` を足すときに `TC-022 / 023` とあわせてフックの要否を見直す」と書いている。
@@ -198,8 +194,8 @@ Proposed
 
 - 良い点: 台帳の期待文が名指しする `attempt_exists` を、代替観測ではなくそのまま主張できる。ADR-084 が `TC-port-run-store-001` に付けていた「代替観測で満たしたものとしてチェックを付ける」という例外(plan.md「チェックリスト行にチェックを付ける基準」)が要らなくなる。
 - `attempt_dir_present` フックは廃止しない。`crates/pulsen-conformance/src/run_store.rs` の TC-018(`:339`)と `assert_attempt_dir_absent`(`:448`。write 系の置き場作成の追加ケースが使う)は、`attempt_exists` では代替できない「行の主張とは別に、環境から見てディレクトリごと作られた / まだ無い」を問うており、提供できないハーネスではその分岐だけを飛ばす形で残る。
-- `.thread/2/adr.md` の ADR-084 は #2 の作業ログとして決定節のまま残し、書き換えない。作業ログは `.adr/` の supersede 機構の対象外で、遡って書き換えるとその時点のスライスで何が成り立っていたかが読めなくなる。見直しの記録は本項が持つ。
-- この判断は適合スイート全体と将来の別バックエンドのハーネスに波及するため、`.adr/` への昇格候補。判定は Phase 8 で行う。
+- `.thread/2/adr.md` の ADR-084 は #2 の作業ログとして決定節のまま残し、書き換えない。遡って書き換えると、その時点のスライスで何が成り立っていたかが読めなくなる。見直しの記録は本項が持つ。
+- この判断は適合スイート全体と将来の別バックエンドのハーネスに波及するため、規約としての現在形は `crates/pulsen-conformance/HOOKS.md` の当該行が持つ。
 
 ---
 
@@ -208,8 +204,6 @@ Proposed
 ### Status
 
 Proposed
-
-→ `.adr/4-spec-wording-is-canonical-for-display.md` に昇格
 
 ### Context
 
@@ -236,4 +230,30 @@ Proposed
 - `ls` の列見出しのうち `ワークフロー` / `リポジトリ` の短縮も表示層の裁量として変えない。隣に紛らわしい列が無く、誤読の余地が無い。
 - 値の語(`未記録` / `未作成` / `なし` 等)も表示層の裁量である。spec は状態の有無を述べるだけで語を与えていない。
 - トレードオフ: 隣接する項目で日本語と識別子が混在する(`凍結要因` の次に `notified_at` が並ぶ)。見た目の一貫性より、綴りで辿れることを採る。
-- この判断は #5(abort / retry / set-status)が同じ問題に必ず当たるため `.adr/` への昇格候補。判定は Phase 8 で行う。
+- #5(abort / retry / set-status)が足す表示語も同じ問いで決まる。正本は spec の語そのものなので、規則を別の台帳へ写さなくても spec を読めば導ける。
+
+---
+
+## ADR-009: 入力の parse を spec の処理フローの位置に置く規則は、ロックを取るユースケースに限る
+
+### Status
+
+Proposed
+
+### Context
+
+`.thread/1/adr.md` は parse を「その値を最初に使う直前」に置くと決めた。ロックの取得を形式エラーが追い越すと、「ロック競合なら何も観測せずに終わる」という縮退規則の観測面が崩れるためである。
+
+`ListTasks` / `ShowTask` はロックを取らない(`spec/pages/index.md` の共通事項)。追い越される取得そのものが無いため、規則の根拠がこの2つには当たらない。にもかかわらず位置の制約として読むと、入力境界の検証がポートの呼び出しの間に散らばる。
+
+### Decision
+
+**適用範囲をロックを取るユースケースに限る。ロックを取らない読み取り専用のユースケースでは、parse を `execute` の先頭に置く。**
+
+「一度だけ」(`spec/usecases/task.md` の入力境界)は回数の制約であって位置の制約ではないので、この限定と両立する。
+
+### Consequences
+
+- 良い点: 読み取り専用のユースケースは入力境界が `execute` の先頭1箇所に集まり、境界の検証と観測が混ざらない。
+- 良い点: 規則が根拠(ロック取得を追い越させない)と同じ範囲を持つ。根拠の効かない場所へ形だけが広がらない。
+- `ListTasks` の `--state` は `ExecutionStateKind::parse` を先頭で行う。走査の前に非0で返るため、不正な値で対象集合を読みに行かない。
