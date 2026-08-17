@@ -5,13 +5,16 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
 use pulsen::adapter::process;
+use pulsen::adapter::task_repository::FsTaskRepository;
 use pulsen_conformance::{Restore, SkipBudget};
+use pulsen_domain::task::{StateRoot, TaskFilePath, TaskId, TaskRepository};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -36,10 +39,17 @@ const PERMISSION_CASES: [&str; 4] = [
 ];
 
 /// 保持プロセスの合図が期限内に返らない環境でのみスキップされるケース。
-const LOCK_HOLDER_CASES: [&str; 1] = ["tc_task_register_task_017"];
+const LOCK_HOLDER_CASES: [&str; 3] = [
+    "tc_task_register_task_017",
+    "tc_task_list_tasks_025",
+    "tc_task_show_task_035",
+];
 
 /// 一時ディレクトリ自体が git リポジトリ配下にある環境でのみスキップされるケース。
 const OUTSIDE_REPOSITORY_CASES: [&str; 1] = ["tc_task_register_task_036"];
+
+/// 通常ファイルの配下の問い合わせが不在に写る環境でのみスキップされるケース。
+const NOT_A_DIRECTORY_CASES: [&str; 1] = ["tc_task_show_task_022"];
 
 /// この環境でスキップを許容するケース。
 static SKIPS: LazyLock<SkipBudget> = LazyLock::new(|| SkipBudget::new(allowed_skips()));
@@ -62,7 +72,35 @@ fn allowed_skips() -> Vec<&'static str> {
     if !git::tmpdir_outside_repository() {
         allowed.extend(OUTSIDE_REPOSITORY_CASES);
     }
+    if !lookup_under_regular_file_fails() {
+        allowed.extend(NOT_A_DIRECTORY_CASES);
+    }
     allowed
+}
+
+/// 通常ファイルの配下にあるパスの問い合わせが、不在ではなく失敗として返るか
+/// (1度だけ調べて使い回す)。
+///
+/// 「有無を確認できない run ディレクトリ」の前提は、この位置に通常ファイルを置いて作る。
+/// 問い合わせが `NotFound` に写る環境ではそのまま「存在しない」に落ちて前提が成立しない
+/// ため、スキップの宣言をこの述語で決める。判定は観測する側(アダプター)と同じ
+/// `metadata` の呼び出しで行う。
+pub fn lookup_under_regular_file_fails() -> bool {
+    static FAILS: OnceLock<bool> = OnceLock::new();
+
+    *FAILS.get_or_init(|| {
+        let Ok(dir) = tempfile::tempdir() else {
+            return false;
+        };
+        let file = dir.path().join("regular");
+        if fs::write(&file, b"").is_err() {
+            return false;
+        }
+        match fs::metadata(file.join("child")) {
+            Ok(_) => false,
+            Err(error) => error.kind() != io::ErrorKind::NotFound,
+        }
+    })
 }
 
 /// フィクスチャが前提を用意できなかったことを記録する。
@@ -243,12 +281,18 @@ impl Home {
         path
     }
 
-    /// タスクファイルをアーカイブへ直接移す(走査対象から外れることの観測に使う)。
-    pub fn move_task_to_archive(&self, id: &str) -> PathBuf {
-        fs::create_dir_all(self.archive_dir()).expect("アーカイブの置き場を作れる");
-        let to = self.archive_dir().join(format!("{id}.json"));
-        fs::rename(self.task_path(id), &to).expect("アーカイブへ移せる");
-        to
+    /// タスクをアーカイブへ移し、移動先のパスを返す。
+    ///
+    /// 本スライスの CLI にはタスクをアーカイブへ移す経路が無い。直接ファイルを置き換える
+    /// のではなくリポジトリの `archive` を呼ぶ — アーカイブ側のファイル名・配置・内容の
+    /// 形式をテストが自前で持つと、形式が変わったときにテストだけが古い形式で緑になる。
+    pub fn archive_task(&self, id: &str) -> PathBuf {
+        let state_root = StateRoot::parse(self.state_dir()).expect("絶対パスになる");
+        let id = TaskId::parse(id.to_owned()).expect("受理される");
+        FsTaskRepository::new(state_root.clone())
+            .archive(&id)
+            .expect("アーカイブへ移せる");
+        TaskFilePath::archived(&state_root, &id)
     }
 
     /// 排他ロックのパス。
@@ -526,11 +570,7 @@ impl Add {
 
         let output = command.output().expect("pulsen を起動できる");
         drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+        Run::of(&output)
     }
 }
 
@@ -578,11 +618,110 @@ impl Tick {
 
         let output = command.output().expect("pulsen を起動できる");
         drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        Run::of(&output)
+    }
+}
+
+/// `pulsen ls` の1回の実行。
+pub struct Ls {
+    home_flag: Option<OsString>,
+    status: Option<OsString>,
+    state: Option<OsString>,
+    all: bool,
+}
+
+/// `pulsen ls` を組み立てる。
+pub fn ls() -> Ls {
+    Ls {
+        home_flag: None,
+        status: None,
+        state: None,
+        all: false,
+    }
+}
+
+impl Ls {
+    /// `--home` フラグを付ける。
+    pub fn home(mut self, path: &Path) -> Self {
+        self.home_flag = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// `--status` を付ける。
+    pub fn status(mut self, value: impl AsRef<OsStr>) -> Self {
+        self.status = Some(value.as_ref().to_owned());
+        self
+    }
+
+    /// `--state` を付ける。
+    pub fn state(mut self, value: impl AsRef<OsStr>) -> Self {
+        self.state = Some(value.as_ref().to_owned());
+        self
+    }
+
+    /// `--all` を付ける。
+    pub fn all(mut self) -> Self {
+        self.all = true;
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        let sandbox = detached_home(&mut command);
+        if let Some(home) = self.home_flag {
+            command.arg("--home").arg(home);
         }
+        command.arg("ls");
+        if let Some(status) = self.status {
+            command.arg("--status").arg(status);
+        }
+        if let Some(state) = self.state {
+            command.arg("--state").arg(state);
+        }
+        if self.all {
+            command.arg("--all");
+        }
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run::of(&output)
+    }
+}
+
+/// `pulsen show <task-id>` の1回の実行。
+pub struct Show {
+    home_flag: Option<OsString>,
+    task_id: OsString,
+}
+
+/// `pulsen show <task-id>` を組み立てる。
+pub fn show(task_id: impl AsRef<OsStr>) -> Show {
+    Show {
+        home_flag: None,
+        task_id: task_id.as_ref().to_owned(),
+    }
+}
+
+impl Show {
+    /// `--home` フラグを付ける。
+    pub fn home(mut self, path: &Path) -> Self {
+        self.home_flag = Some(path.as_os_str().to_owned());
+        self
+    }
+
+    /// 実バイナリを起動して結果を集める。
+    pub fn run(self) -> Run {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pulsen"));
+        let sandbox = detached_home(&mut command);
+        if let Some(home) = self.home_flag {
+            command.arg("--home").arg(home);
+        }
+        command.arg("show").arg(self.task_id);
+
+        let output = command.output().expect("pulsen を起動できる");
+        drop(sandbox);
+        Run::of(&output)
     }
 }
 
@@ -690,11 +829,7 @@ impl Wrapper {
 
         let output = command.output().expect("pulsen を起動できる");
         drop(sandbox);
-        Run {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+        Run::of(&output)
     }
 
     /// 実バイナリを起動し、終了を待たずに実行中のラッパーを返す。
@@ -782,11 +917,7 @@ pub fn run_cli(arguments: &[&str]) -> Run {
 
     let output = command.output().expect("pulsen を起動できる");
     drop(sandbox);
-    Run {
-        code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
+    Run::of(&output)
 }
 
 /// 起動する `pulsen` のホーム解決を、実行環境から切り離す。
@@ -815,6 +946,27 @@ pub struct Run {
 }
 
 impl Run {
+    /// 起動の出力から結果を組む。
+    fn of(output: &std::process::Output) -> Self {
+        Self {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+    }
+
+    /// 標準出力に現れるべき語がすべて出ていることを確かめる。
+    pub fn assert_shows(&self, expected: &[&str]) -> &Self {
+        for text in expected {
+            assert!(
+                self.stdout.contains(text),
+                "表示に `{text}` が含まれる: {}",
+                self.stdout
+            );
+        }
+        self
+    }
+
     /// 0 で終了したか。
     pub fn succeeded(&self) -> bool {
         self.code == Some(0)

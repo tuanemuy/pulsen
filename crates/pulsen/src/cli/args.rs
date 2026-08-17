@@ -26,6 +26,12 @@ pub enum Command {
     /// 1回のtickパスを実行する
     Tick,
 
+    /// タスクの一覧を表示する
+    Ls(LsArgs),
+
+    /// タスクの詳細を表示する
+    Show(ShowArgs),
+
     /// デタッチ起動されるラッパーモード(内部用)
     // 利用者向けのインターフェースではないため、ヘルプの一覧には出さない。
     // 隠すだけで到達はできる — spec が求めるのは「一覧に表示しない」こと。
@@ -50,6 +56,38 @@ pub struct AddArgs {
     // 拒否する対象であり、引数の使い方の誤りではない(spec 境界値)。
     #[arg(long, value_name = "BRANCH", allow_hyphen_values = true)]
     pub base: Option<String>,
+}
+
+/// `ls` の引数。
+#[derive(Debug, Args)]
+pub struct LsArgs {
+    /// タスクステータス(ワークフローごとのユーザー定義)で絞り込む
+    // 値は検証しない — 語彙はワークフローごとに違い、未知の値は「該当なし」になる。
+    #[arg(long, value_name = "TASK-STATUS")]
+    pub status: Option<String>,
+
+    /// 実行状態(pending / launching / running / completed / failed / stopped)で絞り込む
+    // 有効値の検証を clap の `value_parser` に委ねない — 有効値一覧を添えた拒否の文言
+    // (PAGE-ls-011)を表示層の管理下に置くため、値はそのままユースケースへ渡す。
+    // `--base` と同じ理由で `-` 始まりの値も値として受け取る。後続のフラグも値になる
+    // (`--state --all` は `--all` を値として拒否する) — 有効値は固定6値で `-` 始まりが
+    // 存在せず、clap の使い方の誤りにするより拒否の文言を表示層に持たせるほうを採る。
+    #[arg(long, value_name = "EXEC-STATE", allow_hyphen_values = true)]
+    pub state: Option<String>,
+
+    /// アーカイブ済み(state/archive/)も表示する
+    #[arg(long)]
+    pub all: bool,
+}
+
+/// `show` の引数。
+#[derive(Debug, Args)]
+pub struct ShowArgs {
+    /// 表示するタスクのID
+    // ID の検証はドメイン(`TaskId::parse`)が行う。先頭が `-` のIDは境界値として
+    // 拒否される対象であり、引数の使い方の誤りではない。
+    #[arg(value_name = "TASK-ID", allow_hyphen_values = true)]
+    pub task_id: String,
 }
 
 /// `wrapper` の引数(`WrapperLaunchSpec` の直列化)。

@@ -91,6 +91,13 @@ pub trait RunStore {
     /// 無効化マーカーの有無を返す。
     fn marker_exists(&self, run_dir: &RunDirPath) -> Result<bool, Io>;
 
+    /// attempt ディレクトリ自体の存在を返す。
+    ///
+    /// read 系の `Ok(None)` では「空ディレクトリ」と「ディレクトリごと不在」を区別
+    /// できず、show の「runディレクトリは存在しない(gc 済み等)」表示がその区別を
+    /// 要求する。
+    fn attempt_exists(&self, run_dir: &RunDirPath) -> Result<bool, Io>;
+
     /// starttime ファイルを書く。
     fn write_starttime(&self, run_dir: &RunDirPath, record: &StartTimeRecord) -> Result<(), Io>;
 

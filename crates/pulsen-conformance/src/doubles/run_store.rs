@@ -44,6 +44,11 @@ pub enum RunStoreCall {
         /// 対象の run ディレクトリ。
         run_dir: RunDirPath,
     },
+    /// `attempt_exists`。
+    AttemptExists {
+        /// 対象の run ディレクトリ。
+        run_dir: RunDirPath,
+    },
     /// `write_starttime`。
     WriteStarttime {
         /// 対象の run ディレクトリ。
@@ -79,6 +84,7 @@ pub struct ScriptedRunStore {
     read_exit: RefCell<VecDeque<Result<Option<ExitCode>, RunFileError>>>,
     write_invalidation_marker: RefCell<VecDeque<Result<(), Io>>>,
     marker_exists: RefCell<VecDeque<Result<bool, Io>>>,
+    attempt_exists: RefCell<VecDeque<Result<bool, Io>>>,
     write_starttime: RefCell<VecDeque<Result<(), Io>>>,
     write_pid_file: RefCell<VecDeque<Result<(), Io>>>,
     write_exit: RefCell<VecDeque<Result<(), Io>>>,
@@ -139,6 +145,12 @@ impl ScriptedRunStore {
     /// `marker_exists` が返す結果の列を与える。
     pub fn with_marker_exists(self, results: impl IntoIterator<Item = Result<bool, Io>>) -> Self {
         *self.marker_exists.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `attempt_exists` が返す結果の列を与える。
+    pub fn with_attempt_exists(self, results: impl IntoIterator<Item = Result<bool, Io>>) -> Self {
+        *self.attempt_exists.borrow_mut() = results.into_iter().collect();
         self
     }
 
@@ -231,6 +243,16 @@ impl RunStore for ScriptedRunStore {
         });
         let Some(result) = self.marker_exists.borrow_mut().pop_front() else {
             panic!("marker_exists の結果を使い切った")
+        };
+        result
+    }
+
+    fn attempt_exists(&self, run_dir: &RunDirPath) -> Result<bool, Io> {
+        self.record(RunStoreCall::AttemptExists {
+            run_dir: run_dir.clone(),
+        });
+        let Some(result) = self.attempt_exists.borrow_mut().pop_front() else {
+            panic!("attempt_exists の結果を使い切った")
         };
         result
     }

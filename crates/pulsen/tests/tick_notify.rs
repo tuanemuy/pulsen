@@ -3,7 +3,7 @@
 //! ポートはすべてテストダブルに差し替える。通知コマンドの非0終了・timeout・
 //! 起動不能と、`mark_notified` 後の保存失敗は実アダプターでは外から作れない。
 
-mod tick_fixture;
+mod usecase_fixture;
 
 use pulsen::application::tick::TickIssue;
 use pulsen::cli::render::tick_summary;
@@ -16,7 +16,7 @@ use pulsen_domain::task::{
     ExecutionState, ExecutionStateKind, SaveError, StopReason, TransitionError,
 };
 
-use tick_fixture::{
+use usecase_fixture::{
     AgentRunSpec, Harness, NOW, TASK, after, agent_run, at, command, config_notifying,
     degraded_entry_with, repository, snapshot_with, task, task_id,
 };

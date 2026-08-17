@@ -12,17 +12,20 @@ use super::RecordSeq;
 
 /// あらかじめ与えた結果を順に返し、渡されたタスクを記録するリポジトリ。
 ///
-/// 扱うのは `create` / `list_active` / `save` / `save_degraded` の4メソッドにする —
-/// ここまでのユースケース(タスク登録・tick)が呼ぶのはこれらであり、残りに台本を
-/// 持たせても検証する対象がない。呼ばれた場合はテスト側の前提が崩れているため、値を
-/// 返さずパニックさせる。
+/// 扱うのは `create` / `find` / `list_active` / `list_archived` / `save` /
+/// `save_degraded` の6メソッドにする — ここまでのユースケース(タスク登録・tick・
+/// 一覧・詳細)が呼ぶのはこれらであり、残り(`archive`)に台本を持たせても検証する
+/// 対象がない。呼ばれた場合はテスト側の前提が崩れているため、値を返さずパニックさせる。
 #[derive(Debug, Default)]
 pub struct ScriptedTaskRepository {
     create: RefCell<VecDeque<Result<(), CreateError>>>,
+    find: RefCell<VecDeque<Result<TaskLookup, ReadError>>>,
     list_active: RefCell<VecDeque<Result<Vec<TaskEntry>, ReadError>>>,
+    list_archived: RefCell<VecDeque<Result<Vec<TaskEntry>, ReadError>>>,
     save: RefCell<VecDeque<Result<(), SaveError>>>,
     save_degraded: RefCell<VecDeque<Result<(), SaveError>>>,
     created: RefCell<Vec<Task>>,
+    looked_up: RefCell<Vec<TaskId>>,
     saved: RefCell<Vec<(RecordSeq, Task)>>,
     saved_degraded: RefCell<Vec<(RecordSeq, DegradedTask)>>,
 }
@@ -39,12 +42,30 @@ impl ScriptedTaskRepository {
         self
     }
 
+    /// `find` が返す結果の列を与える。
+    pub fn with_find(
+        self,
+        results: impl IntoIterator<Item = Result<TaskLookup, ReadError>>,
+    ) -> Self {
+        *self.find.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
     /// `list_active` が返す結果の列を与える。
     pub fn with_list_active(
         self,
         results: impl IntoIterator<Item = Result<Vec<TaskEntry>, ReadError>>,
     ) -> Self {
         *self.list_active.borrow_mut() = results.into_iter().collect();
+        self
+    }
+
+    /// `list_archived` が返す結果の列を与える。
+    pub fn with_list_archived(
+        self,
+        results: impl IntoIterator<Item = Result<Vec<TaskEntry>, ReadError>>,
+    ) -> Self {
+        *self.list_archived.borrow_mut() = results.into_iter().collect();
         self
     }
 
@@ -77,6 +98,14 @@ impl ScriptedTaskRepository {
     /// 失敗した呼び出しも記録する — 「どのIDで何回試みたか」が検証の対象になる。
     pub fn created(&self) -> Vec<Task> {
         self.created.borrow().clone()
+    }
+
+    /// これまでに `find` へ渡されたタスクID。
+    ///
+    /// 解決順(現役 → アーカイブ)はポートの契約であり、呼び出し側が主張するのは
+    /// 「どのIDを何回引いたか」だけになる。
+    pub fn looked_up(&self) -> Vec<TaskId> {
+        self.looked_up.borrow().clone()
     }
 
     /// これまでに `save` へ渡されたタスク。
@@ -135,8 +164,12 @@ impl TaskRepository for ScriptedTaskRepository {
         result
     }
 
-    fn find(&self, _id: &TaskId) -> Result<TaskLookup, ReadError> {
-        panic!("このダブルは create / list_active / save のみを扱う")
+    fn find(&self, id: &TaskId) -> Result<TaskLookup, ReadError> {
+        self.looked_up.borrow_mut().push(id.clone());
+        let Some(result) = self.find.borrow_mut().pop_front() else {
+            panic!("find の結果を使い切った")
+        };
+        result
     }
 
     fn list_active(&self) -> Result<Vec<TaskEntry>, ReadError> {
@@ -147,10 +180,13 @@ impl TaskRepository for ScriptedTaskRepository {
     }
 
     fn list_archived(&self) -> Result<Vec<TaskEntry>, ReadError> {
-        panic!("このダブルは create / list_active / save のみを扱う")
+        let Some(result) = self.list_archived.borrow_mut().pop_front() else {
+            panic!("list_archived の結果を使い切った")
+        };
+        result
     }
 
     fn archive(&self, _id: &TaskId) -> Result<(), ArchiveError> {
-        panic!("このダブルは create / list_active / save のみを扱う")
+        panic!("このダブルは archive を扱わない(#6 で台本を足す)")
     }
 }

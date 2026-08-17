@@ -1,0 +1,349 @@
+//! タスク詳細のユースケース(UC-task-005)。
+//!
+//! ポート越しに読み(`TaskRepository::find` / `RunStore`)、縮退の場合分けをここで
+//! 直和型に畳む。文言の組み立ては行わず、原因を値として返す — パスを文字列へ差し込む
+//! 層を表示層1つに決めるため、ポートのエラーは構造のまま渡す。
+//!
+//! **`ExclusiveLock` を持たない。** 読み取りがロックを取らないこと(pages 共通事項・
+//! 縮退表の「—(非取得)」)を、受け取れる型が無いことで示す。
+//!
+//! **`workspace` のパスの存在検証は行わない**(pages ※9)。アーカイブ済みの
+//! 「worktree は削除済み」注記も、アーカイブ済みであるという事実から導く。
+
+use std::path::PathBuf;
+
+use pulsen_domain::definition::{GlobalConfig, StatusName, WorkflowName};
+use pulsen_domain::execution::{ExitCode, Io, RunFileError, RunStore};
+use pulsen_domain::task::{
+    AttemptNumber, AttemptRef, DegradedTask, ExecutionState, FailureNote, ProcessIdent, ReadError,
+    RetryCounters, RunDirPath, StateRoot, Target, Task, TaskFilePath, TaskId, TaskIdError,
+    TaskLookup, TaskRecord, TaskRepository, Timestamp, Workspace,
+};
+
+/// 詳細の入力。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShowTaskInput {
+    /// `<task-id>` の値。
+    pub task_id: String,
+}
+
+/// 現ステータスに適用されるリトライ上限。
+///
+/// 「適用対象がない」(Wait)と「導出できない」(スナップショット破損)を
+/// `Option<u32>` に潰さない — 前者は併記なし、後者は導出不能である旨の注記になる。
+///
+/// `Unknown` は `SnapshotInfo::Unreadable` と共変する従属軸だが `SnapshotInfo` へは
+/// 畳まない。`limits.retry` はカウンタ行(attempt_count)の併記の正本で、畳むと
+/// 表示が定義済みステータス項目の内部形を読むことになる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryLimitInfo {
+    /// 適用される上限。
+    Applicable(u32),
+    /// 適用対象がない(attempt_count を消費する操作を持たないステータス)。
+    NotApplicable,
+    /// スナップショットが読めず導出できない。
+    Unknown,
+}
+
+/// 各カウンタに併記する上限。
+///
+/// judge / spawn はスナップショットに依存しないため、縮退時も config の値で常に埋まる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// リトライ上限。
+    ///
+    /// スナップショットの可読性に従属するが `snapshot` へは畳まない
+    /// (理由は `RetryLimitInfo`)。
+    pub retry: RetryLimitInfo,
+    /// 判定失敗の上限。
+    pub judge: u32,
+    /// spawn 失敗の上限。
+    pub spawn: u32,
+}
+
+/// attempt の run ディレクトリの有無と、在るときの exit。
+///
+/// 「不在」と「確認できなかった」を同じ値に潰さない — 前者は gc 済み・未作成という
+/// 正常な状態、後者は観測の失敗であり、次に取る行動が違う。
+///
+/// exit を入れ子で持つのは、それが run ディレクトリの有無から**決まる**従属軸だから
+/// である。読みに行けるのは在るときだけで、ディレクトリごと無ければ記録も無く、有無を
+/// 確かめられていなければ記録の不在も主張できない。並べて持つと、成立しない組み合わせ
+/// (不在なのに終了コードが在る、など)が型で書けてしまう。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunDirPresence {
+    /// 存在する。exit はその中身の読み取り結果。
+    Present {
+        /// exit ファイルの読み取り結果。
+        exit: ExitOutcome,
+    },
+    /// 存在しない(未作成・gc 済み)。exit ファイルも無い。
+    Absent,
+    /// 存在確認自体が失敗した。exit は読みに行っていない。
+    Unknown {
+        /// 原因の説明。
+        message: String,
+    },
+}
+
+/// run ディレクトリが在るときの exit ファイルの読み取り結果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExitOutcome {
+    /// 記録された終了コード。
+    Recorded(ExitCode),
+    /// 記録がない。
+    Absent,
+    /// 読み取りが失敗した。ポートの分類(内容の破損 / 機構の失敗)をそのまま渡す。
+    Unreadable(RunFileError),
+}
+
+/// 現在 attempt の実行メタデータ。
+///
+/// 値そのものが `None` になりうる `process` と、attempt が「なし」であることを
+/// 表す `Option<AttemptSummary>` を分けることで、「attempt なし」と「attempt あり・
+/// 同定情報未取得」を区別する。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptSummary {
+    /// attempt 番号。
+    pub number: AttemptNumber,
+    /// run ディレクトリ。
+    ///
+    /// stdout.log / stderr.log / exit のパスはここから導出できるため、派生値は持たない。
+    pub run_dir: RunDirPath,
+    /// プロセス同定情報。起動確認前は `None`(「未取得」)。
+    pub process: Option<ProcessIdent>,
+    /// run ディレクトリの有無と、在るときの exit。
+    pub run_dir_presence: RunDirPresence,
+}
+
+/// スナップショット由来の項目。
+///
+/// 定義済みステータス一覧と読めない理由は常に共変する1軸で、両方が立つ状態も
+/// どちらも立たない状態も存在しない。`Option` を2つ並べず1つの直和型にする。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotInfo {
+    /// 読めたスナップショットの定義済みステータス一覧。
+    Readable(Vec<StatusName>),
+    /// 読めない理由。
+    Unreadable(String),
+}
+
+/// タスク1件の詳細。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDetail {
+    /// タスクID。
+    pub task_id: TaskId,
+    /// ワークフローの表示名。
+    pub workflow_name: WorkflowName,
+    /// 対象のリポジトリとベースブランチ。
+    pub target: Target,
+    /// タスクステータス。
+    pub task_status: StatusName,
+    /// 実行状態。凍結の要因と通知は `Stopped` の付随データとして入る。
+    ///
+    /// ドメインの直和型をそのまま通す — 判別子と付随データに割ると、凍結して
+    /// いないのに要因がある/凍結しているのに要因がない組み合わせが型で書ける。
+    /// `Target` / `Workspace` / `RetryCounters` / `FailureNote` と同じ扱いで、
+    /// 実行状態だけが分解されている理由はない。
+    pub execution: ExecutionState,
+    /// 確定済みワークスペース。`None` は「未作成」。
+    pub workspace: Option<Workspace>,
+    /// 3つのカウンタ。
+    pub counters: RetryCounters,
+    /// カウンタに併記する上限。
+    pub limits: Limits,
+    /// 現在 attempt。`None` は「なし」。
+    pub attempt: Option<AttemptSummary>,
+    /// 直近のツール操作・判定の失敗。
+    pub last_failure: Option<FailureNote>,
+    /// スナップショット由来の項目。
+    pub snapshot: SnapshotInfo,
+    /// スナップショットの保存先(タスクファイル自身)。
+    ///
+    /// 在籍(`archived`)に従属して決まるが `archived` へは畳まない。`archived` は
+    /// 在籍行の正本で、畳むと在籍の表示が保存先フィールドの内部形を読むことになる
+    /// (`limits.retry` と同じ理由)。
+    pub task_file_path: PathBuf,
+    /// アーカイブ側で見つかったか。
+    pub archived: bool,
+    /// 最終更新時刻。
+    pub updated_at: Timestamp,
+}
+
+/// 詳細の失敗。
+///
+/// いずれの場合も書き込みを行わない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShowTaskError {
+    /// タスクIDとして解釈できない。
+    InvalidTaskId(TaskIdError),
+    /// 現役にもアーカイブにも存在しない。
+    NotFound {
+        /// 指定されたタスクID。
+        task_id: TaskId,
+    },
+    /// タスクファイル全体が読めない。
+    Corrupt {
+        /// 対象のファイル。
+        path: PathBuf,
+        /// 読めない理由。
+        message: String,
+    },
+    /// 走査自体ができない。
+    Read(ReadError),
+}
+
+/// タスク1件を解決し、実行メタデータを補って詳細に組み立てる。
+///
+/// ポートはジェネリック引数で受け取り、実アダプターとテストダブルのどちらにも同じ
+/// 制御フローが乗ることを型で示す。
+pub struct ShowTask<'a, R, S> {
+    config: &'a GlobalConfig,
+    state_root: &'a StateRoot,
+    tasks: &'a R,
+    runs: &'a S,
+}
+
+impl<'a, R, S> ShowTask<'a, R, S>
+where
+    R: TaskRepository,
+    S: RunStore,
+{
+    /// 読み込み済みのグローバル設定と各ポートを結線する。
+    ///
+    /// 排他ロックは取らない。グローバル設定は judge / spawn の上限の出どころとして要る。
+    pub fn new(
+        config: &'a GlobalConfig,
+        state_root: &'a StateRoot,
+        tasks: &'a R,
+        runs: &'a S,
+    ) -> Self {
+        Self {
+            config,
+            state_root,
+            tasks,
+            runs,
+        }
+    }
+
+    /// spec の処理フローの順に実行する。
+    pub fn execute(&self, input: ShowTaskInput) -> Result<TaskDetail, ShowTaskError> {
+        let id = TaskId::parse(input.task_id).map_err(ShowTaskError::InvalidTaskId)?;
+
+        // 解決順(現役 → アーカイブ)は `find` の契約に委ねる。
+        match self.tasks.find(&id).map_err(ShowTaskError::Read)? {
+            TaskLookup::Active(record) => Ok(self.detail(record, false)),
+            TaskLookup::Archived(record) => Ok(self.detail(record, true)),
+            TaskLookup::NotFound => Err(ShowTaskError::NotFound { task_id: id }),
+            TaskLookup::Corrupt { path, message } => Err(ShowTaskError::Corrupt { path, message }),
+        }
+    }
+
+    /// 読めたタスクを詳細に組み立てる。
+    fn detail(&self, record: TaskRecord, archived: bool) -> TaskDetail {
+        match record {
+            TaskRecord::Intact(task) => self.intact(task, archived),
+            TaskRecord::SnapshotUnreadable(task) => self.degraded(task, archived),
+        }
+    }
+
+    /// スナップショットまで読めたタスク。
+    fn intact(&self, task: Task, archived: bool) -> TaskDetail {
+        let retry = match task.applicable_retry_limit() {
+            Some(limit) => RetryLimitInfo::Applicable(limit),
+            None => RetryLimitInfo::NotApplicable,
+        };
+        let defined_statuses = task.snapshot().statuses().keys().cloned().collect();
+
+        TaskDetail {
+            task_id: task.id().clone(),
+            workflow_name: task.workflow_name().clone(),
+            target: task.target().clone(),
+            task_status: task.task_status().clone(),
+            execution: task.execution().clone(),
+            workspace: task.workspace().cloned(),
+            counters: task.counters(),
+            limits: self.limits(retry),
+            attempt: self.attempt(task.current_attempt()),
+            last_failure: task.last_failure().cloned(),
+            snapshot: SnapshotInfo::Readable(defined_statuses),
+            task_file_path: self.task_file_path(task.id(), archived),
+            archived,
+            updated_at: task.updated_at(),
+        }
+    }
+
+    /// スナップショットだけが読めないタスク。
+    ///
+    /// 読める項目はすべて載せ、スナップショット由来の項目(定義済みステータス一覧・
+    /// リトライ上限)だけを落として理由を添える(pages ※6)。
+    fn degraded(&self, task: DegradedTask, archived: bool) -> TaskDetail {
+        TaskDetail {
+            task_id: task.id().clone(),
+            workflow_name: task.workflow_name().clone(),
+            target: task.target().clone(),
+            task_status: task.task_status().clone(),
+            execution: task.execution().clone(),
+            workspace: task.workspace().cloned(),
+            counters: task.counters(),
+            limits: self.limits(RetryLimitInfo::Unknown),
+            attempt: self.attempt(task.current_attempt()),
+            last_failure: task.last_failure().cloned(),
+            snapshot: SnapshotInfo::Unreadable(task.snapshot_error().to_owned()),
+            task_file_path: self.task_file_path(task.id(), archived),
+            archived,
+            updated_at: task.updated_at(),
+        }
+    }
+
+    /// judge / spawn の上限は config から常に埋める(スナップショット非依存)。
+    fn limits(&self, retry: RetryLimitInfo) -> Limits {
+        Limits {
+            retry,
+            judge: self.config.judge_attempt_limit(),
+            spawn: self.config.spawn_fail_limit(),
+        }
+    }
+
+    /// スナップショットの保存先はタスクファイル自身。
+    fn task_file_path(&self, id: &TaskId, archived: bool) -> PathBuf {
+        if archived {
+            TaskFilePath::archived(self.state_root, id)
+        } else {
+            TaskFilePath::active(self.state_root, id)
+        }
+    }
+
+    /// 現在 attempt に実行メタデータを補う。
+    ///
+    /// 存在確認と exit の読み取りの失敗は**エラーに昇格させない** — 当該項目に
+    /// 読めない旨を載せて表示を続ける(pages 縮退表 show 行)。
+    fn attempt(&self, attempt: Option<&AttemptRef>) -> Option<AttemptSummary> {
+        let attempt = attempt?;
+        let run_dir = attempt.run_dir();
+
+        let presence = match self.runs.attempt_exists(run_dir) {
+            Ok(true) => RunDirPresence::Present {
+                exit: self.exit(run_dir),
+            },
+            Ok(false) => RunDirPresence::Absent,
+            Err(Io::Failed { message }) => RunDirPresence::Unknown { message },
+        };
+
+        Some(AttemptSummary {
+            number: attempt.number(),
+            run_dir: run_dir.clone(),
+            process: attempt.process().cloned(),
+            run_dir_presence: presence,
+        })
+    }
+
+    /// exit を読む。run ディレクトリが在ると分かったときにだけ呼ぶ。
+    fn exit(&self, run_dir: &RunDirPath) -> ExitOutcome {
+        match self.runs.read_exit(run_dir) {
+            Ok(Some(code)) => ExitOutcome::Recorded(code),
+            Ok(None) => ExitOutcome::Absent,
+            Err(error) => ExitOutcome::Unreadable(error),
+        }
+    }
+}

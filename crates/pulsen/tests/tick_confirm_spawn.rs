@@ -6,7 +6,7 @@
 //! 「マーカーを書いてから pid を再確認する」順序は結果の値に現れないため、呼び出しの
 //! 記録で主張する — 順序が逆になると、遅れて起動したラッパーと次の attempt が並走する。
 
-mod tick_fixture;
+mod usecase_fixture;
 
 use pulsen::application::tick::TickIssue;
 use pulsen_conformance::doubles::{RunStoreCall, ScriptedRunStore};
@@ -15,7 +15,7 @@ use pulsen_domain::task::{
     AttemptRef, ExecutionState, ExecutionStateKind, FailureKind, FailureNote, StopReason,
 };
 
-use tick_fixture::{
+use usecase_fixture::{
     Harness, NOW, TASK, after, at, config_with, pid_content, process_ident, repository,
     repository_failing_save, run_dir, starttime, task, task_id,
 };
@@ -213,7 +213,7 @@ fn 再確認でもpidが無ければspawn失敗として起動待ちへ戻す() 
     );
     assert_eq!(
         saved.current_attempt().map(AttemptRef::number),
-        Some(tick_fixture::attempt_number(1)),
+        Some(usecase_fixture::attempt_number(1)),
         "attempt 参照は起動記録でのみ置き換わる"
     );
     assert!(summary.frozen.is_empty());
